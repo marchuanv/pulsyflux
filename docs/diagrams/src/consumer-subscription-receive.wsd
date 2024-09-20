@@ -1,0 +1,21 @@
+@startuml architecture_overview
+
+MessageConsumer -> ConsumerMessageSubscriber: Receive ( SubscriptionMessage [ConsumerId, AuthToken, Channel] )
+ConsumerMessageSubscriber -> Auth: IsAuthenticated (ConsumerId, AuthToken)
+alt True
+    Auth --> ConsumerMessageSubscriber: Is Authenticated (ConsumerId)
+    ConsumerMessageSubscriber -> ConsumerMessageQueue: Enqueue (SubscriptionMessage)
+else False
+    Auth --> ConsumerMessageSubscriber: Is Not Authenticated  (ConsumerId)
+    ConsumerMessageSubscriber -> MessageConsumer: Request Authentication (ConsumerId)
+    MessageConsumer -> Auth: Authenticate (ConsumerId)
+    Auth -> ConsumerStore: Verify (ConsumerId)
+    alt Known Consumer
+        ConsumerStore --> Auth: Known Consumer (ConsumerId)
+        Auth --> MessageConsumer: AuthToken (ConsumerId)
+    else Unknown Consumer
+        Auth --> MessageConsumer: Unauthorised
+    end
+end
+
+@enduml
