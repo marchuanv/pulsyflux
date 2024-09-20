@@ -14,13 +14,14 @@ alt True
     end
 else False
     Auth --> ConsumerMessageSubscriber: Is Not Authenticated  (ConsumerId)
-    ConsumerMessageSubscriber -> MessageConsumer: Request Authentication (ConsumerId)
-    MessageConsumer -> Auth: Authenticate (ConsumerId)
+    ConsumerMessageSubscriber -> MessageConsumer: Request Authentication (ConsumerId, PublicEncryptionKey)
+    MessageConsumer -> Auth: Authenticate (ConsumerId, EncryptedPassphrase)
     Auth -> ConsumerStore: Verify (ConsumerId)
     alt Known Consumer
         ConsumerStore --> Auth: Known Consumer (ConsumerId)
         Auth --> MessageConsumer: AuthToken (ConsumerId)
     else Unknown Consumer
+        ConsumerStore --> Auth: Unknown Consumer (ConsumerId)
         Auth --> MessageConsumer: Unauthorised
     end
 end
