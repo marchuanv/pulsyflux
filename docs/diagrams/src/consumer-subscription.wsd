@@ -6,12 +6,12 @@ alt Refute
     ConsumerMessageSubscriber --> MessageConsumer: SubscriptionFailed (FailureCode)
 end
 ConsumerStore --> ConsumerMessageSubscriber: Known Consumer (ConsumerId)
-ConsumerMessageSubscriber -> Channels: Verify Channel (ChannelId)
+ConsumerMessageSubscriber -> ChannelStore: Verify Channel (ChannelId)
 alt Refute
-    Channels --> ConsumerMessageSubscriber: Unknown Channel (ChannelId)
+    ChannelStore --> ConsumerMessageSubscriber: Unknown Channel (ChannelId)
     ConsumerMessageSubscriber --> MessageConsumer: SubscriptionFailed (FailureCode)
 end
-Channels --> ConsumerMessageSubscriber: Known Channel (ChannelId)
+ChannelStore --> ConsumerMessageSubscriber: Known Channel (ChannelId)
 ConsumerMessageSubscriber -> ConsumerStore: Get Consumer Details (ConsumerId, ChannelId)
 ConsumerStore --> ConsumerMessageSubscriber: Consumer Details (StoredHashedSecret)
 ConsumerMessageSubscriber -> Auth: Authenticate (ConsumerId, ChannelId, HashedSecret, StoredHashedSecret)
