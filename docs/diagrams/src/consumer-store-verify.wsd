@@ -1,0 +1,29 @@
+@startuml ConsumerSubscription
+Consumer -> ConsumerStore: Verify Consumer (ConsumerId)
+ConsumerStore -> MemoryStore: Verify Record (ConsumerId)
+alt Refute
+    MemoryStore --> ConsumerStore: No Record (ConsumerId)
+    ConsumerStore -> DocumentStore: Verify Record (ConsumerId)
+    alt Refute
+        DocumentStore --> ConsumerStore: No Record (ConsumerId)
+        ConsumerStore --> Consumer: Unknown Consumer (ConsumerId)
+    end
+    DocumentStore --> ConsumerStore: Record Verified (ConsumerId)
+    ConsumerStore -> DocumentStore: Retrieve Record (ConsumerId)
+    DocumentStore --> ConsumerStore: Record (ConsumerId, ChannelId, StoredHashedSecret, StoredAuthToken: NULL)
+    ConsumerStore -> MemoryStore: Store Record  (ConsumerId, ChannelId, StoredHashedSecret, StoredAuthToken: NULL)
+    MemoryStore --> ConsumerStore: Record Stored
+    ConsumerStore --> Consumer: Known Consumer (ConsumerId)
+end
+Consumer -> ConsumerStore: Get Consumer Details (ConsumerId, ChannelId)
+ConsumerStore -> MemoryStore: Verify Record (ConsumerId, ChannelId)
+alt Refute
+    MemoryStore --> ConsumerStore: No Record (ConsumerId, ChannelId)
+    ConsumerStore --> Consumer: Unverified Consumer (ConsumerId, ChannelId)
+end
+MemoryStore --> ConsumerStore: Record Verified (ConsumerId, ChannelId)
+ConsumerStore -> MemoryStore: Retrieve Record (ConsumerId, ChannelId)
+MemoryStore --> ConsumerStore: Record (ConsumerId, ChannelId, StoredHashedSecret, StoredAuthToken)
+ConsumerStore --> Consumer: Consumer Details (ConsumerId, ChannelId, StoredHashedSecret, StoredAuthToken)
+
+@enduml
