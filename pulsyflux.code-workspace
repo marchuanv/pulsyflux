@@ -1,7 +1,13 @@
 {
 	"folders": [
 		{
-			"path": "."
+			"path": "pulse",
+		},
+		{
+			"path": "uuid",
+		},
+		{
+			"path": "docs"
 		}
 	]
 }
