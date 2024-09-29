@@ -1,12 +1,9 @@
-module pulse
+module message
 
 go 1.23.1
 
 require (
 	uuid v1.0.0
-	message v1.0.0
 )
 
 replace uuid => ../uuid
-
-replace message => ../message

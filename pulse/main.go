@@ -2,16 +2,17 @@ package main
 
 import (
 	"fmt"
-	"uuid"
+	"message"
 )
 
 func main() {
-	fmt.Println("running")
-	instance := uuid.New()
-	str, error := instance.ToString()
-	if error != nil {
-		fmt.Println(error)
+	fmt.Println("start")
+	msg := message.New()
+	msgText, err := msg.ToString()
+	if err != nil {
+		fmt.Println(err.Error())
 	} else {
-		fmt.Println(str)
+		fmt.Println(msgText)
 	}
+	fmt.Println("stop")
 }

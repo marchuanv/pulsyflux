@@ -8,6 +8,10 @@
 		},
 		{
 			"path": "docs"
+		},
+		{
+			"path": "message"
 		}
+
 	]
 }

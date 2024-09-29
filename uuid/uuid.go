@@ -28,7 +28,7 @@ func (uuid *UUID) ToString() (string, error) {
 }
 func generateUUID(str []string) string {
 	if len(str) == 0 {
-		return "generate a new guid"
+		return "generated guid"
 	} else {
 		return str[0]
 	}
