@@ -1,14 +1,16 @@
 {
 	"folders": [
 		{
-			"path": "pulse",
+			"path": "pulse"
 		},
 		{
 			"path": "docs"
 		},
 		{
 			"path": "message"
+		},
+		{
+			"path": "msgsub"
 		}
-
 	]
 }

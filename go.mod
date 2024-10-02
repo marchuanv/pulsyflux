@@ -1,0 +1,17 @@
+module pulsyflux
+
+go 1.23.1
+
+require pulse v1.0.0
+
+require message v1.0.0
+
+require msgsub v1.0.0
+
+require github.com/google/uuid v1.6.0 // indirect
+
+replace pulse v1.0.0 => ./pulse
+
+replace message v1.0.0 => ./message
+
+replace msgsub v1.0.0 => ./msgsub
