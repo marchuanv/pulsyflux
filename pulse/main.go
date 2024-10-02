@@ -7,12 +7,11 @@ import (
 
 func main() {
 	fmt.Println("start")
-	msg := message.New()
-	msgText, err := msg.ToString()
+	msg, err := message.New("Hello Bob")
 	if err != nil {
 		fmt.Println(err.Error())
 	} else {
-		fmt.Println(msgText)
+		fmt.Println(msg.Text)
 	}
 	fmt.Println("stop")
 }

@@ -1,30 +1,25 @@
 package message
 
-import (
-	"fmt"
-	"uuid"
-)
+import "github.com/google/uuid"
 
 type Message struct {
-	*uuid.UUID
-	text string
+	Id   string
+	Text string
 }
 
-func New(msgText ...string) *Message {
-	uuidPtr := uuid.New(msgText[0])
-	return &Message{
-		UUID: uuidPtr,
-		text: msgText[0],
+var _messages = map[string]*Message{}
+
+func New(msgText string) (*Message, error) {
+	id := v5UUID(msgText)
+	idStr := id.String()
+	uuidPtr, exists := _messages[idStr]
+	if exists {
+		return uuidPtr, nil
 	}
+	_messages[idStr] = &Message{idStr, msgText}
+	return _messages[idStr], nil
+
 }
-func (msg *Message) ToString() (string, error) {
-	uuidStr, err := msg.UUID.ToString()
-	if err != nil {
-		return "", err
-	}
-	msgStr, err := msg.ToString()
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("{\"Id\":\"%s\",\"message\":\"%s\"}", uuidStr, msgStr), nil
+func v5UUID(data string) uuid.UUID {
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(data))
 }
