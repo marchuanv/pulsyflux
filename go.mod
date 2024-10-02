@@ -8,10 +8,16 @@ require message v1.0.0
 
 require msgsub v1.0.0
 
+require msgbus v1.0.0
+
 require github.com/google/uuid v1.6.0 // indirect
 
-replace pulse v1.0.0 => ./pulse
+require golang.org/x/sync v0.8.0 // indirect
 
-replace message v1.0.0 => ./message
+replace pulse v1.0.0 => /pulse
 
-replace msgsub v1.0.0 => ./msgsub
+replace message v1.0.0 => /message
+
+replace msgsub v1.0.0 => /msgsub
+
+replace msgbus v1.0.0 => /msgbus

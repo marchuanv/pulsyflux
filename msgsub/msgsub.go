@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"pulsyflux/message"
 	"strconv"
-	"time"
 )
 
 type Address struct {
@@ -83,16 +82,7 @@ func (sub *Subscription) subscribe() error {
 	return nil
 }
 func (sub *Subscription) receive() (*message.Message, error) {
-	msg := message.Message{}
-	httpServer := &http.Server{
-		Addr:           fmt.Sprintf(":%s", sub.from.port),
-		Handler:        myHandler,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
-		MaxHeaderBytes: 1 << 20,
-	}
-	err := httpServer.ListenAndServe()
-	return &msg, err
+	return nil, nil
 }
 
 func getHostAndPortFromAddress(address string) (string, int, error) {
