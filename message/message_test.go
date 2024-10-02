@@ -7,7 +7,7 @@ import (
 func testMsgCtorWithArgs(msgText string, t *testing.T) (*Message, error) {
 	msgPtr, err := New(msgText)
 	if err != nil {
-		t.Errorf("CtorError: failed to create a message with errors")
+		t.Errorf("CtorError: failed to create am instance of a message")
 		t.Logf("%s", err)
 		return nil, err
 	} else {
@@ -32,6 +32,22 @@ func TestMsgEquality(t *testing.T) {
 	if err1 == nil && err2 == nil {
 		if msgRef3 == msgRef2 {
 			t.Errorf("CtorError: expected message pointers to NOT be the same")
+		}
+	}
+}
+
+func TestMsgSerialiseAndDeserialise(t *testing.T) {
+	msgRef, err := testMsgCtorWithArgs("Hello World", t)
+	if err == nil {
+		serialisedMsg, err := msgRef.serialise()
+		if err == nil {
+			t.Logf("message serialsed: %s", serialisedMsg)
+			msgRef2, err := DeserialiseMessage(serialisedMsg)
+			if err == nil {
+				if msgRef.Id != msgRef2.Id {
+					t.Log("expected serliased message to be deserialised")
+				}
+			}
 		}
 	}
 }
