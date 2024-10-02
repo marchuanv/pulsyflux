@@ -12,13 +12,13 @@ var _messages = map[string]*Message{}
 func New(msgText string) (*Message, error) {
 	id := v5UUID(msgText)
 	idStr := id.String()
-	uuidPtr, exists := _messages[idStr]
+	msg, exists := _messages[idStr]
 	if exists {
-		return uuidPtr, nil
+		return msg, nil
 	}
+	//use pointers the hastable grows and structs may be moved around which would not be a the same address anymore
 	_messages[idStr] = &Message{idStr, msgText}
-	return _messages[idStr], nil
-
+	return New(msgText)
 }
 func v5UUID(data string) uuid.UUID {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(data))
