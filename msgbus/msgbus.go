@@ -49,7 +49,7 @@ func (msgBus *MessageBus) Start() error {
 	if err != nil {
 		msgBus.mu.Unlock()
 		msgBus.server.Close()
-		serverStoppedErr := fmt.Sprintf("messagebus on port %d did not start due to: %s\n", msgBus.port, err.Error())
+		serverStoppedErr := fmt.Sprintf("messagebus not started on port %d: %s\n", msgBus.port, err.Error())
 		return errors.New(serverStoppedErr)
 	}
 	go msgBus.server.Serve(listener)

@@ -36,19 +36,27 @@ func TestMessageBus(t *testing.T) {
 }
 
 func TestStartTwoMessageBusOnSamePort(t *testing.T) {
-	msgBus := New("localhost", 4000)
-	err := msgBus.Start()
+	msgBus, err := New("localhost", 4000)
 	if err != nil {
 		t.Error(err)
+		return
+	}
+	err = msgBus.Start()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	msgBus2, err := New("localhost", 4000)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	err = msgBus2.Start()
+	if err == nil {
+		msgBus.Stop()
+		t.Errorf("expected an error when starting the second message bus on the same port")
 	} else {
-		msgBus2 := New("localhost", 4000)
-		err = msgBus2.Start()
-		if err == nil {
-			msgBus.Stop()
-			t.Errorf("expected an error when starting the second message bus on the same port")
-		} else {
-			msgBus2.Stop()
-			t.Log(err.Error())
-		}
+		msgBus2.Stop()
+		t.Log(err.Error())
 	}
 }
