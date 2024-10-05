@@ -3,20 +3,27 @@ package msgbus
 import (
 	"pulsyflux/message"
 	"testing"
-	"time"
 )
 
 func TestMessageBus(t *testing.T) {
-	msgBus := New("localhost", 3000)
-	msgBus.Start()
+	msgBus, err := New("localhost", 3000)
+	if err != nil {
+		t.Error(err)
+		return
+	}
 	msgToSend, err := message.New("Hello World")
 	if err != nil {
-		t.Errorf("CtorError: failed to create message")
+		t.Error(err)
+		return
+	}
+	err = msgBus.Start()
+	if err != nil {
+		t.Error(err)
 		return
 	}
 	err = msgBus.Send("http://localhost:3000/subscriptions/testchannel", msgToSend)
 	if err != nil {
-		t.Errorf("CtorError: failed to create message")
+		t.Error(err)
 		return
 	}
 	msgReceived := msgBus.Dequeue()
@@ -30,10 +37,18 @@ func TestMessageBus(t *testing.T) {
 
 func TestStartTwoMessageBusOnSamePort(t *testing.T) {
 	msgBus := New("localhost", 4000)
-	msgBus.Start()
-	msgBus2 := New("localhost", 4000)
-	msgBus2.Start()
-	msgBus.Stop()
-	msgBus2.Stop()
-	time.Sleep(10 * time.Second)
+	err := msgBus.Start()
+	if err != nil {
+		t.Error(err)
+	} else {
+		msgBus2 := New("localhost", 4000)
+		err = msgBus2.Start()
+		if err == nil {
+			msgBus.Stop()
+			t.Errorf("expected an error when starting the second message bus on the same port")
+		} else {
+			msgBus2.Stop()
+			t.Log(err.Error())
+		}
+	}
 }

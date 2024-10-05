@@ -22,7 +22,7 @@ type MessageBus struct {
 	port   int
 }
 
-func New(host string, port int) *MessageBus {
+func New(host string, port int) (*MessageBus, error) {
 	msgBus := MessageBus{
 		&sync.Mutex{},
 		[]*message.Message{},
@@ -39,40 +39,33 @@ func New(host string, port int) *MessageBus {
 		WriteTimeout:   10 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
-	return &msgBus
+	return &msgBus, nil
 }
 
 // non blocking thread to start the server
-func (msgBus *MessageBus) Start() {
+func (msgBus *MessageBus) Start() error {
 	msgBus.mu.Lock()
-	go (func() {
-		listener, err := net.Listen("tcp", msgBus.server.Addr)
-		if err != nil {
-			fmt.Printf("failed to start messagebus, port %d is in use.\n", msgBus.port)
-			msgBus.mu.Unlock()
-			return
-		}
-		err = listener.Close()
-		if err != nil {
-			fmt.Printf("failed to close listener that was testing if port %d was in use.\n", msgBus.port)
-			msgBus.mu.Unlock()
-			return
-		}
-		err = msgBus.server.ListenAndServe()
-		if err != nil {
-			fmt.Printf("failed to start messagebus on port %d.\n", msgBus.port)
-		}
-		fmt.Printf("messagebus started on port %d\n", msgBus.port)
+	listener, err := net.Listen("tcp", msgBus.server.Addr)
+	if err != nil {
 		msgBus.mu.Unlock()
-	})()
+		msgBus.server.Close()
+		serverStoppedErr := fmt.Sprintf("messagebus on port %d did not start due to: %s\n", msgBus.port, err.Error())
+		return errors.New(serverStoppedErr)
+	}
+	go msgBus.server.Serve(listener)
+	fmt.Printf("messagebus started on port %d\n", msgBus.port)
+	msgBus.mu.Unlock()
+	return nil
 }
-func (msgBus *MessageBus) Stop() {
+func (msgBus *MessageBus) Stop() error {
 	msgBus.mu.Lock()
 	defer msgBus.mu.Unlock()
 	err := msgBus.server.Close()
 	if err != nil {
-		fmt.Printf("failed to stop messagebus: %s.\n", err.Error())
+		serverStoppedErr := fmt.Sprintf("failed to stop messagebus: %s.\n", err.Error())
+		return errors.New(serverStoppedErr)
 	}
+	return nil
 }
 func (msgBus *MessageBus) Dequeue() *message.Message {
 	if len(msgBus.queue) > 0 {
