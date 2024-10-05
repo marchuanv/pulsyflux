@@ -39,7 +39,7 @@ func TestMsgEquality(t *testing.T) {
 func TestMsgSerialiseAndDeserialise(t *testing.T) {
 	msgRef, err := testMsgCtorWithArgs("Hello World", t)
 	if err == nil {
-		serialisedMsg, err := msgRef.serialise()
+		serialisedMsg, err := msgRef.Serialise()
 		if err == nil {
 			t.Logf("message serialsed: %s", serialisedMsg)
 			msgRef2, err := DeserialiseMessage(serialisedMsg)

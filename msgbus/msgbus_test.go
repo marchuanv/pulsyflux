@@ -1,50 +1,39 @@
 package msgbus
 
 import (
-	"bytes"
-	"net/http"
 	"pulsyflux/message"
 	"testing"
+	"time"
 )
 
 func TestMessageBus(t *testing.T) {
-	msgBus := New(3000)
+	msgBus := New("localhost", 3000)
 	msgBus.Start()
-
-	msg, err := message.New("Hello World")
+	msgToSend, err := message.New("Hello World")
 	if err != nil {
 		t.Errorf("CtorError: failed to create message")
 		return
 	}
-
-	// HTTP endpoint
-	posturl := "http://localhost:3000/subscriptions/testchannel"
-
-	// JSON body
-	serialisedMsg, err := msg.Serialise()
+	err = msgBus.Send("http://localhost:3000/subscriptions/testchannel", msgToSend)
 	if err != nil {
-		t.Errorf("CtorError: failed to serialise message")
+		t.Errorf("CtorError: failed to create message")
 		return
 	}
-
-	body := []byte(serialisedMsg)
-
-	// Create a HTTP post request
-	res, err := http.Post(posturl, "text/plain", bytes.NewBuffer(body))
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	if res.StatusCode < 200 || res.StatusCode > 299 {
-		t.Errorf("Response StatusCode:%d, StatusMessage:%s", res.StatusCode, res.Status)
-		return
+	msgReceived := msgBus.Dequeue()
+	if msgReceived == nil {
+		t.Error("MessageBus: expected a message to be dequeued")
 	} else {
-		msg := msgBus.Dequeue()
-		if msg == nil {
-			t.Errorf("MessageBus: expected a message to be dequeued")
-		} else {
-			t.Errorf("MessageId:%s, MessageText:%s", msg.Id, msg.Text)
-		}
+		t.Logf("MessageId:%s, MessageText:%s", msgReceived.Id, msgReceived.Text)
 	}
-	// time.Sleep(10 * time.Second)
+	msgBus.Stop()
+}
+
+func TestStartTwoMessageBusOnSamePort(t *testing.T) {
+	msgBus := New("localhost", 4000)
+	msgBus.Start()
+	msgBus2 := New("localhost", 4000)
+	msgBus2.Start()
+	msgBus.Stop()
+	msgBus2.Stop()
+	time.Sleep(10 * time.Second)
 }
