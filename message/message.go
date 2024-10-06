@@ -74,12 +74,12 @@ func NewMessage(channel string, fromAddress string, toAddress string, text strin
 	return newMsg, err
 }
 
-func NewDeserialiseMessage(serialise string) (*Message, error) {
-	if len(serialise) == 0 {
+func NewDeserialiseMessage(serialised string) (*Message, error) {
+	if len(serialised) == 0 {
 		return nil, errors.New("the channel argument is an empty string")
 	}
 	serMsg := serialisedMsg{}
-	by, err := base64.StdEncoding.DecodeString(serialise)
+	by, err := base64.StdEncoding.DecodeString(serialised)
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +113,9 @@ func (msg *Message) FromAddress() *MessageAddress {
 
 func (msg *Message) ToAddress() *MessageAddress {
 	return &msg.toAddress
+}
+
+func (msg *Message) Dispose() {
 }
 
 // serialise message
