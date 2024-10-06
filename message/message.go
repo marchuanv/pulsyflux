@@ -25,7 +25,7 @@ type MessageAddress struct {
 	Port int
 }
 
-type serialisedMessage struct {
+type serialisedMsg struct {
 	Id          string
 	Text        string
 	Channel     string
@@ -74,12 +74,12 @@ func NewMessage(channel string, fromAddress string, toAddress string, text strin
 	return newMsg, err
 }
 
-func NewDeserialiseMessage(serialisedMsg string) (*Message, error) {
-	if len(serialisedMsg) == 0 {
+func NewDeserialiseMessage(serialise string) (*Message, error) {
+	if len(serialise) == 0 {
 		return nil, errors.New("the channel argument is an empty string")
 	}
-	serMsg := serialisedMessage{}
-	by, err := base64.StdEncoding.DecodeString(serialisedMsg)
+	serMsg := serialisedMsg{}
+	by, err := base64.StdEncoding.DecodeString(serialise)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func (msg *Message) ToAddress() *MessageAddress {
 
 // serialise message
 func (msg *Message) Serialise() (string, error) {
-	msgToSerialise := serialisedMessage{
+	msgToSerialise := serialisedMsg{
 		msg.id,
 		msg.text,
 		msg.channel,
