@@ -17,7 +17,11 @@
 		},
 		{
 			"path": "sandbox"
+		},
+		{
+			"path": "msgq"
 		}
+
 
 	]
 }

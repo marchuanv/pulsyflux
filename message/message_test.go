@@ -4,26 +4,26 @@ import (
 	"testing"
 )
 
-func createMessage(test *testing.T, channel string, fromAddress string, toAddress string, text string, exitOnError bool) *Message {
-	msgPtr, err := NewMessage(channel, fromAddress, toAddress, text)
+func createMessage(test *testing.T, channel string, fromAddress string, toAddress string, text string, exitOnError bool) Message {
+	msg, err := New(channel, fromAddress, toAddress, text)
 	if err == nil {
-		return msgPtr
+		return msg
 	}
 	if exitOnError {
 		test.Fatalf("failed to create a new message, exiting test...") // Exits the program
 	}
-	return nil
+	return Message{}
 }
 
-func createDeserialisedMessage(test *testing.T, serialisedMsg string, exitOnError bool) *Message {
-	message, err := NewDeserialiseMessage(serialisedMsg)
+func createDeserialisedMessage(test *testing.T, serialisedMsg string, exitOnError bool) Message {
+	msg, err := NewDeserialiseMessage(serialisedMsg)
 	if err == nil {
-		return message
+		return msg
 	}
 	if exitOnError {
 		test.Fatalf("failed to deserialise message, exiting test...") // Exits the program
 	}
-	return nil
+	return Message{}
 }
 
 func serialiseMessage(test *testing.T, message *Message, exitOnError bool) string {
@@ -39,25 +39,25 @@ func serialiseMessage(test *testing.T, message *Message, exitOnError bool) strin
 
 func TestCreatingMessageWithBadAddressVariationA(test *testing.T) {
 	badMsg := createMessage(test, "channel", "localhost:", ":3000", "Hello World", false)
-	if badMsg != nil {
+	if badMsg != (Message{}) {
 		test.Fatalf("expected test to fail")
 	}
 }
 func TestCreatingMessageWithBadAddressVariationB(test *testing.T) {
 	badMsg := createMessage(test, "channel", "", "localhost:3000", "Hello World", false)
-	if badMsg != nil {
+	if badMsg != (Message{}) {
 		test.Fatalf("expected test to fail")
 	}
 }
 func TestCreatingMessageWithBadText(test *testing.T) {
 	badMsg := createMessage(test, "channel", "localhost:3000", "localhost:3000", "", false)
-	if badMsg != nil {
+	if badMsg != (Message{}) {
 		test.Fatalf("expected test to fail")
 	}
 }
 func TestCreatingMessageWithBadChannel(test *testing.T) {
 	badMsg := createMessage(test, "", "localhost:3000", "localhost:3000", "Hello World", false)
-	if badMsg != nil {
+	if badMsg != (Message{}) {
 		test.Fatalf("expected test to fail")
 	}
 }
@@ -77,7 +77,7 @@ func TestMsgEquality(test *testing.T) {
 }
 func TestMsgSerialiseAndDeserialise(test *testing.T) {
 	msg := createMessage(test, "channel", "localhost:3000", "localhost:3000", "Hello World", true)
-	serialisedMsg := serialiseMessage(test, msg, true)
+	serialisedMsg := serialiseMessage(test, &msg, true)
 	deserialisedMsg := createDeserialisedMessage(test, serialisedMsg, true)
 	if msg == deserialisedMsg {
 		if msg.FromAddress() == deserialisedMsg.FromAddress() {

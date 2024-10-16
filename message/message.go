@@ -25,7 +25,7 @@ type MessageAddress struct {
 	Port int
 }
 
-type serialisedMsg struct {
+type message struct {
 	Id          string
 	Text        string
 	Channel     string
@@ -33,66 +33,63 @@ type serialisedMsg struct {
 	ToAddress   MessageAddress
 }
 
-var _messages = map[string]*Message{}
-
-func NewMessage(channel string, fromAddress string, toAddress string, text string) (*Message, error) {
-	if len(text) == 0 {
-		return nil, errors.New("the msgText argument is an empty string")
-	}
-	id := v5UUID(text)
-	idStr := id.String()
-	msg, exists := _messages[idStr]
-	if exists {
-		return msg, nil
-	}
+func New(channel string, fromAddress string, toAddress string, text string) (Message, error) {
 	if len(channel) == 0 {
-		return nil, errors.New("the channel argument is an empty string")
+		return Message{}, errors.New("the channel argument is an empty string")
+	}
+	if !IsValidUUID(channel) {
+		return Message{}, errors.New("the channel argument is not a uuid")
 	}
 	if len(fromAddress) == 0 {
-		return nil, errors.New("the fromAddress argument is an empty string")
+		return Message{}, errors.New("the fromAddress argument is an empty string")
 	}
 	if len(toAddress) == 0 {
-		return nil, errors.New("the toAddress argument is an empty string")
+		return Message{}, errors.New("the toAddress argument is an empty string")
 	}
+	if len(text) == 0 {
+		return Message{}, errors.New("the msgText argument is an empty string")
+	}
+	id := v5UUID(channel + fromAddress + toAddress)
+	idStr := id.String()
 	fromHost, fromPort, fromErr := getHostAndPortFromAddress(fromAddress)
 	if fromErr != nil {
-		return nil, fromErr
+		return Message{}, fromErr
 	}
 	toHost, toPort, toErr := getHostAndPortFromAddress(toAddress)
 	if toErr != nil {
-		return nil, toErr
+		return Message{}, toErr
 	}
-	//use pointers the hastable grows and structs may be moved around which would not be a the same address anymore
-	_messages[idStr] = &Message{
+	newMsg := Message{
 		idStr,
 		text,
 		channel,
 		MessageAddress{fromHost, fromPort}, //from
 		MessageAddress{toHost, toPort},     //to
 	}
-	newMsg, err := NewMessage(channel, fromAddress, toAddress, text)
-	return newMsg, err
+	return newMsg, nil
 }
 
-func NewDeserialiseMessage(serialised string) (*Message, error) {
+func NewDeserialiseMessage(serialised string) (Message, error) {
 	if len(serialised) == 0 {
-		return nil, errors.New("the channel argument is an empty string")
+		return Message{}, errors.New("the channel argument is an empty string")
 	}
-	serMsg := serialisedMsg{}
+	msg := message{}
 	by, err := base64.StdEncoding.DecodeString(serialised)
 	if err != nil {
-		return nil, err
+		return Message{}, err
 	}
 	b := bytes.Buffer{}
 	b.Write(by)
 	d := gob.NewDecoder(&b)
-	err = d.Decode(&serMsg)
+	err = d.Decode(&msg)
 	if err == nil {
-		fromAddress := fmt.Sprintf("%s:%d", serMsg.FromAddress.Host, serMsg.FromAddress.Port)
-		toAddress := fmt.Sprintf("%s:%d", serMsg.ToAddress.Host, serMsg.ToAddress.Port)
-		return NewMessage(serMsg.Channel, fromAddress, toAddress, serMsg.Text)
+		fromAddress := fmt.Sprintf("%s:%d", msg.FromAddress.Host, msg.FromAddress.Port)
+		toAddress := fmt.Sprintf("%s:%d", msg.ToAddress.Host, msg.ToAddress.Port)
+		msgChannel := msg.Channel
+		msgText := msg.Text
+		return New(msgChannel, fromAddress, toAddress, msgText)
 	}
-	return nil, err
+	return Message{}, err
 }
 
 func (msg *Message) Id() string {
@@ -107,12 +104,12 @@ func (msg *Message) Channel() string {
 	return msg.channel
 }
 
-func (msg *Message) FromAddress() *MessageAddress {
-	return &msg.fromAddress
+func (msg *Message) FromAddress() MessageAddress {
+	return msg.fromAddress
 }
 
-func (msg *Message) ToAddress() *MessageAddress {
-	return &msg.toAddress
+func (msg *Message) ToAddress() MessageAddress {
+	return msg.toAddress
 }
 
 func (msg *Message) Dispose() {
@@ -120,20 +117,20 @@ func (msg *Message) Dispose() {
 
 // serialise message
 func (msg *Message) Serialise() (string, error) {
-	msgToSerialise := serialisedMsg{
+	msgToSerialise := message{
 		msg.id,
 		msg.text,
 		msg.channel,
 		msg.fromAddress,
 		msg.toAddress,
 	}
-	b := bytes.Buffer{}
-	e := gob.NewEncoder(&b)
+	buffer := bytes.Buffer{}
+	e := gob.NewEncoder(&buffer)
 	err := e.Encode(msgToSerialise)
 	if err != nil {
 		return "", err
 	}
-	return base64.StdEncoding.EncodeToString(b.Bytes()), nil
+	return base64.StdEncoding.EncodeToString(buffer.Bytes()), nil
 }
 
 func v5UUID(data string) uuid.UUID {
@@ -149,4 +146,8 @@ func getHostAndPortFromAddress(address string) (string, int, error) {
 		return "", 0, convErr
 	}
 	return hostStr, port, nil
+}
+func IsValidUUID(u string) bool {
+	_, err := uuid.Parse(u)
+	return err == nil
 }
