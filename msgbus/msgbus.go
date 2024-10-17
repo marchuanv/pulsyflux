@@ -1,49 +1,57 @@
 package msgbus
 
 import (
+	"encoding/base64"
 	"fmt"
+	"pulsyflux/connect"
 	"pulsyflux/message"
-	"sync"
+	"pulsyflux/msgq"
+	"pulsyflux/util"
 )
 
 type MsgBus struct {
-	mu    *sync.Mutex
-	queue *MsgQueue
-	host  string
-	port  int
+	queue *msgq.MsgQueue
+	conn  *connect.Connection
 }
 
-func MessageBus(host string, port int) (*MsgBus, error) {
-	msgBus := &MsgBus{
-		&sync.Mutex{},
-		nil,
-		host,
-		port,
-	}
-	msgQ, err := MessageQueue(msgBus)
+var msgBuses map[string]*MsgBus
+
+func Get(address string, channel string) (*MsgBus, error) {
+	_, _, err := util.GetHostAndPortFromAddress(address)
 	if err != nil {
 		return nil, err
 	}
-	msgBus.queue = msgQ
-	return msgBus, nil
-}
-
-func (msgBus *MsgBus) Dequeue() *message.Message {
-	if len(msgBus.queue.messages) > 0 {
-		msgBus.mu.Lock()
-		defer msgBus.mu.Unlock()
-		msg := msgBus.queue.messages[0]
-		messages := msgBus.queue.messages[1:]
-		msgBus.queue = nil
-		msgBus.queue.messages = messages
-		return msg
+	if msgBuses == nil {
+		msgBuses = make(map[string]*MsgBus)
 	}
-	return nil
-}
-
-func (msgBus *MsgBus) Enqueue(message *message.Message) {
-	msgBus.mu.Lock()
-	defer msgBus.mu.Unlock()
-	msgBus.queue.messages = append(msgBus.queue.messages, message)
-	fmt.Printf("message is queued.\n")
+	msgBus, exists := msgBuses[address]
+	if exists {
+		return msgBus, nil
+	}
+	msgBus = &MsgBus{}
+	msgBuses[address] = msgBus
+	queue, err := msgq.Get(channel)
+	if err != nil {
+		return nil, err
+	}
+	msgBus.queue = queue
+	conn, err := connect.New(address)
+	if err != nil {
+		return nil, err
+	}
+	msgBus.conn = conn
+	go (func() {
+		channel := conn.Channel()
+		for base64Msg := range channel {
+			bytes, err := base64.StdEncoding.DecodeString(base64Msg)
+			if err == nil {
+				msgStr := fmt.Sprint(bytes)
+				msg, err := message.NewDeserialiseMessage(msgStr)
+				if err == nil {
+					msgBus.queue.Enqueue(&msg)
+				}
+			}
+		}
+	})()
+	return msgBus, nil
 }

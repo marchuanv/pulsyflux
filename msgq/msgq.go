@@ -4,9 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"pulsyflux/message"
+	"pulsyflux/util"
 	"sync"
-
-	"github.com/google/uuid"
 )
 
 type MsgQueue struct {
@@ -21,7 +20,7 @@ func Get(channel string) (*MsgQueue, error) {
 	if len(channel) == 0 {
 		return nil, errors.New("the channel argument is an empty string")
 	}
-	if !isValidUUID(channel) {
+	if !util.IsValidUUID(channel) {
 		return nil, errors.New("the channel argument is not a uuid")
 	}
 	if queues == nil {
@@ -60,9 +59,4 @@ func (msgq *MsgQueue) Enqueue(message *message.Message) error {
 	msgq.messages = append(msgq.messages, message)
 	fmt.Printf("message is queued.\n")
 	return nil
-}
-
-func isValidUUID(u string) bool {
-	_, err := uuid.Parse(u)
-	return err == nil
 }

@@ -20,9 +20,13 @@
 		},
 		{
 			"path": "msgq"
+		},
+		{
+			"path": "util"
+		},
+		{
+			"path": "connect"
 		}
-
-
 	]
 }
 
