@@ -2,12 +2,16 @@ package connect
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"pulsyflux/util"
-	"sync"
+	"syscall"
 	"time"
 )
 
@@ -16,7 +20,6 @@ type Connection struct {
 	host     string
 	port     int
 	messages chan string
-	mu       *sync.Mutex
 }
 
 var connections map[string]*Connection
@@ -33,17 +36,9 @@ func New(address string) (*Connection, error) {
 	if exists {
 		return conn, nil
 	}
-
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		serverStoppedErr := fmt.Sprintf("failed to open a connection port %d: %s\n", port, err.Error())
-		return nil, errors.New(serverStoppedErr)
-	}
 	conn = &Connection{}
 	conn.host = host
 	conn.port = port
-	conn.mu = &sync.Mutex{}
-	conn.messages = make(chan string)
 	conn.server = &http.Server{
 		Addr:           address,
 		Handler:        conn,
@@ -52,18 +47,63 @@ func New(address string) (*Connection, error) {
 		MaxHeaderBytes: 1 << 20,
 	}
 	connections[address] = conn
-	go conn.server.Serve(listener)
-	fmt.Printf("server listening on port %d\n", port)
+	close(conn.messages)
 	return conn, nil
 }
 
-func (conn *Connection) Channel() chan string {
-	return conn.messages
+func (conn *Connection) GetMessage() (string, error) {
+	msg, isOpenChan := <-conn.messages
+	if !isOpenChan {
+		return "", errors.New("connection channel is closed")
+	}
+	return msg, nil
+}
+
+func (conn *Connection) Open() error {
+	listener, err := net.Listen("tcp", conn.server.Addr)
+	if err != nil {
+		return err
+	}
+	go func() {
+		conn.server.Serve(listener)
+	}()
+	res, err := http.Get(fmt.Sprintf("http://localhost:%d", conn.port))
+	if err != nil {
+		return err
+	}
+	err = res.Body.Close()
+	if err != nil {
+		return err
+	}
+	conn.messages = make(chan string)
+	fmt.Printf("server is listening on port %d\n", conn.port)
+	return nil
+}
+
+func (conn *Connection) Close() {
+	close(conn.messages)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	<-sigChan
+	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownRelease()
+	err := conn.server.Shutdown(shutdownCtx)
+	if err != nil {
+		log.Fatalf("HTTP shutdown error: %v", err)
+	}
+	log.Println("Graceful shutdown complete.")
 }
 
 func (conn *Connection) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	msg, err := conn.GetMessage()
+	if err == nil {
+		conn.messages <- msg
+	} else {
+		response.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 	var buf bytes.Buffer
-	_, err := buf.ReadFrom(request.Body)
+	_, err = buf.ReadFrom(request.Body)
 	if err != nil {
 		response.WriteHeader(http.StatusInternalServerError)
 		return

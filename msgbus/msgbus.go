@@ -40,8 +40,14 @@ func Get(address string, channel string) (*MsgBus, error) {
 		return nil, err
 	}
 	msgBus.conn = conn
+	return msgBus, nil
+}
+func (msgBus *MsgBus) Stop() {
+	msgBus.conn.Close()
+}
+func (msgBus *MsgBus) Start() {
 	go (func() {
-		channel := conn.Channel()
+		channel := msgBus.conn.Channel()
 		for base64Msg := range channel {
 			bytes, err := base64.StdEncoding.DecodeString(base64Msg)
 			if err == nil {
@@ -53,5 +59,4 @@ func Get(address string, channel string) (*MsgBus, error) {
 			}
 		}
 	})()
-	return msgBus, nil
 }
