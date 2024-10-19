@@ -1,6 +1,8 @@
 package util
 
 import (
+	"bytes"
+	"io"
 	"net"
 	"strconv"
 
@@ -24,4 +26,22 @@ func GetHostAndPortFromAddress(address string) (string, int, error) {
 func IsValidUUID(u string) bool {
 	_, err := uuid.Parse(u)
 	return err == nil
+}
+func IsEmptyString(str string) bool {
+	return str == ""
+}
+func StringFromReader(reader io.ReadCloser) (string, error) {
+	output, err1 := io.ReadAll(reader)
+	if err1 != nil {
+		return "", err1
+	}
+	err2 := reader.Close()
+	if err2 != nil {
+		return "", err2
+	}
+	return string(output), nil
+}
+func ReaderFromString(str string) (io.Reader, error) {
+	reader := bytes.NewReader([]byte(str))
+	return reader, nil
 }

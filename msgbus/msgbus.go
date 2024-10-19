@@ -14,15 +14,12 @@ type MsgBus struct {
 	conn  *connect.Connection
 }
 
-var msgBuses map[string]*MsgBus
+var msgBuses = make(map[string]*MsgBus)
 
 func Get(address string, channel string) (*MsgBus, error) {
 	_, _, err := util.GetHostAndPortFromAddress(address)
 	if err != nil {
 		return nil, err
-	}
-	if msgBuses == nil {
-		msgBuses = make(map[string]*MsgBus)
 	}
 	msgBus, exists := msgBuses[address]
 	if exists {
