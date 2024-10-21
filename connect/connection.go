@@ -1,40 +1,26 @@
 package connect
 
 import (
-	"errors"
-	"pulsyflux/notification"
-	"pulsyflux/util"
-
-	"github.com/google/uuid"
+	notif "pulsyflux/notification"
 )
 
-type Connection struct {
-	Messages chan string
-}
+var connections = make(map[string]*notif.Event)
 
-var connections = make(map[uuid.UUID]*Connection)
-
-func OpenConnection(address string) (*Connection, error) {
-	_, _, err := util.GetHostAndPortFromAddress(address)
-	if err != nil {
-		return nil, err
+func NewConnectionEvent(address string) (*notif.Event, error) {
+	event, exists := connections[address]
+	if !exists {
+		event = newServerEvent()
 	}
-	if len(connections) >= 10 {
-		return nil, errors.New("connection limit was reached")
-	}
-	uuid := util.Newv5UUID(address)
-	conn := &Connection{}
-	existingConn, exists := connections[uuid]
-	if exists {
-		conn = existingConn
-	} else {
-		event := server(address)
-		go (func() {
-			event.Subscribe(notification.HTTP_SERVER_STARTED)
-		})()
-		go (func() {
-			event.Subscribe(notification.HTTP_SERVER_ERROR)
-		})()
-	}
-	return conn, nil
+	event.Subscribe(notif.HTTP_SERVER_ERROR, func(addr string, pubErr error) {
+		event.Publish(notif.CONNECTION_ERROR, addr)
+		connections[addr] = nil
+	})
+	event.Subscribe(notif.HTTP_SERVER_CREATED, func(data string, pubErr error) {
+		event.Publish(notif.HTTP_SERVER_START, address)
+	})
+	event.Subscribe(notif.HTTP_SERVER_STARTED, func(data string, pubErr error) {
+		event.Publish(notif.CONNECTION_OPEN, "")
+	})
+	event.Publish(notif.HTTP_SERVER_CREATE, address)
+	return event, nil
 }

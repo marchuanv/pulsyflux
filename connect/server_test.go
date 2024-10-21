@@ -1,12 +1,17 @@
 package connect
 
 import (
-	"pulsyflux/notification"
+	notif "pulsyflux/notification"
 	"testing"
 )
 
 func TestServer(test *testing.T) {
 	address := "localhost:3000"
-	event := server(address)
-	event.Subscribe(notification.HTTP_SERVER_STARTED)
+	event := newServerEvent()
+	event.Subscribe(notif.HTTP_SERVER_STARTED, func(data string, err error) {
+		if err != nil {
+			event.Publish(notif.CONNECTION_ERROR, err.Error())
+		}
+	})
+	event.Publish(notif.HTTP_SERVER_CREATE, address)
 }
