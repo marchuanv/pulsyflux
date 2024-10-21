@@ -1,8 +1,7 @@
 package msgbus
 
 import (
-	"bytes"
-	"net/http"
+	"pulsyflux/connect"
 	"testing"
 )
 
@@ -27,10 +26,9 @@ func TestShouldProvideSameMessageBusForSameAddress(test *testing.T) {
 		test.Fail()
 		return
 	}
-	if msgBus1 != msgBus2 {
+	if msgBus1 == msgBus2 {
 		test.Fail()
 	}
-	jsonBody := []byte("hello, server")
-	bodyReader := bytes.NewReader(jsonBody)
-	http.Post("http://localhost:4000", "text/plain", bodyReader)
+	response, err := connect.Send(connect.HTTPSchema, "POST", "http://localhost:4000", "/", "hello messagebus")
+	if(response.)
 }

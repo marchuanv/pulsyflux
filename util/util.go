@@ -12,6 +12,7 @@ import (
 func Newv5UUID(data string) uuid.UUID {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(data))
 }
+
 func GetHostAndPortFromAddress(address string) (string, int, error) {
 	hostStr, portStr, hostPortErr := net.SplitHostPort(address)
 	if hostPortErr != nil {

@@ -21,12 +21,14 @@ func Get(address string, channel string) (*MsgBus, error) {
 	if err != nil {
 		return nil, err
 	}
-	msgBus, exists := msgBuses[address]
+	msgBusUUID := util.Newv5UUID(address + channel)
+	msgBusId := msgBusUUID.String()
+	msgBus, exists := msgBuses[msgBusId]
 	if exists {
 		return msgBus, nil
 	}
 	msgBus = &MsgBus{}
-	msgBuses[address] = msgBus
+	msgBuses[msgBusId] = msgBus
 	queue, err := msgq.Get(channel)
 	if err != nil {
 		return nil, err
@@ -42,18 +44,21 @@ func Get(address string, channel string) (*MsgBus, error) {
 func (msgBus *MsgBus) Stop() {
 	msgBus.conn.Close()
 }
-func (msgBus *MsgBus) Start() {
+func (msgBus *MsgBus) Queue() {
 	go (func() {
-		channel := msgBus.conn.Channel()
-		for base64Msg := range channel {
-			bytes, err := base64.StdEncoding.DecodeString(base64Msg)
+		msgUtf8, err := msgBus.conn.GetMessage()
+		if err != nil {
+			fmt.Print(err)
+		} else {
+			bytes, err := base64.StdEncoding.DecodeString(msgUtf8)
 			if err == nil {
-				msgStr := fmt.Sprint(bytes)
+				msgStr := string(bytes)
 				msg, err := message.NewDeserialiseMessage(msgStr)
 				if err == nil {
 					msgBus.queue.Enqueue(&msg)
 				}
 			}
+			msgBus.Queue()
 		}
 	})()
 }

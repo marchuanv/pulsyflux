@@ -9,41 +9,23 @@ import (
 	"strings"
 )
 
-type Schema int
-
-const (
-	HTTPSchema Schema = iota
-	HTTPSSchema
-)
-
-func (sch Schema) String() string {
-	switch sch {
-	case HTTPSchema:
-		return "http"
-	case HTTPSSchema:
-		return "https"
-	default:
-		return fmt.Sprintf("%d", int(sch))
-	}
-}
-
 type HttpRequest struct {
-	schema Schema
-	method string
-	host   string
-	port   int
-	path   string
-	data   string
+	Schema HttpSchema
+	Method HttpMethod
+	Host   string
+	Port   int
+	Path   string
+	Data   string
 }
 
 type HttpResponse struct {
-	request       HttpRequest
-	statusCode    int
-	statusMessage string
-	data          string
+	Request       HttpRequest
+	StatusCode    int
+	StatusMessage string
+	Data          string
 }
 
-func Send(schema Schema, method string, address string, path string, data string) (HttpResponse, error) {
+func Send(schema HttpSchema, method HttpMethod, address string, path string, data string) (HttpResponse, error) {
 	request := HttpRequest{
 		schema,
 		method,
@@ -58,13 +40,13 @@ func Send(schema Schema, method string, address string, path string, data string
 		"no response",
 		"",
 	}
-	if util.IsEmptyString(request.method) {
+	if util.IsEmptyString(request.Method.String()) {
 		return response, errors.New("the method argument is an empty string")
 	}
 	if util.IsEmptyString(address) {
 		return response, errors.New("the address argument is an empty string")
 	}
-	if util.IsEmptyString(request.path) {
+	if util.IsEmptyString(request.Path) {
 		return response, errors.New("the path argument is an empty string")
 	}
 	addr := address
@@ -82,15 +64,15 @@ func Send(schema Schema, method string, address string, path string, data string
 		errorMsg := fmt.Sprintf("error making http request could not determine the host and port from address: %s\n", err)
 		return response, errors.New(errorMsg)
 	}
-	request.host = host
-	request.port = port
-	reqBody, err := util.ReaderFromString(request.data)
+	request.Host = host
+	request.Port = port
+	reqBody, err := util.ReaderFromString(request.Data)
 	if err != nil {
 		errorMsg := fmt.Sprintf("error writing request data: %s\n", err)
 		return response, errors.New(errorMsg)
 	}
-	requestURL := fmt.Sprintf("http://%s:%d%s", request.host, request.port, request.path)
-	req, err := http.NewRequest(method, requestURL, reqBody)
+	requestURL := fmt.Sprintf("http://%s:%d%s", request.Host, request.Port, request.Path)
+	req, err := http.NewRequest(method.String(), requestURL, reqBody)
 	reqBody = nil
 	if err != nil {
 		errorMsg := fmt.Sprintf("could not create a new http request: %s\n", err)
@@ -106,8 +88,8 @@ func Send(schema Schema, method string, address string, path string, data string
 	if err != nil {
 		return response, err
 	}
-	response.data = resBody
-	response.statusCode = res.StatusCode
-	response.statusMessage = res.Status
+	response.Data = resBody
+	response.StatusCode = res.StatusCode
+	response.StatusMessage = res.Status
 	return response, nil
 }
