@@ -8,40 +8,51 @@ import (
 
 type Event struct {
 	channel *channel
+	data    map[Notification]string
 }
+
+type RaiseEvent func(data string, err error)
 
 func New() *Event {
 	channel, err := new()
 	if err != nil {
 		panic(err)
 	} else {
-		event := &Event{channel}
+		event := &Event{
+			channel,
+			map[Notification]string{},
+		}
 		runtime.SetFinalizer(event, func(e *Event) {
 			e.channel.close()
+			for n := range e.data {
+				delete(e.data, n)
+			}
 		})
 		return event
 	}
 }
 
-func (e *Event) Publish(notif Notification) error {
+func (e *Event) Publish(notif Notification, data string) error {
 	ch, err := get(e, string(notif))
 	if err != nil {
 		return err
 	}
 	ch.push(notif)
+	e.data[notif] = data
 	return nil
 }
 
-func (e *Event) Subscribe(notif Notification) error {
-	ch, err := get(e, string(notif))
-	if err != nil {
-		return err
-	}
-	_, err = ch.pop()
-	if err != nil {
-		return err
-	}
-	return nil
+func (e *Event) Subscribe(notif Notification, raiseEvent RaiseEvent) {
+	go (func() {
+		ch, err := get(e, string(notif))
+		if err == nil {
+			_, err = ch.pop()
+			data := e.data[notif]
+			raiseEvent(data, err)
+		} else {
+			raiseEvent("", err)
+		}
+	})()
 }
 
 func get(e *Event, id string) (*channel, error) {

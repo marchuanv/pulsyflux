@@ -12,8 +12,8 @@ import (
 
 func server(address string) *notif.Event {
 	event := notif.New()
-	go (func() {
-		_, _, err := util.GetHostAndPortFromAddress(address)
+	_, _, err := util.GetHostAndPortFromAddress(address)
+	event.Subscribe(notif.HTTP_SERVER_CREATE, func(pubErr error) {
 		if err != nil {
 			event.Publish(notif.HTTP_SERVER_ERROR)
 			return
@@ -42,19 +42,28 @@ func server(address string) *notif.Event {
 					}
 				}
 			})
-			go (func() {
-				event.Subscribe(notif.HTTP_SERVER_START)
-				err = httpServer.Serve(listener)
-				if err == nil {
-					event.Publish(notif.HTTP_SERVER_STOPPED)
+			event.Subscribe(notif.HTTP_SERVER_START, func(pubErr error) {
+				if pubErr == nil {
+					err = httpServer.Serve(listener)
+					if err == nil {
+						event.Publish(notif.HTTP_SERVER_STOPPED)
+					} else {
+						event.Publish(notif.HTTP_SERVER_ERROR)
+					}
 				} else {
 					event.Publish(notif.HTTP_SERVER_ERROR)
 				}
-			})()
-			go (func() {
-				event.Subscribe(notif.HTTP_SERVER_STOP)
-				httpServer.Close()
-			})()
+			})
+			event.Subscribe(notif.HTTP_SERVER_STOP, func(pubErr error) {
+				if pubErr == nil {
+					servStopErr := httpServer.Close()
+					if servStopErr != nil {
+						event.Publish(notif.HTTP_SERVER_ERROR)
+					}
+				} else {
+					event.Publish(notif.HTTP_SERVER_ERROR)
+				}
+			})
 		}
 		_, err = Send(HTTPSchema, HttpGET, address, pingPath, "")
 		if err == nil {
@@ -62,6 +71,6 @@ func server(address string) *notif.Event {
 		} else {
 			event.Publish(notif.HTTP_SERVER_ERROR)
 		}
-	})()
+	})
 	return event
 }

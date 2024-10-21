@@ -1,24 +1,29 @@
 package notification
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
 
 func TestEvent(test *testing.T) {
+	expectedData := "Hello World"
 	event := New()
 	if event == nil {
 		test.Fatal()
 	}
-	go (func() {
-		err := event.Subscribe(HTTP_SERVER_CREATE)
+	event.Subscribe(HTTP_SERVER_CREATE, func(data string, err error) {
 		if err != nil {
-			test.Error(err)
+			test.Fatal(err)
 		}
-	})()
-	time.Sleep(5 * time.Second)
-	err := event.Publish(HTTP_SERVER_CREATE)
+		if data != expectedData {
+			test.Fatal(errors.New("data published does not match expected data"))
+		}
+	})
+	time.Sleep(2 * time.Second)
+	err := event.Publish(HTTP_SERVER_CREATE, expectedData)
 	if err != nil {
 		test.Fatal(err)
 	}
+	time.Sleep(2 * time.Second)
 }
