@@ -59,8 +59,8 @@ func (ch *Channel) Get(Id uuid.UUID) (*Channel, error) {
 	return ch, nil
 }
 
-func (ch *Channel) Pop() ([]*Message, error) {
-	var messages []*Message
+func (ch *Channel) Pop() ([]Msg, error) {
+	var messages []Msg
 	if len(ch.channels) > 0 {
 		for childId := range ch.channels {
 			child := ch.channels[childId]
@@ -71,7 +71,7 @@ func (ch *Channel) Pop() ([]*Message, error) {
 		}
 	}
 	serialisedMsg := <-ch.channel
-	message, err := deserialise(serialisedMsg)
+	message, err := NewDeserialisedMessage(serialisedMsg)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (ch *Channel) Pop() ([]*Message, error) {
 	return messages, nil
 }
 
-func (ch *Channel) Push(msg *Message) {
+func (ch *Channel) Push(msg Msg) {
 	if len(ch.channels) > 0 {
 		for chnKey := range maps.Keys(ch.channels) {
 			ch := ch.channels[chnKey]
@@ -87,7 +87,7 @@ func (ch *Channel) Push(msg *Message) {
 		}
 	}
 	go func() {
-		serialisedMsg, err := msg.serialise()
+		serialisedMsg, err := msg.Serialise()
 		if err != nil {
 			panic(err)
 		}

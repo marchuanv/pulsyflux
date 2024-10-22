@@ -22,15 +22,15 @@ func createChannel(test *testing.T, id uuid.UUID, exitOnError bool) *Channel {
 func TestCreateChannel(test *testing.T) {
 	channelId := uuid.New()
 	ch := createChannel(test, channelId, true)
-	msgId := uuid.New()
-	expectedMsg := createMessage(test, msgId, "localhost:3000", "localhost:4000", "Hello World", true)
+	attributes := []string{"Valid"}
+	expectedMsg := createMessage(test, attributes, "Hello World", true)
 	ch.Push(expectedMsg)
 	receiMsgs, err := ch.Pop()
 	if err == nil {
 		if receiMsgs[0] == expectedMsg {
 			test.Fail()
 		}
-		if receiMsgs[0].id != expectedMsg.id {
+		if receiMsgs[0].GetId() != expectedMsg.GetId() {
 			test.Fail()
 		}
 	} else {

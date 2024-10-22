@@ -2,6 +2,9 @@ package util
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/gob"
+	"errors"
 	"io"
 	"net"
 	"strconv"
@@ -42,7 +45,33 @@ func StringFromReader(reader io.ReadCloser) (string, error) {
 	}
 	return string(output), nil
 }
+
 func ReaderFromString(str string) (io.Reader, error) {
 	reader := bytes.NewReader([]byte(str))
 	return reader, nil
+}
+
+func Deserialise(serialised string) (any, error) {
+	if len(serialised) == 0 {
+		return nil, errors.New("the serialised argument is an empty string")
+	}
+	by, err := base64.StdEncoding.DecodeString(serialised)
+	if err != nil {
+		return nil, err
+	}
+	buf := bytes.NewBuffer(by)
+	d := gob.NewDecoder(buf)
+	var decoded any
+	err = d.Decode(&decoded)
+	return decoded, err
+}
+
+func Serialise(e any) (string, error) {
+	buf := bytes.NewBuffer(nil)
+	enc := gob.NewEncoder(buf)
+	err := enc.Encode(&e)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
