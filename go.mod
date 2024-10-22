@@ -4,7 +4,7 @@ go 1.23.1
 
 require pulse v1.0.0
 
-require message v1.0.0
+require channel v1.0.0
 
 require msgsub v1.0.0
 
@@ -24,7 +24,7 @@ require golang.org/x/sync v0.8.0 // indirect
 
 replace pulse v1.0.0 => /pulse
 
-replace message v1.0.0 => /message
+replace channel v1.0.0 => /channel
 
 replace msgsub v1.0.0 => /msgsub
 

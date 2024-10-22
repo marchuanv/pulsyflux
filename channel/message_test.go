@@ -1,11 +1,13 @@
-package message
+package channel
 
 import (
 	"testing"
+
+	"github.com/google/uuid"
 )
 
-func createMessage(test *testing.T, channel string, fromAddress string, toAddress string, text string, exitOnError bool) Message {
-	msg, err := New(channel, fromAddress, toAddress, text)
+func createMessage(test *testing.T, id uuid.UUID, fromAddress string, toAddress string, text string, exitOnError bool) Message {
+	msg, err := New(id, fromAddress, toAddress, text)
 	if err == nil {
 		return msg
 	}
@@ -16,7 +18,7 @@ func createMessage(test *testing.T, channel string, fromAddress string, toAddres
 }
 
 func createDeserialisedMessage(test *testing.T, serialisedMsg string, exitOnError bool) Message {
-	msg, err := NewDeserialiseMessage(serialisedMsg)
+	msg, err := deserialise(serialisedMsg)
 	if err == nil {
 		return msg
 	}
@@ -27,7 +29,7 @@ func createDeserialisedMessage(test *testing.T, serialisedMsg string, exitOnErro
 }
 
 func serialiseMessage(test *testing.T, message *Message, exitOnError bool) string {
-	serialisedMsg, err := message.Serialise()
+	serialisedMsg, err := message.serialise()
 	if err == nil {
 		return serialisedMsg
 	}
@@ -38,33 +40,31 @@ func serialiseMessage(test *testing.T, message *Message, exitOnError bool) strin
 }
 
 func TestCreatingMessageWithBadAddressVariationA(test *testing.T) {
-	badMsg := createMessage(test, "channel", "localhost:", ":3000", "Hello World", false)
+	msgId := uuid.New()
+	badMsg := createMessage(test, msgId, "localhost:", ":3000", "Hello World", false)
 	if badMsg != (Message{}) {
 		test.Fatalf("expected test to fail")
 	}
 }
 func TestCreatingMessageWithBadAddressVariationB(test *testing.T) {
-	badMsg := createMessage(test, "channel", "", "localhost:3000", "Hello World", false)
+	msgId := uuid.New()
+	badMsg := createMessage(test, msgId, "", "localhost:3000", "Hello World", false)
 	if badMsg != (Message{}) {
 		test.Fatalf("expected test to fail")
 	}
 }
 func TestCreatingMessageWithBadText(test *testing.T) {
-	badMsg := createMessage(test, "channel", "localhost:3000", "localhost:3000", "", false)
-	if badMsg != (Message{}) {
-		test.Fatalf("expected test to fail")
-	}
-}
-func TestCreatingMessageWithBadChannel(test *testing.T) {
-	badMsg := createMessage(test, "", "localhost:3000", "localhost:3000", "Hello World", false)
+	msgId := uuid.New()
+	badMsg := createMessage(test, msgId, "localhost:3000", "localhost:3000", "", false)
 	if badMsg != (Message{}) {
 		test.Fatalf("expected test to fail")
 	}
 }
 func TestMsgEquality(test *testing.T) {
-	msgRef1 := createMessage(test, "channel", "localhost:3000", "localhost:3000", "Hello World", true)
-	msgRef2 := createMessage(test, "channel", "localhost:3000", "localhost:3000", "Hello World", true)
-	msgRef3 := createMessage(test, "channel", "localhost:3000", "localhost:3000", "Hello John", true)
+	msgId := uuid.New()
+	msgRef1 := createMessage(test, msgId, "localhost:3000", "localhost:3000", "Hello World", true)
+	msgRef2 := createMessage(test, msgId, "localhost:3000", "localhost:3000", "Hello World", true)
+	msgRef3 := createMessage(test, msgId, "localhost:3000", "localhost:3000", "Hello John", true)
 	if msgRef1 != msgRef2 {
 		test.Fatal("CtorError: expected message pointers to be the same")
 	}
@@ -76,7 +76,8 @@ func TestMsgEquality(test *testing.T) {
 	}
 }
 func TestMsgSerialiseAndDeserialise(test *testing.T) {
-	msg := createMessage(test, "channel", "localhost:3000", "localhost:3000", "Hello World", true)
+	msgId := uuid.New()
+	msg := createMessage(test, msgId, "localhost:3000", "localhost:3000", "Hello World", true)
 	serialisedMsg := serialiseMessage(test, &msg, true)
 	deserialisedMsg := createDeserialisedMessage(test, serialisedMsg, true)
 	if msg == deserialisedMsg {

@@ -12,7 +12,7 @@ func TestEvent(test *testing.T) {
 	if event == nil {
 		test.Fatal()
 	}
-	event.Subscribe(HTTP_SERVER_CREATE, func(data string, err error) {
+	event.Subscribe(HTTP_SERVER_CREATE, func(err error, data string) {
 		if err != nil {
 			test.Fatal(err)
 		}

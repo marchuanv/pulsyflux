@@ -7,7 +7,7 @@
 			"path": "docs"
 		},
 		{
-			"path": "message"
+			"path": "channel"
 		},
 		{
 			"path": "msgsub"

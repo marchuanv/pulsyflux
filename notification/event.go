@@ -7,11 +7,11 @@ import (
 )
 
 type Event struct {
-	channel *channel
+	channel *Channel
 	data    map[Notification]string
 }
 
-type RaiseEvent func(data string, err error)
+type RaiseEvent func(err error, data string)
 
 func New() *Event {
 	channel, err := new()
@@ -48,9 +48,9 @@ func (e *Event) Subscribe(notif Notification, raiseEvent RaiseEvent) {
 		if err == nil {
 			_, err = ch.pop()
 			data := e.data[notif]
-			raiseEvent(data, err)
+			raiseEvent(err, data)
 		} else {
-			raiseEvent("", err)
+			raiseEvent(err, "")
 		}
 	})()
 }

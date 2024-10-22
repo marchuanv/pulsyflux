@@ -3,6 +3,7 @@ package connect
 import (
 	notif "pulsyflux/notification"
 	"testing"
+	"time"
 )
 
 func TestServer(test *testing.T) {
@@ -14,4 +15,6 @@ func TestServer(test *testing.T) {
 		}
 	})
 	event.Publish(notif.HTTP_SERVER_CREATE, address)
+	event.Publish(notif.HTTP_SERVER_START, address)
+	time.Sleep(10 * time.Second)
 }
