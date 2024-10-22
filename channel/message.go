@@ -30,23 +30,23 @@ type message struct {
 	ToAddress   MessageAddress
 }
 
-func New(id uuid.UUID, fromAddress string, toAddress string, text string) (Message, error) {
+func New(id uuid.UUID, fromAddress string, toAddress string, text string) (*Message, error) {
 	if len(fromAddress) == 0 {
-		return Message{}, errors.New("the fromAddress argument is an empty string")
+		return nil, errors.New("the fromAddress argument is an empty string")
 	}
 	if len(toAddress) == 0 {
-		return Message{}, errors.New("the toAddress argument is an empty string")
+		return nil, errors.New("the toAddress argument is an empty string")
 	}
 	if len(text) == 0 {
-		return Message{}, errors.New("the msgText argument is an empty string")
+		return nil, errors.New("the msgText argument is an empty string")
 	}
 	fromHost, fromPort, fromErr := util.GetHostAndPortFromAddress(fromAddress)
 	if fromErr != nil {
-		return Message{}, fromErr
+		return nil, fromErr
 	}
 	toHost, toPort, toErr := util.GetHostAndPortFromAddress(toAddress)
 	if toErr != nil {
-		return Message{}, toErr
+		return nil, toErr
 	}
 	newMsg := Message{
 		id,
@@ -54,7 +54,7 @@ func New(id uuid.UUID, fromAddress string, toAddress string, text string) (Messa
 		MessageAddress{fromHost, fromPort}, //from
 		MessageAddress{toHost, toPort},     //to
 	}
-	return newMsg, nil
+	return &newMsg, nil
 }
 
 func (msg *Message) Id() uuid.UUID {
@@ -89,14 +89,14 @@ func (msg *Message) serialise() (string, error) {
 	return base64.StdEncoding.EncodeToString(buffer.Bytes()), nil
 }
 
-func deserialise(serialised string) (Message, error) {
+func deserialise(serialised string) (*Message, error) {
 	if len(serialised) == 0 {
-		return Message{}, errors.New("the serialised argument is an empty string")
+		return nil, errors.New("the serialised argument is an empty string")
 	}
 	msg := message{}
 	by, err := base64.StdEncoding.DecodeString(serialised)
 	if err != nil {
-		return Message{}, err
+		return nil, err
 	}
 	b := bytes.Buffer{}
 	b.Write(by)
@@ -107,5 +107,5 @@ func deserialise(serialised string) (Message, error) {
 		toAddress := fmt.Sprintf("%s:%d", msg.ToAddress.Host, msg.ToAddress.Port)
 		return New(msg.Id, fromAddress, toAddress, msg.Text)
 	}
-	return Message{}, err
+	return nil, err
 }

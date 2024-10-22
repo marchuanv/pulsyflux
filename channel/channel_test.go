@@ -25,7 +25,10 @@ func TestCreateChannel(test *testing.T) {
 	ch.Push(expectedMsg)
 	receiMsgs, err := ch.Pop()
 	if err == nil {
-		if receiMsgs[0] != expectedMsg {
+		if receiMsgs[0] == expectedMsg {
+			test.Fail()
+		}
+		if receiMsgs[0].id != expectedMsg.id {
 			test.Fail()
 		}
 	} else {
