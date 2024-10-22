@@ -104,6 +104,9 @@ func (ch *Channel) Close() {
 	}
 	if !ch.closed {
 		close(ch.channel)
+		for u := range ch.channels {
+			delete(ch.channels, u)
+		}
 		ch.channels = nil
 		ch.channel = nil
 		ch.closed = true
