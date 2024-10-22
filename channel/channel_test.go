@@ -1,7 +1,9 @@
 package channel
 
 import (
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -34,4 +36,7 @@ func TestCreateChannel(test *testing.T) {
 	} else {
 		test.Fatal(err)
 	}
+	ch.Close()
+	runtime.GC()
+	time.Sleep(5 * time.Second)
 }

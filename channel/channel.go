@@ -10,6 +10,7 @@ import (
 
 type Channel struct {
 	id       uuid.UUID
+	closed   bool
 	channel  chan string
 	channels map[uuid.UUID]*Channel
 }
@@ -17,6 +18,7 @@ type Channel struct {
 func Open(Id uuid.UUID) (*Channel, error) {
 	channel := &Channel{
 		Id,
+		false,
 		make(chan string),
 		make(map[uuid.UUID]*Channel),
 	}
@@ -100,7 +102,10 @@ func (ch *Channel) Close() {
 			ch.Close()
 		}
 	}
-	close(ch.channel)
-	ch.channels = nil
-	ch.channel = nil
+	if !ch.closed {
+		close(ch.channel)
+		ch.channels = nil
+		ch.channel = nil
+		ch.closed = true
+	}
 }
