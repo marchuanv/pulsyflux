@@ -1,4 +1,4 @@
-package channel
+package msgbus
 
 import (
 	"encoding/gob"
@@ -10,7 +10,7 @@ import (
 
 type Msg interface {
 	GetId() uuid.UUID
-	GetText() string
+	String() string
 	Serialise() (string, error)
 }
 
@@ -41,7 +41,7 @@ func (m msg) GetId() uuid.UUID {
 	return m.Id
 }
 
-func (m msg) GetText() string {
+func (m msg) String() string {
 	return m.Text
 }
 

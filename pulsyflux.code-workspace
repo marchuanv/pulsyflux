@@ -1,22 +1,13 @@
 {
 	"folders": [
 		{
-			"path": "pulse"
-		},
-		{
 			"path": "docs"
 		},
 		{
-			"path": "channel"
+			"path": "pulse"
 		},
 		{
 			"path": "msgbus"
-		},
-		{
-			"path": "sandbox"
-		},
-		{
-			"path": "msgq"
 		},
 		{
 			"path": "util"
@@ -25,9 +16,8 @@
 			"path": "connect"
 		},
 		{
-			"path": "notification"
+			"path": "subscriptions"
 		}
-
 	]
 }
 

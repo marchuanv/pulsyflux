@@ -1,4 +1,4 @@
-package channel
+package msgbus
 
 import (
 	"testing"
@@ -66,7 +66,7 @@ func TestMsgSerialiseAndDeserialise(test *testing.T) {
 	if msg.GetId() != deserialisedMsg.GetId() {
 		test.Fatal("expected deserialised message Id to equal original message Id")
 	}
-	if msg.GetText() != deserialisedMsg.GetText() {
+	if msg.String() != deserialisedMsg.String() {
 		test.Fatal("expected deserialised message text to equal original message text")
 	}
 }
