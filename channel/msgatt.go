@@ -6,29 +6,14 @@ import (
 	"github.com/google/uuid"
 )
 
-type MsgAtt interface {
-	GetId() uuid.UUID
-	GetName() string
-}
+type MsgAttId string
 
-type msgAtt struct {
-	Id   uuid.UUID
-	Name string
-}
+type MsgAtt struct{ id MsgAttId }
 
-func NewMsgAtt(name string) (MsgAtt, error) {
-	id := uuid.New()
-	if len(name) == 0 {
-		return nil, errors.New("message attribute name is an empty string")
+func NewMsgAtt(Id MsgAttId) MsgAtt {
+	uuid, err := uuid.Parse(string(Id))
+	if err != nil {
+		panic(errors.New("message attribute is not a valid UUID"))
 	}
-	msgAtt := msgAtt{id, name}
-	return &msgAtt, nil
-}
-
-func (ma msgAtt) GetId() uuid.UUID {
-	return ma.Id
-}
-
-func (ma msgAtt) GetName() string {
-	return ma.Name
+	return MsgAtt{MsgAttId(uuid.String())}
 }

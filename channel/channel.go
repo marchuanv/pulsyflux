@@ -28,20 +28,6 @@ func Open(Id uuid.UUID) (*Channel, error) {
 	return channel, nil
 }
 
-func (ch *Channel) Open(Id uuid.UUID) (*Channel, error) {
-	relatedCh, exists := ch.channels[Id]
-	var err error
-	if exists {
-		err = errors.New("channel already created")
-	} else {
-		relatedCh, err = Open(Id)
-		if err == nil {
-			ch.channels[Id] = relatedCh
-		}
-	}
-	return relatedCh, err
-}
-
 func (ch *Channel) Id() uuid.UUID {
 	return ch.id
 }
@@ -59,40 +45,70 @@ func (ch *Channel) Get(Id uuid.UUID) (*Channel, error) {
 	return ch, nil
 }
 
-func (ch *Channel) Pop() ([]Msg, error) {
-	var messages []Msg
-	if len(ch.channels) > 0 {
-		for childId := range ch.channels {
-			child := ch.channels[childId]
-			msgs, err := child.Pop()
-			if err == nil {
-				messages = append(messages, msgs...)
-			}
-		}
-	}
-	serialisedMsg := <-ch.channel
-	message, err := NewDeserialisedMessage(serialisedMsg)
+func (ch *Channel) Subscribe(msgSub MsgSub) (Msg, error) {
+	uuid, err := uuid.Parse(string(msgSub.id))
 	if err != nil {
 		return nil, err
 	}
-	messages = append(messages, message)
-	return messages, nil
-}
-
-func (ch *Channel) Push(msg Msg) {
-	if len(ch.channels) > 0 {
-		for chnKey := range maps.Keys(ch.channels) {
-			ch := ch.channels[chnKey]
-			ch.Push(msg)
+	subCh, subChExists := ch.channels[uuid]
+	if !subChExists {
+		subCh, err = Open(uuid)
+		if err == nil {
+			ch.channels[uuid] = subCh
+		} else {
+			return nil, err
 		}
 	}
-	go func() {
-		serialisedMsg, err := msg.Serialise()
-		if err != nil {
-			panic(err)
+	subMsgCh, subMsgChExists := subCh.channels[uuid]
+	if !subMsgChExists {
+		subMsgCh, err = Open(uuid)
+		if err == nil {
+			subCh.channels[uuid] = subMsgCh
+		} else {
+			return nil, err
 		}
-		ch.channel <- serialisedMsg
-	}()
+	}
+	msgSubId := <-subCh.channel
+	serialisedMsg := <-subMsgCh.channel
+	if msgSub.id == MsgSubId(msgSubId) {
+		msg, err := NewDeserialisedMessage(serialisedMsg)
+		return msg, err
+	}
+	return nil, err
+}
+
+func (ch *Channel) Publish(msgSub MsgSub, msg Msg) error {
+	uuid, err := uuid.Parse(string(msgSub.id))
+	if err != nil {
+		return err
+	}
+	subCh, subChExists := ch.channels[uuid]
+	if !subChExists {
+		subCh, err = Open(uuid)
+		if err == nil {
+			ch.channels[uuid] = subCh
+		} else {
+			return err
+		}
+	}
+	subMsgCh, subMsgChExists := subCh.channels[uuid]
+	if !subMsgChExists {
+		subMsgCh, err = Open(uuid)
+		if err == nil {
+			subCh.channels[uuid] = subMsgCh
+		} else {
+			return err
+		}
+	}
+	var serialisedMsg string
+	serialisedMsg, err = msg.Serialise()
+	if err == nil {
+		go (func() {
+			subCh.channel <- string(msgSub.id)
+			subMsgCh.channel <- serialisedMsg
+		})()
+	}
+	return err
 }
 
 func (ch *Channel) Close() {

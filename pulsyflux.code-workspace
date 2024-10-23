@@ -10,9 +10,6 @@
 			"path": "channel"
 		},
 		{
-			"path": "msgsub"
-		},
-		{
 			"path": "msgbus"
 		},
 		{

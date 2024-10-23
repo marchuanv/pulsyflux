@@ -11,29 +11,22 @@ import (
 type Msg interface {
 	GetId() uuid.UUID
 	GetText() string
-	GetAttributes() []MsgAtt
 	Serialise() (string, error)
 }
 
 type msg struct {
-	Id         uuid.UUID
-	Text       string
-	Attributes []MsgAtt
+	Id   uuid.UUID
+	Text string
 }
 
-func NewMessage(attributes []MsgAtt, text string) (Msg, error) {
+func NewMessage(text string) (Msg, error) {
 	id := uuid.New()
-	if len(attributes) == 0 {
-		return nil, errors.New("message requires at least one attribute")
-	}
 	if len(text) == 0 {
 		return nil, errors.New("the msgText argument is an empty string")
 	}
-	newMsg := msg{id, text, attributes}
+	newMsg := msg{id, text}
 	gob.Register(msg{})
 	gob.Register(Msg(msg{}))
-	gob.Register(msgAtt{})
-	gob.Register(MsgAtt(msgAtt{}))
 	return &newMsg, nil
 }
 
@@ -50,10 +43,6 @@ func (m msg) GetId() uuid.UUID {
 
 func (m msg) GetText() string {
 	return m.Text
-}
-
-func (m msg) GetAttributes() []MsgAtt {
-	return m.Attributes
 }
 
 func (m msg) Serialise() (string, error) {

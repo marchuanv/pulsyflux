@@ -4,21 +4,8 @@ import (
 	"testing"
 )
 
-func createMessage(test *testing.T, attributeNames []string, text string, exitOnError bool) Msg {
-	attributes := []MsgAtt{}
-	for _, attName := range attributeNames {
-		att, err := NewMsgAtt(attName)
-		attributes = append(attributes, att)
-		if err == nil {
-		} else {
-			if exitOnError {
-				test.Fatalf("failed to create a new message, exiting test...") // Exits the program
-			} else {
-				test.Log(err)
-			}
-		}
-	}
-	msg, err := NewMessage(attributes, text)
+func createMessage(test *testing.T, text string, exitOnError bool) Msg {
+	msg, err := NewMessage(text)
 	if err != nil {
 		if exitOnError {
 			test.Fatalf("failed to create a new message, exiting test...") // Exits the program
@@ -52,25 +39,16 @@ func serialiseMessage(test *testing.T, msg Msg, exitOnError bool) string {
 	return ""
 }
 
-func TestCreatingMessageWithNoAttributes(test *testing.T) {
-	attributes := []string{}
-	badMsg := createMessage(test, attributes, "Hello World", false)
-	if badMsg != nil {
-		test.Fatalf("expected test to fail")
-	}
-}
 func TestCreatingMessageWithBadText(test *testing.T) {
-	attributes := []string{"BadText"}
-	badMsg := createMessage(test, attributes, "", false)
+	badMsg := createMessage(test, "", false)
 	if badMsg != nil {
 		test.Fatalf("expected test to fail")
 	}
 }
 func TestMsgEquality(test *testing.T) {
-	attributes := []string{"Valid"}
-	msgRef1 := createMessage(test, attributes, "Hello World", true)
-	msgRef2 := createMessage(test, attributes, "Hello World", true)
-	msgRef3 := createMessage(test, attributes, "Hello John", true)
+	msgRef1 := createMessage(test, "Hello World", true)
+	msgRef2 := createMessage(test, "Hello World", true)
+	msgRef3 := createMessage(test, "Hello John", true)
 	if msgRef1 == msgRef2 {
 		test.Fatal("CtorError: did not expect message pointers to be the same")
 	}
@@ -82,21 +60,13 @@ func TestMsgEquality(test *testing.T) {
 	}
 }
 func TestMsgSerialiseAndDeserialise(test *testing.T) {
-	attributes := []string{"Valid"}
-	msg := createMessage(test, attributes, "Hello World", true)
+	msg := createMessage(test, "Hello World", true)
 	serialisedMsg := serialiseMessage(test, msg, true)
 	deserialisedMsg := createDeserialisedMessage(test, serialisedMsg, true)
 	if msg.GetId() != deserialisedMsg.GetId() {
 		test.Fatal("expected deserialised message Id to equal original message Id")
-	} else {
-		deserialisedAttributes := deserialisedMsg.GetAttributes()
-		for _, att := range deserialisedAttributes {
-			if att.GetId() != msg.GetAttributes()[0].GetId() {
-				test.Fatal("attributes did not deserialise succesfully.")
-			}
-			if att.GetName() != "Valid" {
-				test.Fatal("attributes did not deserialise succesfully.")
-			}
-		}
+	}
+	if msg.GetText() != deserialisedMsg.GetText() {
+		test.Fatal("expected deserialised message text to equal original message text")
 	}
 }
