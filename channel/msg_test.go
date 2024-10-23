@@ -88,5 +88,15 @@ func TestMsgSerialiseAndDeserialise(test *testing.T) {
 	deserialisedMsg := createDeserialisedMessage(test, serialisedMsg, true)
 	if msg.GetId() != deserialisedMsg.GetId() {
 		test.Fatal("expected deserialised message Id to equal original message Id")
+	} else {
+		deserialisedAttributes := deserialisedMsg.GetAttributes()
+		for _, att := range deserialisedAttributes {
+			if att.GetId() != msg.GetAttributes()[0].GetId() {
+				test.Fatal("attributes did not deserialise succesfully.")
+			}
+			if att.GetName() != "Valid" {
+				test.Fatal("attributes did not deserialise succesfully.")
+			}
+		}
 	}
 }
