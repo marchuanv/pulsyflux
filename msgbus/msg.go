@@ -3,7 +3,6 @@ package msgbus
 import (
 	"encoding/gob"
 	"errors"
-	"fmt"
 	"pulsyflux/util"
 
 	"github.com/google/uuid"
@@ -12,7 +11,7 @@ import (
 type Msg interface {
 	GetId() uuid.UUID
 	String() string
-	Serialise() string
+	Serialise() *util.Result[string]
 }
 
 type msg struct {
@@ -20,36 +19,28 @@ type msg struct {
 	Text string
 }
 
-func NewMessage(text string) Msg {
-	if len(util.Errors) == 0 {
+func NewMessage(text string) *util.Result[Msg] {
+	return util.Do(true, func() (*util.Result[Msg], error) {
 		id := uuid.New()
 		if len(text) == 0 {
 			err := errors.New("the msgText argument is an empty string")
-			util.Errors = append(util.Errors, err)
-			return nil
+			return nil, err
 		}
 		newMsg := msg{id, text}
 		gob.Register(newMsg)
 		gob.Register(Msg(newMsg))
-		return &newMsg
-	}
-	fmt.Println("there are msgBus errors")
-	return nil
+		result := &util.Result[Msg]{newMsg}
+		return result, nil
+	})
+
 }
 
-func NewDeserialisedMessage(serialised string) Msg {
-	if len(util.Errors) == 0 {
-		var newMsg Msg
-		msg, err := util.Deserialise(serialised)
-		if err == nil {
-			newMsg = msg.(Msg)
-			return newMsg
-		} else {
-			util.Errors = append(util.Errors, err)
-		}
-	}
-	fmt.Println("there are msgBus errors")
-	return nil
+func NewDeserialisedMessage(serialised string) *util.Result[Msg] {
+	return util.Do(true, func() (*util.Result[Msg], error) {
+		desResult := util.Deserialise[Msg](serialised)
+		result := &util.Result[Msg]{desResult.Output}
+		return result, nil
+	})
 }
 
 func (m msg) GetId() uuid.UUID {
@@ -60,14 +51,10 @@ func (m msg) String() string {
 	return m.Text
 }
 
-func (m msg) Serialise() string {
-	if len(util.Errors) == 0 {
-		serialisedStr, err := util.Serialise(Msg(m))
-		if err != nil {
-			util.Errors = append(util.Errors, err)
-		}
-		return serialisedStr
-	}
-	fmt.Println("there are msgBus errors")
-	return ""
+func (m msg) Serialise() *util.Result[string] {
+	return util.Do(true, func() (*util.Result[string], error) {
+		serResult := util.Serialise[msg](m)
+		result := &util.Result[string]{serResult.Output}
+		return result, nil
+	})
 }

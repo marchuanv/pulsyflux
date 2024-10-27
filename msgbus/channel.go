@@ -17,24 +17,21 @@ type Channel struct {
 	channels map[uuid.UUID]*Channel
 }
 
-func New(sub MsgSubId) *Channel {
-	if len(util.Errors) == 0 {
-		chId := sub.Id()
-		if len(util.Errors) == 0 {
-			channel := &Channel{
-				chId,
-				true,
-				make(chan string),
-				make(map[uuid.UUID]*Channel),
-			}
-			runtime.SetFinalizer(channel, func(ch *Channel) {
-				ch.Close()
-			})
-			return channel
+func New(sub MsgSubId) *util.Result[*Channel] {
+	return util.Do(true, func() (*util.Result[*Channel], error) {
+		chIdResults := sub.Id()
+		channel := &Channel{
+			chIdResults.Output,
+			true,
+			make(chan string),
+			make(map[uuid.UUID]*Channel),
 		}
-	}
-	fmt.Println("there are msgBus errors")
-	return nil
+		runtime.SetFinalizer(channel, func(ch *Channel) {
+			ch.Close()
+		})
+		result := &util.Result[*Channel]{channel}
+		return result, nil
+	})
 }
 
 func (ch *Channel) New(sub MsgSubId) *Channel {

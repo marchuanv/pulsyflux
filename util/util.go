@@ -67,8 +67,8 @@ func ReaderFromString(str string) (io.Reader, error) {
 	return reader, nil
 }
 
-func Deserialise(serialised string) *Result[any] {
-	return Do(true, func() (*Result[any], error) {
+func Deserialise[T any](serialised string) *Result[T] {
+	return Do(true, func() (*Result[T], error) {
 		if len(serialised) == 0 {
 			return nil, errors.New("the serialised argument is an empty string")
 		}
@@ -78,14 +78,14 @@ func Deserialise(serialised string) *Result[any] {
 		}
 		buf := bytes.NewBuffer(by)
 		d := gob.NewDecoder(buf)
-		var decoded any
+		var decoded T
 		err = d.Decode(&decoded)
-		result := &Result[any]{decoded}
+		result := &Result[T]{decoded}
 		return result, err
 	})
 }
 
-func Serialise(e any) *Result[string] {
+func Serialise[T any](e T) *Result[string] {
 	return Do(true, func() (*Result[string], error) {
 		buf := bytes.NewBuffer(nil)
 		enc := gob.NewEncoder(buf)
