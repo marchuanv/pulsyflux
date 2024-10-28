@@ -17,8 +17,9 @@ func TestCreateChannel(test *testing.T) {
 	expectedMsg := NewMessage("Hello World")
 	msgBusCh.Publish(expectedMsg)
 	receivedMsg := msgBusCh.Subscribe()
-	if receivedMsg == expectedMsg {
-		test.Fail()
+	if receivedMsg != expectedMsg {
+		test.Log("expected message received from subscription to be the same as the original message published.")
+		test.FailNow()
 	}
 	if receivedMsg.GetId() != expectedMsg.GetId() {
 		test.Fail()

@@ -63,7 +63,9 @@ func (ch *Channel) Publish(msg Msg) {
 			err = errors.New("channel is closed")
 		} else {
 			serialisedMsg := msg.Serialise()
-			ch.messages <- serialisedMsg
+			go (func() {
+				ch.messages <- serialisedMsg
+			})()
 		}
 		return nil, err
 	})
