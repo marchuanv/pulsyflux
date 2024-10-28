@@ -1,14 +1,10 @@
 package util
 
-type Result[T any] struct {
-	Output T
-}
-
-func Do[T any](exitOnError bool, success func() (*Result[T], error), failure ...func(err error)) *Result[T] {
+func Do[T any](exitOnError bool, success func() (T, error), failure ...func(err error)) T {
 	if len(failure) > 1 {
 		panic("only one failure function is supported.")
 	}
-	var result *Result[T]
+	var result T
 	var err error
 	if exitOnError {
 		result, err = success()

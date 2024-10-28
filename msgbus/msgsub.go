@@ -8,13 +8,12 @@ import (
 
 type MsgSubId string
 
-func (msgSubId MsgSubId) Id() *util.Result[uuid.UUID] {
-	return util.Do(true, func() (*util.Result[uuid.UUID], error) {
+func (msgSubId MsgSubId) Id() uuid.UUID {
+	return util.Do(true, func() (uuid.UUID, error) {
 		id, err := uuid.Parse(string(msgSubId))
 		if err != nil {
-			return nil, err
+			return id, err
 		}
-		result := &util.Result[uuid.UUID]{id}
-		return result, err
+		return id, err
 	})
 }

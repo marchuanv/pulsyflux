@@ -21,8 +21,8 @@ func Newv5UUID(data string) uuid.UUID {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(data))
 }
 
-func GetHostAndPortFromAddress(address string) *Result[Address] {
-	return Do(true, func() (*Result[Address], error) {
+func GetHostAndPortFromAddress(address string) *Address {
+	return Do(true, func() (*Address, error) {
 		hostStr, portStr, err := net.SplitHostPort(address)
 		if err != nil {
 			return nil, err
@@ -31,34 +31,34 @@ func GetHostAndPortFromAddress(address string) *Result[Address] {
 		if convErr != nil {
 			return nil, err
 		}
-		address := Address{hostStr, port}
-		result := &Result[Address]{address}
-		return result, err
+		address := &Address{hostStr, port}
+		return address, err
 	})
 }
-func IsValidUUID(u string) *Result[bool] {
-	return Do(true, func() (*Result[bool], error) {
+
+func IsValidUUID(u string) bool {
+	return Do(true, func() (bool, error) {
 		_, err := uuid.Parse(u)
 		isValid := (err == nil)
-		result := &Result[bool]{isValid}
-		return result, err
+		return isValid, err
 	})
 }
+
 func IsEmptyString(str string) bool {
 	return str == ""
 }
-func StringFromReader(reader io.ReadCloser) *Result[string] {
-	return Do(true, func() (*Result[string], error) {
+func StringFromReader(reader io.ReadCloser) string {
+	return Do(true, func() (string, error) {
 		output, err := io.ReadAll(reader)
-		result := &Result[string]{string(output)}
+		outputStr := string(output)
 		if err != nil {
-			return result, err
+			return outputStr, err
 		}
 		err = reader.Close()
 		if err != nil {
-			return result, err
+			return outputStr, err
 		}
-		return result, err
+		return outputStr, err
 	})
 }
 
@@ -67,34 +67,33 @@ func ReaderFromString(str string) (io.Reader, error) {
 	return reader, nil
 }
 
-func Deserialise[T any](serialised string) *Result[T] {
-	return Do(true, func() (*Result[T], error) {
+func Deserialise[T any](serialised string) T {
+	return Do(true, func() (T, error) {
+		var decoded T
 		if len(serialised) == 0 {
-			return nil, errors.New("the serialised argument is an empty string")
+			return decoded, errors.New("the serialised argument is an empty string")
 		}
 		by, err := base64.StdEncoding.DecodeString(serialised)
 		if err != nil {
-			return nil, err
+			return decoded, err
 		}
 		buf := bytes.NewBuffer(by)
 		d := gob.NewDecoder(buf)
-		var decoded T
 		err = d.Decode(&decoded)
-		result := &Result[T]{decoded}
-		return result, err
+		return decoded, err
 	})
 }
 
-func Serialise[T any](e T) *Result[string] {
-	return Do(true, func() (*Result[string], error) {
+func Serialise[T any](e T) string {
+	return Do(true, func() (string, error) {
+		var base64Str string
 		buf := bytes.NewBuffer(nil)
 		enc := gob.NewEncoder(buf)
 		err := enc.Encode(&e)
 		if err != nil {
-			return nil, err
+			return base64Str, err
 		}
-		base64Str := base64.StdEncoding.EncodeToString(buf.Bytes())
-		result := &Result[string]{base64Str}
-		return result, nil
+		base64Str = base64.StdEncoding.EncodeToString(buf.Bytes())
+		return base64Str, nil
 	})
 }

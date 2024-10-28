@@ -5,6 +5,7 @@ import (
 )
 
 func TestMsgEquality(test *testing.T) {
+	BootStrap()
 	msg1 := NewMessage("Hello World")
 	msg2 := NewMessage("Hello World")
 	msg3 := NewMessage("Hello John")
@@ -19,13 +20,14 @@ func TestMsgEquality(test *testing.T) {
 	}
 }
 func TestMsgSerialiseAndDeserialise(test *testing.T) {
+	BootStrap()
 	msg := NewMessage("Hello World")
-	serialisedMsg := msg.Serialise()
-	deserialisedMsg := NewDeserialisedMessage(serialisedMsg)
-	if msg.GetId() != deserialisedMsg.GetId() {
+	serialised := msg.Serialise()
+	desMsg := NewDeserialisedMessage(serialised)
+	if msg.GetId() != desMsg.GetId() {
 		test.Fatal("expected deserialised message Id to equal original message Id")
 	}
-	if msg.String() != deserialisedMsg.String() {
+	if msg.String() != desMsg.String() {
 		test.Fatal("expected deserialised message text to equal original message text")
 	}
 }

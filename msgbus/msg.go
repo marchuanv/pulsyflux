@@ -1,7 +1,6 @@
 package msgbus
 
 import (
-	"encoding/gob"
 	"errors"
 	"pulsyflux/util"
 
@@ -11,7 +10,7 @@ import (
 type Msg interface {
 	GetId() uuid.UUID
 	String() string
-	Serialise() *util.Result[string]
+	Serialise() string
 }
 
 type msg struct {
@@ -19,27 +18,22 @@ type msg struct {
 	Text string
 }
 
-func NewMessage(text string) *util.Result[Msg] {
-	return util.Do(true, func() (*util.Result[Msg], error) {
+func NewMessage(text string) Msg {
+	return util.Do(true, func() (Msg, error) {
 		id := uuid.New()
 		if len(text) == 0 {
 			err := errors.New("the msgText argument is an empty string")
 			return nil, err
 		}
 		newMsg := msg{id, text}
-		gob.Register(newMsg)
-		gob.Register(Msg(newMsg))
-		result := &util.Result[Msg]{newMsg}
-		return result, nil
+		return newMsg, nil
 	})
-
 }
 
-func NewDeserialisedMessage(serialised string) *util.Result[Msg] {
-	return util.Do(true, func() (*util.Result[Msg], error) {
-		desResult := util.Deserialise[Msg](serialised)
-		result := &util.Result[Msg]{desResult.Output}
-		return result, nil
+func NewDeserialisedMessage(serialised string) Msg {
+	return util.Do(true, func() (Msg, error) {
+		desMsg := util.Deserialise[Msg](serialised)
+		return desMsg, nil
 	})
 }
 
@@ -51,10 +45,9 @@ func (m msg) String() string {
 	return m.Text
 }
 
-func (m msg) Serialise() *util.Result[string] {
-	return util.Do(true, func() (*util.Result[string], error) {
-		serResult := util.Serialise[msg](m)
-		result := &util.Result[string]{serResult.Output}
-		return result, nil
+func (m msg) Serialise() string {
+	return util.Do(true, func() (string, error) {
+		serStr := util.Serialise[Msg](m)
+		return serStr, nil
 	})
 }

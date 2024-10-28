@@ -11,6 +11,7 @@ const (
 )
 
 func TestCreateChannel(test *testing.T) {
+	BootStrap()
 	msgBusCh := New(MESSAGE_BUS)
 	msgBusCh.Open()
 	expectedMsg := NewMessage("Hello World")

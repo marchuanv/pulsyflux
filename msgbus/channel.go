@@ -2,7 +2,6 @@ package msgbus
 
 import (
 	"errors"
-	"fmt"
 	"maps"
 	"pulsyflux/util"
 	"runtime"
@@ -17,108 +16,77 @@ type Channel struct {
 	channels map[uuid.UUID]*Channel
 }
 
-func New(sub MsgSubId) *util.Result[*Channel] {
-	return util.Do(true, func() (*util.Result[*Channel], error) {
-		chIdResults := sub.Id()
-		channel := &Channel{
-			chIdResults.Output,
-			true,
-			make(chan string),
-			make(map[uuid.UUID]*Channel),
-		}
+func New(sub MsgSubId) *Channel {
+	return util.Do(true, func() (*Channel, error) {
+		chIdRes := sub.Id()
+		channel := &Channel{chIdRes, true, make(chan string), make(map[uuid.UUID]*Channel)}
 		runtime.SetFinalizer(channel, func(ch *Channel) {
 			ch.Close()
 		})
-		result := &util.Result[*Channel]{channel}
-		return result, nil
+		return channel, nil
 	})
 }
 
 func (ch *Channel) New(sub MsgSubId) *Channel {
-	if len(util.Errors) == 0 {
-		chId := sub.Id()
-		if len(util.Errors) == 0 {
-			childCh, exists := ch.channels[chId]
-			if exists {
-				return childCh
-			}
+	return util.Do(true, func() (*Channel, error) {
+		chIdRes := sub.Id()
+		childCh, exists := ch.channels[chIdRes]
+		if !exists {
 			childCh = New(sub)
-			if len(util.Errors) == 0 {
-				ch.channels[chId] = childCh
-				return childCh
-			}
 		}
-	}
-	fmt.Println("there are msgBus errors")
-	return nil
+		return childCh, nil
+	})
 }
 
 func (ch *Channel) Open() {
-	if len(util.Errors) == 0 {
-		ch.closed = false
-	} else {
-		fmt.Println("there are msgBus errors")
-	}
+	ch.closed = false
 }
 
 func (ch *Channel) Subscribe() Msg {
-	return util.Do(true, func() {
+	return util.Do(true, func() (Msg, error) {
+		var err error
+		var msg Msg
 		if ch.closed {
-			err := errors.New("channel is closed")
-			util.Errors = append(util.Errors, err)
+			err = errors.New("channel is closed")
 		} else {
 			serialisedMsg := <-ch.messages
-			util.Do(true, func() {
-			})
-			msg := NewDeserialisedMessage(serialisedMsg)
-			if len(util.Errors) == 0 {
-				return msg
-			}
+			msg = NewDeserialisedMessage(serialisedMsg)
 		}
+		return msg, err
 	})
-	return nil
 }
 
 func (ch *Channel) Publish(msg Msg) {
-	if len(util.Errors) == 0 {
+	util.Do(true, func() (any, error) {
+		var err error
 		if ch.closed {
-			err := errors.New("channel is closed")
-			util.Errors = append(util.Errors, err)
-			return
+			err = errors.New("channel is closed")
+		} else {
+			serialisedMsg := msg.Serialise()
+			ch.messages <- serialisedMsg
 		}
-		serialisedMsg := msg.Serialise()
-		if len(util.Errors) == 0 {
-			go (func() {
-				if len(util.Errors) == 0 {
-					ch.messages <- serialisedMsg
-				} else {
-					fmt.Println("there are msgBus errors")
-				}
-			})()
-		}
-	}
-	fmt.Println("there are msgBus errors")
+		return nil, err
+	})
 }
 
 func (ch *Channel) Close() {
-	if len(util.Errors) == 0 {
+	util.Do(true, func() (any, error) {
+		var err error
 		if len(ch.channels) > 0 {
 			for chnKey := range maps.Keys(ch.channels) {
 				ch := ch.channels[chnKey]
 				ch.Close()
 			}
 		}
-		if len(util.Errors) == 0 {
-			if !ch.closed {
-				close(ch.messages)
-				for u := range ch.channels {
-					delete(ch.channels, u)
-				}
-				ch.channels = nil
-				ch.messages = nil
-				ch.closed = true
+		if !ch.closed {
+			close(ch.messages)
+			for u := range ch.channels {
+				delete(ch.channels, u)
 			}
+			ch.channels = nil
+			ch.messages = nil
+			ch.closed = true
 		}
-	}
-	fmt.Println("there are msgBus errors")
+		return nil, err
+	})
 }
