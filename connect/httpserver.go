@@ -1,6 +1,7 @@
 package connect
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -28,7 +29,7 @@ func HttpServerSubscriptions() {
 			return invalidHttpServerAddress
 		})
 		if errorPubCh != nil {
-			return errorPubCh, nil
+			return errorPubCh, errors.New("failed on server address")
 		}
 
 		listener, errorPubCh := task.Do[net.Listener, *msgbus.Channel](func() (net.Listener, error) {
@@ -42,7 +43,7 @@ func HttpServerSubscriptions() {
 			return httpServPortUnavCh
 		})
 		if errorPubCh != nil {
-			return errorPubCh, nil
+			return errorPubCh, errors.New("failed to listen on server address")
 		}
 
 		httpServer := http.Server{
@@ -55,20 +56,21 @@ func HttpServerSubscriptions() {
 		httpServerResCh := httpCh.New(subscriptions.HTTP_SERVER_RESPONSE)
 		httpServer.Handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 			task.Do(func() (any, error) {
-				httpServerSuccResCh := httpServerResCh.New(subscriptions.HTTP_SERVER_SUCCESS_RESPONSE)
 				requestBody := util.StringFromReader(request.Body)
 				resMsg := msgbus.NewDeserialisedMessage(requestBody)
+				httpServerSuccResCh := httpServerResCh.New(subscriptions.HTTP_SERVER_SUCCESS_RESPONSE)
 				httpServerSuccResCh.Publish(resMsg)
 				response.WriteHeader(http.StatusOK)
 				return nil, nil
 			}, func(err error, params ...any) any {
 				task.Do(func() (any, error) {
-					response.WriteHeader(http.StatusInternalServerError)
 					httpServerErrResCh := httpServerResCh.New(subscriptions.HTTP_SERVER_ERROR_RESPONSE)
 					errorMsg := msgbus.NewMessage(err.Error())
 					httpServerErrResCh.Publish(errorMsg)
+					response.WriteHeader(http.StatusInternalServerError)
 					return nil, nil
 				}, func(err error, params ...any) any {
+					response.WriteHeader(http.StatusInternalServerError)
 					fmt.Println("MessagePublishFail: could not publish the error message to the channel, loggin the error here: ", err)
 					return nil
 				})
@@ -76,19 +78,19 @@ func HttpServerSubscriptions() {
 			})
 		})
 
-		stopHttpServCh := httpCh.New(subscriptions.STOP_HTTP_SERVER)
-
 		//STOP SERVER
 		_, errorPubCh = task.Do[any, *msgbus.Channel](func() (any, error) {
+			stopHttpServCh := httpCh.New(subscriptions.STOP_HTTP_SERVER)
 			stopHttpServCh.Subscribe()
 			err := httpServer.Close()
 			return nil, err
 		}, func(err error, params ...any) *msgbus.Channel {
+			stopHttpServCh := httpCh.New(subscriptions.STOP_HTTP_SERVER)
 			failedToStopHttpServCh := stopHttpServCh.New(subscriptions.FAILED_TO_STOP_HTTP_SERVER)
 			return failedToStopHttpServCh
 		})
 		if errorPubCh != nil {
-			return errorPubCh, nil
+			return errorPubCh, errors.New("failed to stop server on address")
 		}
 
 		//START SERVER
@@ -106,7 +108,7 @@ func HttpServerSubscriptions() {
 			return failedToStartHttpServCh
 		})
 		if errorPubCh != nil {
-			return errorPubCh, nil
+			return errorPubCh, errors.New("failed to start server on address")
 		}
 
 		return errorPubCh, nil
