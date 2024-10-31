@@ -1,25 +1,40 @@
 package util
 
-func Do[T any](exitOnError bool, success func() (T, error), failure ...func(err error)) T {
-	if len(failure) > 1 {
-		panic("only one failure function is supported.")
-	}
-	var result T
-	var err error
-	if exitOnError {
-		result, err = success()
-		if err != nil {
-			panic(err)
+var failureQueue = make([]func(err error), 0)
+
+func Do[T any](success func() (T, error), failures ...func(err error)) T {
+	queueFailures(failures...)
+	result, err := success()
+	errHandled := false
+	failure := dequeueFailure()
+	if err == nil {
+		for failure != nil {
+			failure = dequeueFailure()
 		}
 	} else {
-		if len(failure) == 0 {
-			panic("failure handle function required when exit on error is false")
-		} else {
-			result, err = success()
-			if err != nil {
-				failure[0](err)
+		for failure != nil {
+			if !errHandled {
+				errHandled = true
+				failure(err)
 			}
+			failure = dequeueFailure()
+		}
+		if !errHandled {
+			panic(err)
 		}
 	}
 	return result
+}
+
+func dequeueFailure() func(err error) {
+	if len(failureQueue) > 0 {
+		dqFailure := failureQueue[0]
+		failureQueue = failureQueue[:0]
+		return dqFailure
+	}
+	return nil
+}
+
+func queueFailures(failures ...func(err error)) {
+	failureQueue = append(failureQueue, failures...)
 }

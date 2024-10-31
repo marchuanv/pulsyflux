@@ -22,7 +22,7 @@ func Newv5UUID(data string) uuid.UUID {
 }
 
 func GetHostAndPortFromAddress(address string) *Address {
-	return Do(true, func() (*Address, error) {
+	return Do(func() (*Address, error) {
 		hostStr, portStr, err := net.SplitHostPort(address)
 		if err != nil {
 			return nil, err
@@ -37,7 +37,7 @@ func GetHostAndPortFromAddress(address string) *Address {
 }
 
 func IsValidUUID(u string) bool {
-	return Do(true, func() (bool, error) {
+	return Do(func() (bool, error) {
 		_, err := uuid.Parse(u)
 		isValid := (err == nil)
 		return isValid, err
@@ -48,7 +48,7 @@ func IsEmptyString(str string) bool {
 	return str == ""
 }
 func StringFromReader(reader io.ReadCloser) string {
-	return Do(true, func() (string, error) {
+	return Do(func() (string, error) {
 		output, err := io.ReadAll(reader)
 		outputStr := string(output)
 		if err != nil {
@@ -68,7 +68,7 @@ func ReaderFromString(str string) (io.Reader, error) {
 }
 
 func Deserialise[T any](serialised string) T {
-	return Do(true, func() (T, error) {
+	return Do(func() (T, error) {
 		var decoded T
 		if len(serialised) == 0 {
 			return decoded, errors.New("the serialised argument is an empty string")
@@ -85,7 +85,7 @@ func Deserialise[T any](serialised string) T {
 }
 
 func Serialise[T any](e T) string {
-	return Do(true, func() (string, error) {
+	return Do(func() (string, error) {
 		var base64Str string
 		buf := bytes.NewBuffer(nil)
 		enc := gob.NewEncoder(buf)
