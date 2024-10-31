@@ -6,11 +6,8 @@ import (
 	"testing"
 )
 
-func TestServer(test *testing.T) {
+func TestHttpServer(test *testing.T) {
 
-	var err error
-	var errorMsg msgbus.Msg
-	var msg msgbus.Msg
 	var httpServStartedCh *msgbus.Channel
 	var startHttpServCh *msgbus.Channel
 	var stopHttpServCh *msgbus.Channel
@@ -21,21 +18,56 @@ func TestServer(test *testing.T) {
 	var httpServerSuccResCh *msgbus.Channel
 	var httpServerErrResCh *msgbus.Channel
 
-	httpCh, err := Subscribe()
-	if err != nil {
-		test.Fail()
-	}
+	HttpServerSubscriptions()
+	httpCh := msgbus.New(subscriptions.HTTP)
 
-	startHttpServCh = httpCh.New(subscriptions.START_HTTP_SERVER)
-	httpServStartedCh = httpCh.New(subscriptions.HTTP_SERVER_STARTED)
-	failedToStartHttpServCh = startHttpServCh.New(subscriptions.FAILED_TO_START_HTTP_SERVER)
-	stopHttpServCh = httpCh.New(subscriptions.STOP_HTTP_SERVER)
-	failedToStopHttpServCh = stopHttpServCh.New(subscriptions.FAILED_TO_STOP_HTTP_SERVER)
-	httpServPortUnavCh = startHttpServCh.New(subscriptions.FAILED_TO_LISTEN_ON_HTTP_SERVER_PORT)
 	httpServerResCh = httpCh.New(subscriptions.HTTP_SERVER_RESPONSE)
-	httpServerSuccResCh = httpServerResCh.New(subscriptions.HTTP_SERVER_SUCCESS_RESPONSE)
-	httpServerErrResCh = httpServerResCh.New(subscriptions.HTTP_SERVER_ERROR_RESPONSE)
+	//HTTP RESPONSE SUCCESS
+	go (func() {
+		httpServerSuccResCh = httpServerResCh.New(subscriptions.HTTP_SERVER_SUCCESS_RESPONSE)
+		successHttpResponseMsg := httpServerSuccResCh.Subscribe()
+		test.Log(successHttpResponseMsg)
+	})()
+	//HTTP RESPONSE FAIL
+	go (func() {
+		httpServerErrResCh = httpServerResCh.New(subscriptions.HTTP_SERVER_ERROR_RESPONSE)
+		failedHttpResponseMsg := httpServerErrResCh.Subscribe()
+		test.Log(failedHttpResponseMsg)
+	})()
 
-	startHttpServCh.Subscribe()
+	//FAILED TO START EVENT
+	go (func() {
+		go (func() {
+			httpServPortUnavCh = startHttpServCh.New(subscriptions.FAILED_TO_LISTEN_ON_HTTP_SERVER_PORT)
+			httpServPortUnavMsg := httpServPortUnavCh.Subscribe()
+			test.Log(httpServPortUnavMsg)
+		})()
+		failedToStartHttpServCh = startHttpServCh.New(subscriptions.FAILED_TO_START_HTTP_SERVER)
+		failedToStartMsg := failedToStartHttpServCh.Subscribe()
+		test.Log(failedToStartMsg)
+	})()
 
+	//STARTED EVENT
+	go (func() {
+		httpServStartedCh = httpCh.New(subscriptions.HTTP_SERVER_STARTED)
+		startedMsg := httpServStartedCh.Subscribe()
+		test.Log(startedMsg)
+	})()
+
+	//STOPPED EVENT
+	go (func() {
+		go (func() {
+			failedToStopHttpServCh = stopHttpServCh.New(subscriptions.FAILED_TO_STOP_HTTP_SERVER)
+			failedToStopHttpServMsg := failedToStopHttpServCh.Subscribe()
+			test.Log(failedToStopHttpServMsg)
+		})()
+		stopHttpServCh = httpCh.New(subscriptions.STOP_HTTP_SERVER)
+		stoppedMsg := stopHttpServCh.Subscribe()
+		test.Log(stoppedMsg)
+	})()
+
+	//START EVENT
+	startHttpServCh = httpCh.New(subscriptions.START_HTTP_SERVER)
+	startMsg := msgbus.NewMessage("start http server")
+	startHttpServCh.Publish(startMsg)
 }

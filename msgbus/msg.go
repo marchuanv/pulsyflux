@@ -2,6 +2,7 @@ package msgbus
 
 import (
 	"errors"
+	"pulsyflux/task"
 	"pulsyflux/util"
 
 	"github.com/google/uuid"
@@ -19,7 +20,7 @@ type msg struct {
 }
 
 func NewMessage(text string) Msg {
-	return util.Do(true, func() (Msg, error) {
+	results, _ := task.Do[Msg, any](func() (Msg, error) {
 		id := uuid.New()
 		if len(text) == 0 {
 			err := errors.New("the msgText argument is an empty string")
@@ -28,13 +29,15 @@ func NewMessage(text string) Msg {
 		newMsg := msg{id, text}
 		return newMsg, nil
 	})
+	return results
 }
 
 func NewDeserialisedMessage(serialised string) Msg {
-	return util.Do(true, func() (Msg, error) {
+	results, _ := task.Do[Msg, any](func() (Msg, error) {
 		desMsg := util.Deserialise[Msg](serialised)
 		return desMsg, nil
 	})
+	return results
 }
 
 func (m msg) GetId() uuid.UUID {
@@ -46,8 +49,9 @@ func (m msg) String() string {
 }
 
 func (m msg) Serialise() string {
-	return util.Do(true, func() (string, error) {
+	results, _ := task.Do[string, any](func() (string, error) {
 		serStr := util.Serialise[Msg](m)
 		return serStr, nil
 	})
+	return results
 }

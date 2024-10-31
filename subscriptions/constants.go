@@ -6,8 +6,10 @@ const (
 	HTTP msgbus.MsgSubId = "452aa68e-7f90-47aa-b475-9a6263c3cd4b"
 
 	START_HTTP_SERVER           msgbus.MsgSubId = "8438288d-c4fe-411f-8f35-7db4e887e497"
+	RECEIVE_HTTP_SERVER_ADDRESS msgbus.MsgSubId = "416a9a28-a5df-404a-8cc3-6033029f7d40"
 	HTTP_SERVER_STARTED         msgbus.MsgSubId = "d1f34c8c-94c3-43b8-82ef-bb9b61591560"
 	FAILED_TO_START_HTTP_SERVER msgbus.MsgSubId = "f5e5b557-4fd3-418a-ab5c-7ddf2e3cd546"
+	INVALID_HTTP_SERVER_ADDRESS msgbus.MsgSubId = "604a9df0-a1fc-4c67-aff1-52eae6af2f29"
 
 	STOP_HTTP_SERVER           msgbus.MsgSubId = "a183e779-289b-4816-a0fa-d5eae11f42d5"
 	FAILED_TO_STOP_HTTP_SERVER msgbus.MsgSubId = "1e58a866-8991-4746-920e-7bf71720c8b9"

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"pulsyflux/task"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -21,8 +22,8 @@ func Newv5UUID(data string) uuid.UUID {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(data))
 }
 
-func GetHostAndPortFromAddress(address string) *Address {
-	return Do(func() (*Address, error) {
+func NewAddress(address string) *Address {
+	results, _ := task.Do[*Address, any](func() (*Address, error) {
 		hostStr, portStr, err := net.SplitHostPort(address)
 		if err != nil {
 			return nil, err
@@ -34,21 +35,26 @@ func GetHostAndPortFromAddress(address string) *Address {
 		address := &Address{hostStr, port}
 		return address, err
 	})
+	return results
+}
+func (add *Address) String() string {
+	return add.host + ":" + strconv.Itoa(add.port)
 }
 
 func IsValidUUID(u string) bool {
-	return Do(func() (bool, error) {
+	results, _ := task.Do[bool, any](func() (bool, error) {
 		_, err := uuid.Parse(u)
 		isValid := (err == nil)
 		return isValid, err
 	})
+	return results
 }
 
 func IsEmptyString(str string) bool {
 	return str == ""
 }
 func StringFromReader(reader io.ReadCloser) string {
-	return Do(func() (string, error) {
+	results, _ := task.Do[string, any](func() (string, error) {
 		output, err := io.ReadAll(reader)
 		outputStr := string(output)
 		if err != nil {
@@ -60,15 +66,19 @@ func StringFromReader(reader io.ReadCloser) string {
 		}
 		return outputStr, err
 	})
+	return results
 }
 
-func ReaderFromString(str string) (io.Reader, error) {
-	reader := bytes.NewReader([]byte(str))
-	return reader, nil
+func ReaderFromString(str string) io.Reader {
+	results, _ := task.Do[io.Reader, any](func() (io.Reader, error) {
+		reader := bytes.NewReader([]byte(str))
+		return reader, nil
+	})
+	return results
 }
 
 func Deserialise[T any](serialised string) T {
-	return Do(func() (T, error) {
+	results, _ := task.Do[T, any](func() (T, error) {
 		var decoded T
 		if len(serialised) == 0 {
 			return decoded, errors.New("the serialised argument is an empty string")
@@ -82,10 +92,11 @@ func Deserialise[T any](serialised string) T {
 		err = d.Decode(&decoded)
 		return decoded, err
 	})
+	return results
 }
 
 func Serialise[T any](e T) string {
-	return Do(func() (string, error) {
+	results, _ := task.Do[string, any](func() (string, error) {
 		var base64Str string
 		buf := bytes.NewBuffer(nil)
 		enc := gob.NewEncoder(buf)
@@ -96,4 +107,5 @@ func Serialise[T any](e T) string {
 		base64Str = base64.StdEncoding.EncodeToString(buf.Bytes())
 		return base64Str, nil
 	})
+	return results
 }

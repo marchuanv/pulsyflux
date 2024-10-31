@@ -59,7 +59,7 @@ func Send(schema HttpSchema, method HttpMethod, address string, path string, dat
 		errorMsg := fmt.Sprintf("Could not parse url: %s, error: %v", addr, err)
 		return response, errors.New(errorMsg)
 	}
-	host, port, err := util.GetHostAndPortFromAddress(url.Host)
+	host, port, err := util.NewAddress(url.Host)
 	if err != nil {
 		errorMsg := fmt.Sprintf("error making http request could not determine the host and port from address: %s\n", err)
 		return response, errors.New(errorMsg)

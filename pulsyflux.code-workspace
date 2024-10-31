@@ -17,7 +17,11 @@
 		},
 		{
 			"path": "subscriptions"
+		},
+		{
+			"path": "task"
 		}
+
 	]
 }
 

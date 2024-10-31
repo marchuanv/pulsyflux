@@ -3,7 +3,7 @@ package msgbus
 import (
 	"errors"
 	"maps"
-	"pulsyflux/util"
+	"pulsyflux/task"
 	"runtime"
 
 	"github.com/google/uuid"
@@ -16,19 +16,25 @@ type Channel struct {
 	channels map[uuid.UUID]*Channel
 }
 
+var allChannels = make(map[uuid.UUID]*Channel)
+
 func New(sub MsgSubId) *Channel {
-	return util.Do(true, func() (*Channel, error) {
-		chIdRes := sub.Id()
-		channel := &Channel{chIdRes, true, make(chan string), make(map[uuid.UUID]*Channel)}
-		runtime.SetFinalizer(channel, func(ch *Channel) {
-			ch.Close()
-		})
+	results, _ := task.Do[*Channel, any](func() (*Channel, error) {
+		chId := sub.Id()
+		channel, exists := allChannels[chId]
+		if !exists {
+			channel = &Channel{chId, true, make(chan string), make(map[uuid.UUID]*Channel)}
+			runtime.SetFinalizer(channel, func(ch *Channel) {
+				ch.Close()
+			})
+		}
 		return channel, nil
 	})
+	return results
 }
 
 func (ch *Channel) New(sub MsgSubId) *Channel {
-	return util.Do(true, func() (*Channel, error) {
+	results, _ := task.Do[*Channel, any](func() (*Channel, error) {
 		chIdRes := sub.Id()
 		childCh, exists := ch.channels[chIdRes]
 		if !exists {
@@ -36,14 +42,19 @@ func (ch *Channel) New(sub MsgSubId) *Channel {
 		}
 		return childCh, nil
 	})
+	return results
 }
 
-func (ch *Channel) Open() {
-	ch.closed = false
+func (ch *Channel) Open() bool {
+	results, _ := task.Do[bool, any](func() (bool, error) {
+		ch.closed = false
+		return !ch.closed, nil
+	})
+	return results
 }
 
 func (ch *Channel) Subscribe() Msg {
-	return util.Do(true, func() (Msg, error) {
+	results, _ := task.Do[Msg, any](func() (Msg, error) {
 		var err error
 		var msg Msg
 		if ch.closed {
@@ -54,10 +65,11 @@ func (ch *Channel) Subscribe() Msg {
 		}
 		return msg, err
 	})
+	return results
 }
 
-func (ch *Channel) Publish(msg Msg) {
-	util.Do(true, func() (any, error) {
+func (ch *Channel) Publish(msg Msg) bool {
+	results, _ := task.Do[bool, any](func() (bool, error) {
 		var err error
 		if ch.closed {
 			err = errors.New("channel is closed")
@@ -67,12 +79,13 @@ func (ch *Channel) Publish(msg Msg) {
 				ch.messages <- serialisedMsg
 			})()
 		}
-		return nil, err
+		return true, err
 	})
+	return results
 }
 
-func (ch *Channel) Close() {
-	util.Do(true, func() (any, error) {
+func (ch *Channel) Close() bool {
+	results, _ := task.Do[bool, any](func() (bool, error) {
 		var err error
 		if len(ch.channels) > 0 {
 			for chnKey := range maps.Keys(ch.channels) {
@@ -89,6 +102,7 @@ func (ch *Channel) Close() {
 			ch.messages = nil
 			ch.closed = true
 		}
-		return nil, err
+		return ch.closed, err
 	})
+	return results
 }
