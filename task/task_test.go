@@ -8,21 +8,27 @@ import (
 func TestErrorHandle(test *testing.T) {
 	outerMostRaised := false
 	innerMostRaised := false
-	Do(func() (string, string, error) {
-		Do(func() (string, string, error) {
-			Do(func() (string, string, error) {
-				Do(func() (string, string, error) {
-					return "", "", errors.New("something has gone wrong")
-				}, func(err error, params ...string) {
+	Do(func() (string, error) {
+		Do(func() (string, error) {
+			Do(func() (string, error) {
+				Do(func() (string, error) {
+					return "", errors.New("something has gone wrong")
+				}, func(err error, param string) string {
 					innerMostRaised = true
+					return param
 				})
-				return "", "", nil
-			}, func(err error, params ...string) {})
-			return "", "", nil
-		}, func(err error, params ...string) {})
-		return "", "", nil
-	}, func(err error, params ...string) {
+				return "", nil
+			}, func(err error, param string) string {
+				return param
+			})
+			return "", nil
+		}, func(err error, param string) string {
+			return param
+		})
+		return "", nil
+	}, func(err error, param string) string {
 		outerMostRaised = true
+		return param
 	})
 	if !outerMostRaised {
 		test.Log("outer most error should have been raised")
@@ -40,16 +46,16 @@ func TestPanicNoErrorHandle(test *testing.T) {
 			test.Errorf("The code did not panic")
 		}
 	}()
-	Do(func() (string, string, error) {
-		Do(func() (string, string, error) {
-			Do(func() (string, string, error) {
-				Do(func() (string, string, error) {
-					return "", "", errors.New("something has gone wrong")
-				})
-				return "", "", nil
-			})
-			return "", "", nil
-		})
-		return "", "", nil
-	})
+	Do[string, any](func() (string, error) {
+		Do[string, any](func() (string, error) {
+			Do[string, any](func() (string, error) {
+				Do[string, any](func() (string, error) {
+					return "", errors.New("something has gone wrong")
+				}, nil)
+				return "", nil
+			}, nil)
+			return "", nil
+		}, nil)
+		return "", nil
+	}, nil)
 }

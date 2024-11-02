@@ -19,7 +19,7 @@ type Channel struct {
 var allChannels = make(map[uuid.UUID]*Channel)
 
 func New(sub MsgSubId) *Channel {
-	results, _ := task.Do[*Channel, any](func() (*Channel, error) {
+	return task.Do[*Channel, any](func() (*Channel, error) {
 		chId := sub.Id()
 		channel, exists := allChannels[chId]
 		if !exists {
@@ -30,11 +30,10 @@ func New(sub MsgSubId) *Channel {
 		}
 		return channel, nil
 	})
-	return results
 }
 
 func (ch *Channel) New(sub MsgSubId) *Channel {
-	results, _ := task.Do[*Channel, any](func() (*Channel, error) {
+	return task.Do[*Channel, any](func() (*Channel, error) {
 		chIdRes := sub.Id()
 		childCh, exists := ch.channels[chIdRes]
 		if !exists {
@@ -42,19 +41,17 @@ func (ch *Channel) New(sub MsgSubId) *Channel {
 		}
 		return childCh, nil
 	})
-	return results
 }
 
 func (ch *Channel) Open() bool {
-	results, _ := task.Do[bool, any](func() (bool, error) {
+	return task.Do[bool, any](func() (bool, error) {
 		ch.closed = false
 		return !ch.closed, nil
 	})
-	return results
 }
 
 func (ch *Channel) Subscribe() Msg {
-	results, _ := task.Do[Msg, any](func() (Msg, error) {
+	return task.Do[Msg, any](func() (Msg, error) {
 		var err error
 		var msg Msg
 		if ch.closed {
@@ -65,11 +62,10 @@ func (ch *Channel) Subscribe() Msg {
 		}
 		return msg, err
 	})
-	return results
 }
 
 func (ch *Channel) Publish(msg Msg) bool {
-	results, _ := task.Do[bool, any](func() (bool, error) {
+	return task.Do[bool, any](func() (bool, error) {
 		var err error
 		if ch.closed {
 			err = errors.New("channel is closed")
@@ -81,11 +77,10 @@ func (ch *Channel) Publish(msg Msg) bool {
 		}
 		return true, err
 	})
-	return results
 }
 
 func (ch *Channel) Close() bool {
-	results, _ := task.Do[bool, any](func() (bool, error) {
+	return task.Do[bool, any](func() (bool, error) {
 		var err error
 		if len(ch.channels) > 0 {
 			for chnKey := range maps.Keys(ch.channels) {
@@ -104,5 +99,4 @@ func (ch *Channel) Close() bool {
 		}
 		return ch.closed, err
 	})
-	return results
 }
