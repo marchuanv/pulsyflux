@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"pulsyflux/msgbus"
+	"pulsyflux/subscriptions"
+	"pulsyflux/task"
 	"pulsyflux/util"
 	"strings"
 )
@@ -25,7 +28,94 @@ type HttpResponse struct {
 	Data          string
 }
 
-func Send(schema HttpSchema, method HttpMethod, address string, path string, data string) (HttpResponse, error) {
+func HttpRequestSubscriptions() {
+
+	task.Do(func() (*msgbus.Channel, error) {
+
+		httpCh := msgbus.New(subscriptions.HTTP)
+		httpReqCh := httpCh.New(subscriptions.HTTP_REQUEST)
+
+		httpMethod, errorPubCh := task.Do[string, *msgbus.Channel](func() (string, error) {
+			httpRequestMethodCh := httpReqCh.New(subscriptions.HTTP_REQUEST_METHOD)
+			httpRequestMethod := httpRequestMethodCh.Subscribe()
+			return httpRequestMethod.String(), nil
+		}, func(err error, params ...string) *msgbus.Channel {
+			invalidHttpMethod := httpReqCh.New(subscriptions.INVALID_HTTP_METHOD)
+			return invalidHttpMethod
+		})
+		if errorPubCh != nil {
+			return errorPubCh, errors.New("invalid http method")
+		}
+
+		protocol, errorPubCh := task.Do[string, *msgbus.Channel](func() (string, error) {
+			requestProtocolCh := httpReqCh.New(subscriptions.REQUEST_PROTOCAL)
+			httpScheme := requestProtocolCh.Subscribe()
+			return httpScheme.String(), nil
+		}, func(err error, params ...string) *msgbus.Channel {
+			invalidHttpMethod := httpReqCh.New(subscriptions.INVALID_HTTP_METHOD)
+			return invalidHttpMethod
+		})
+		if errorPubCh != nil {
+			return errorPubCh, errors.New("invalid protocal")
+		}
+
+		address, errorPubCh := task.Do[*util.Address, *msgbus.Channel](func() (*util.Address, error) {
+			receiveHttpAddress := httpCh.New(subscriptions.RECEIVE_HTTP_ADDRESS)
+			msg := receiveHttpAddress.Subscribe()
+			addressStr := msg.String()
+			address := util.NewAddress(addressStr)
+			return address, nil
+		}, func(err error, params ...*util.Address) *msgbus.Channel {
+			invalidHttpAddress := httpCh.New(subscriptions.RECEIVE_HTTP_ADDRESS)
+			return invalidHttpAddress
+		})
+		if errorPubCh != nil {
+			return errorPubCh, errors.New("failed on server address")
+		}
+
+		path, errorPubCh := task.Do[string, *msgbus.Channel](func() (string, error) {
+			receiveHttpRequestBodyCh := httpCh.New(subscriptions.HTTP_REQUEST_DATA)
+			msg := receiveHttpRequestBodyCh.Subscribe()
+			return msg.String(), nil
+		}, func(err error, params ...string) *msgbus.Channel {
+			invalidHttpAddress := httpCh.New(subscriptions.HTTP_REQUEST_DATA)
+			return invalidHttpAddress
+		})
+		if errorPubCh != nil {
+			return errorPubCh, errors.New("failed on server address")
+		}
+
+		path, errorPubCh := task.Do[string, *msgbus.Channel](func() (string, error) {
+			receiveHttpRequestBodyCh := httpCh.New(subscriptions.HTTP_REQUEST_DATA)
+			msg := receiveHttpRequestBodyCh.Subscribe()
+			return msg.String(), nil
+		}, func(err error, params ...string) *msgbus.Channel {
+			invalidHttpAddress := httpCh.New(subscriptions.HTTP_REQUEST_DATA)
+			return invalidHttpAddress
+		})
+		if errorPubCh != nil {
+			return errorPubCh, errors.New("failed on server address")
+		}
+
+		return nil, nil
+	}, func(err error, errorPubs ...*msgbus.Channel) any {
+		task.Do(func() (any, error) {
+			errorMsg := msgbus.NewMessage(err.Error())
+			for len(errorPubs) > 0 {
+				publisher := errorPubs[len(errorPubs)-1]
+				publisher.Publish(errorMsg)
+			}
+			return nil, nil
+		}, func(err error, params ...any) any {
+			fmt.Println("MessagePublishFail: could not publish the error message to the channel, logging the error here: ", err)
+			return nil
+		})
+		return nil
+	})
+
+	httpRequestErrorResponse := httpReqCh.New(subscriptions.HTTP_REQUEST_ERROR_RESPONSE)
+	httpRequestErrorResponse := httpReqCh.New(subscriptions.HTTP_REQUEST_ERROR_RESPONSE)
+
 	request := HttpRequest{
 		schema,
 		method,
@@ -92,4 +182,6 @@ func Send(schema HttpSchema, method HttpMethod, address string, path string, dat
 	response.StatusCode = res.StatusCode
 	response.StatusMessage = res.Status
 	return response, nil
+}
+func Send(schema HttpSchema, method HttpMethod, address string, path string, data string) (HttpResponse, error) {
 }

@@ -6,9 +6,9 @@ const (
 	HTTP msgbus.MsgSubId = "452aa68e-7f90-47aa-b475-9a6263c3cd4b"
 
 	START_HTTP_SERVER           msgbus.MsgSubId = "8438288d-c4fe-411f-8f35-7db4e887e497"
-	RECEIVE_HTTP_SERVER_ADDRESS msgbus.MsgSubId = "416a9a28-a5df-404a-8cc3-6033029f7d40"
 	HTTP_SERVER_STARTED         msgbus.MsgSubId = "d1f34c8c-94c3-43b8-82ef-bb9b61591560"
 	FAILED_TO_START_HTTP_SERVER msgbus.MsgSubId = "f5e5b557-4fd3-418a-ab5c-7ddf2e3cd546"
+	RECEIVE_HTTP_SERVER_ADDRESS msgbus.MsgSubId = "416a9a28-a5df-404a-8cc3-6033029f7d40"
 	INVALID_HTTP_SERVER_ADDRESS msgbus.MsgSubId = "604a9df0-a1fc-4c67-aff1-52eae6af2f29"
 
 	STOP_HTTP_SERVER           msgbus.MsgSubId = "a183e779-289b-4816-a0fa-d5eae11f42d5"
@@ -19,4 +19,20 @@ const (
 	HTTP_SERVER_RESPONSE         msgbus.MsgSubId = "69ef7396-9986-42a0-960f-509b73f371a2"
 	HTTP_SERVER_SUCCESS_RESPONSE msgbus.MsgSubId = "61ca9656-b862-436e-8d06-42ce4f448632"
 	HTTP_SERVER_ERROR_RESPONSE   msgbus.MsgSubId = "57dcd78d-49d0-4125-889a-96a783ab367e"
+
+	HTTP_REQUEST        msgbus.MsgSubId = "bfe776d5-76b5-4e69-a895-b1806968d4f8"
+	HTTP_REQUEST_METHOD msgbus.MsgSubId = "5e607279-1446-4d46-894e-7cb47da87f09"
+	INVALID_HTTP_METHOD msgbus.MsgSubId = "2ed32381-b69a-475b-bf4d-6e73c49e022f"
+
+	REQUEST_PROTOCAL msgbus.MsgSubId = "ed52a842-3984-4c14-afb7-ef19b87f91c2"
+
+	HTTP_RESPONSE msgbus.MsgSubId = "0cf46747-16f5-4d83-b6b3-c7fafbe463a5"
+
+	HTTP_REQUEST_SUCCESS_RESPONSE msgbus.MsgSubId = "0bb6a926-d417-4dda-9313-16ca96e521a6"
+	HTTP_REQUEST_ERROR_RESPONSE   msgbus.MsgSubId = "2034b484-1058-47a6-ad45-2cb0e4494046"
+
+	RECEIVE_HTTP_ADDRESS msgbus.MsgSubId = "3583ac70-d38c-4f15-b0f8-dbe4fd5bfd95"
+	INVALID_HTTP_ADDRESS msgbus.MsgSubId = "5f61ea9d-e7e0-4a0b-8bab-7ab70c2f0eec"
+
+	HTTP_REQUEST_DATA msgbus.MsgSubId = "99a30dfa-3663-4572-8c33-15261e1b90a2"
 )
