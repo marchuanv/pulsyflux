@@ -8,6 +8,8 @@ import (
 func TestErrorHandle(test *testing.T) {
 	outerMostRaised := false
 	innerMostRaised := false
+	innerMostExpectedParamValue := "inner parameter call"
+	actualParamValue := "inner parameter call"
 	Do(func() (string, error) {
 		Do(func() (string, error) {
 			Do(func() (string, error) {
@@ -15,7 +17,7 @@ func TestErrorHandle(test *testing.T) {
 					return "", errors.New("something has gone wrong")
 				}, func(err error, param string) string {
 					innerMostRaised = true
-					return param
+					return "inner parameter call"
 				})
 				return "", nil
 			}, func(err error, param string) string {
@@ -28,8 +30,13 @@ func TestErrorHandle(test *testing.T) {
 		return "", nil
 	}, func(err error, param string) string {
 		outerMostRaised = true
+		actualParamValue = param
 		return param
 	})
+	if innerMostExpectedParamValue != actualParamValue {
+		test.Log("inner most parameter was not passed to outer most parameter")
+		test.Fail()
+	}
 	if !outerMostRaised {
 		test.Log("outer most error should have been raised")
 		test.Fail()

@@ -51,8 +51,10 @@ func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, 
 	taskCount -= 1
 	tskStack.Push(tsk)
 	if tsk.isChild {
+		callErrorFunction(tsk)
+		results := tskResult[T1](tsk)
 		tsk = nil
-		return tskResult[T1](tsk)
+		return results
 	}
 	for tskStack.Len() > 0 {
 		popTsk := tskStack.Pop()
