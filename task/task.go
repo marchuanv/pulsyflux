@@ -100,10 +100,6 @@ func tskError(tsk *task) error {
 	return tsk.errVal.Interface().(error)
 }
 
-func tskErrorParam[T any](tsk *task) T {
-	return tsk.errorParamVal.Interface().(T)
-}
-
 func tskResult[T any](tsk *task) T {
 	return tsk.resultsVal.Interface().(T)
 }
