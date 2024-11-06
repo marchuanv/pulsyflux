@@ -1,11 +1,7 @@
 package task
 
-import "sync"
-
 type taskStack struct {
-	tasks  []*task
-	mu     sync.Mutex
-	locked bool
+	tasks []*task
 }
 
 func (s *taskStack) Push(tsk *task) {
@@ -22,18 +18,6 @@ func (s *taskStack) Pop() *task {
 func (s *taskStack) Peek() *task {
 	l := len(s.tasks)
 	return s.tasks[l-1]
-}
-
-func (s *taskStack) Lock() {
-	s.mu.Lock()
-}
-
-func (s *taskStack) Unlock() {
-	s.mu.Unlock()
-}
-
-func (s *taskStack) IsLocked() bool {
-	return !s.locked
 }
 
 func (s *taskStack) Len() int {

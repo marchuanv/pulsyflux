@@ -3,103 +3,166 @@ package task
 import (
 	"errors"
 	"reflect"
+	"runtime"
+	"strings"
+	"sync"
 )
 
 type task struct {
-	doFuncRef       reflect.Value
-	errorFuncRef    reflect.Value
-	errVal          reflect.Value
-	errorParamVal   reflect.Value
-	resultsVal      reflect.Value
-	hasErrors       bool
-	isErrorsHandled bool
-	isChild         bool
+	errFunc             func(tsk *task)
+	errorFuncAssignable bool
+	err                 error
+	errorParam          reflect.Value
+	hasErrors           bool
+	isErrorsHandled     bool
+	isChild             bool
+	callstack           []string
 }
 
 var tskStack = taskStack{}
-var taskCount = 0
+var mu = sync.Mutex{}
 
 func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, errorParam T2) T2) T1 {
-	var err error
-	var errorParam T2
 	var results T1
-	doFuncRef := reflect.Indirect(reflect.ValueOf(doFunc))
-	errVal := reflect.Indirect(reflect.ValueOf(err))
-	errorParamVal := reflect.Indirect(reflect.ValueOf(errorParam))
-	resultsVal := reflect.Indirect(reflect.ValueOf(results))
-	var errorFuncRef reflect.Value
-	if len(errorFunc) > 0 {
-		errorFuncRef = reflect.Indirect(reflect.ValueOf(errorFunc[0]))
-	}
-	tsk := &task{
-		doFuncRef,
-		errorFuncRef,
-		errVal,
-		errorParamVal,
-		resultsVal,
-		false,
-		false,
-		false,
-	}
-	taskCount += 1
-	if taskCount > 1 {
-		tsk.isChild = true
-	} else {
-		tsk.isChild = false
-	}
-	callDoFunction(tsk)
-	taskCount -= 1
-	tskStack.Push(tsk)
-	if tsk.isChild {
-		callErrorFunction(tsk)
-		results := tskResult[T1](tsk)
-		tsk = nil
-		return results
-	}
-	for tskStack.Len() > 0 {
-		popTsk := tskStack.Pop()
-		if popTsk.hasErrors && !popTsk.errorFuncRef.IsZero() {
-			isErrFuncAssign := tsk.errorFuncRef.Type().AssignableTo(popTsk.errorFuncRef.Type())
-			isErrAssign := tsk.errVal.Type().AssignableTo(popTsk.errVal.Type())
-			if isErrFuncAssign && isErrAssign {
-				tsk.errVal = popTsk.errVal
-				tsk.errorParamVal = popTsk.errorParamVal
-				callErrorFunction(tsk)
+	errFunc := func(tsk *task) {
+		tsk.isErrorsHandled = false
+		if len(errorFunc) > 0 {
+			if errorFunc[0] != nil {
+				var errParam T2
+				if !isZero(tsk.errorParam) {
+					errParam = getValue(tsk.errorParam).Interface().(T2)
+				}
+				errParam = errorFunc[0](tsk.err, errParam)
+				tsk.errorParam = getValue(reflect.ValueOf(errParam))
 				tsk.isErrorsHandled = true
-			} else {
-				unassignableErr := errors.New("one or more error function in the task chain does not have the correct function signatures")
-				panic(unassignableErr)
 			}
 		}
 	}
-	if tsk.hasErrors && !tsk.isErrorsHandled {
-		tskErr := tskError(tsk)
+	{
+		tsk := &task{
+			errFunc,
+			true,
+			nil,
+			reflect.Value{},
+			false,
+			true,
+			false,
+			[]string{},
+		}
+		skipFrame := 0
+		for {
+			caller := getFrame(skipFrame).Function
+			if caller == "unknown" {
+				break
+			}
+			tsk.callstack = append(tsk.callstack, caller)
+			skipFrame += 1
+		}
+		if tskStack.Len() == 0 {
+			mu.Lock()
+			tsk.isChild = false
+		} else {
+			topTsk := tskStack.Peek()
+			for _, clStk := range topTsk.callstack {
+				for _, clStk2 := range tsk.callstack {
+					if strings.Contains(clStk2, clStk) && !strings.Contains(clStk2, "task.Do") {
+						tsk.isChild = true
+					}
+				}
+			}
+			if !tsk.isChild {
+				mu.Lock()
+			}
+		}
+		// if strings.Contains("", ".func") {
+		tskStack.Push(tsk)
+		res, tskErr := doFunc()
+		if tskErr != nil {
+			tsk.hasErrors = true
+			tsk.isErrorsHandled = false
+			tsk.err = tskErr
+		}
+		if tsk.isChild {
+			return res
+		} else {
+			results = res
+		}
+	}
+	var popTsk *task
+	var prevPopTsk *task
+
+	undisposedTskStack := taskStack{}
+	for tskStack.Len() > 0 {
+		popTsk = tskStack.Pop()
+		if prevPopTsk == nil {
+			prevPopTsk = popTsk
+		}
+		popTsk.hasErrors = prevPopTsk.hasErrors
+		popTsk.isErrorsHandled = prevPopTsk.isErrorsHandled
+		popTsk.err = prevPopTsk.err
+		if isZero(popTsk.errorParam) {
+			if !isZero(prevPopTsk.errorParam) {
+				popTsk.errorParam = prevPopTsk.errorParam
+			}
+		} else {
+			if !isZero(prevPopTsk.errorParam) {
+				if !popTsk.errorParam.Type().AssignableTo(prevPopTsk.errorParam.Type()) {
+					unassignableErr := errors.New("errorParamVal is not assignable")
+					panic(unassignableErr)
+				}
+				popTsk.errorParam = prevPopTsk.errorParam
+			}
+		}
+		popTsk.errFunc(popTsk)
+		undisposedTskStack.Push(popTsk)
+		prevPopTsk = popTsk
+	}
+	if popTsk.hasErrors && !popTsk.isErrorsHandled {
+		tskErr := errors.New("one or more unhandled errors occured in the task chain ")
 		panic(tskErr)
 	}
-	return tskResult[T1](tsk)
-}
-
-func callDoFunction(tsk *task) {
-	out := tsk.doFuncRef.Call([]reflect.Value{})
-	tsk.resultsVal = out[0]
-	tsk.errVal = out[1]
-	if !tsk.errVal.IsZero() {
-		tsk.hasErrors = true
-		tsk.isErrorsHandled = false
+	//cleanup
+	for undisposedTskStack.Len() > 0 {
+		undTskSt := undisposedTskStack.Pop()
+		if !isZero(undTskSt.errorParam) {
+			undTskSt.errorParam = reflect.Zero(undTskSt.errorParam.Type())
+		}
 	}
-	out = nil
+	mu.Unlock()
+	return results
 }
 
-func callErrorFunction(tsk *task) {
-	out := tsk.errorFuncRef.Call([]reflect.Value{tsk.errVal, tsk.errorParamVal})
-	tsk.errorParamVal = out[0]
-	out = nil
+func isZero(val reflect.Value) bool {
+	if val.IsValid() {
+		if val.IsZero() {
+			return true
+		}
+	} else {
+		return true
+	}
+	return false
 }
 
-func tskError(tsk *task) error {
-	return tsk.errVal.Interface().(error)
+func getValue(val reflect.Value) reflect.Value {
+	return reflect.Indirect(val)
 }
 
-func tskResult[T any](tsk *task) T {
-	return tsk.resultsVal.Interface().(T)
+func getFrame(skipFrames int) runtime.Frame {
+	// We need the frame at index skipFrames+2, since we never want runtime.Callers and getFrame
+	targetFrameIndex := skipFrames + 2
+	// Set size to targetFrameIndex+2 to ensure we have room for one more caller than we need
+	programCounters := make([]uintptr, targetFrameIndex+2)
+	n := runtime.Callers(0, programCounters)
+	frame := runtime.Frame{Function: "unknown"}
+	if n > 0 {
+		frames := runtime.CallersFrames(programCounters[:n])
+		for more, frameIndex := true, 0; more && frameIndex <= targetFrameIndex; frameIndex++ {
+			var frameCandidate runtime.Frame
+			frameCandidate, more = frames.Next()
+			if frameIndex == targetFrameIndex {
+				frame = frameCandidate
+			}
+		}
+	}
+	return frame
 }

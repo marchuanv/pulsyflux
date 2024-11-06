@@ -58,11 +58,11 @@ func TestPanicNoErrorHandle(test *testing.T) {
 			Do[string, any](func() (string, error) {
 				Do[string, any](func() (string, error) {
 					return "", errors.New("something has gone wrong")
-				}, nil)
+				})
 				return "", nil
-			}, nil)
+			})
 			return "", nil
-		}, nil)
+		})
 		return "", nil
-	}, nil)
+	})
 }
