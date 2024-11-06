@@ -9,14 +9,13 @@ import (
 )
 
 type task struct {
-	errFunc             func(tsk *task)
-	errorFuncAssignable bool
-	err                 error
-	errorParam          reflect.Value
-	hasErrors           bool
-	isErrorsHandled     bool
-	isChild             bool
-	callstack           []string
+	errFunc         func(tsk *task)
+	err             error
+	errorParam      reflect.Value
+	hasErrors       bool
+	isErrorsHandled bool
+	isChild         bool
+	callstack       []string
 }
 
 var tskStack = taskStack{}
@@ -41,7 +40,6 @@ func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, 
 	{
 		tsk := &task{
 			errFunc,
-			true,
 			nil,
 			reflect.Value{},
 			false,
@@ -74,7 +72,6 @@ func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, 
 				mu.Lock()
 			}
 		}
-		// if strings.Contains("", ".func") {
 		tskStack.Push(tsk)
 		res, tskErr := doFunc()
 		if tskErr != nil {
@@ -125,7 +122,10 @@ func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, 
 	for undisposedTskStack.Len() > 0 {
 		undTskSt := undisposedTskStack.Pop()
 		if !isZero(undTskSt.errorParam) {
-			undTskSt.errorParam = reflect.Zero(undTskSt.errorParam.Type())
+			undTskSt.callstack = nil
+			undTskSt.errorParam = reflect.Value{}
+			undTskSt.errFunc = nil
+			undTskSt.err = nil
 		}
 	}
 	mu.Unlock()
