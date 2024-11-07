@@ -34,8 +34,7 @@ func HttpServerSubscriptions() {
 			}
 			return listener, nil
 		}, func(err error, ch *msgbus.Channel) *msgbus.Channel {
-			httpServPortUnavCh := startHttpServCh.New(subscriptions.FAILED_TO_LISTEN_ON_HTTP_SERVER_PORT)
-			return httpServPortUnavCh
+			return startHttpServCh.New(subscriptions.FAILED_TO_LISTEN_ON_HTTP_SERVER_PORT)
 		})
 
 		httpServer := http.Server{
@@ -71,15 +70,14 @@ func HttpServerSubscriptions() {
 		})
 
 		//STOP SERVER
-		task.Do[any, *msgbus.Channel](func() (any, error) {
+		task.Do(func() (any, error) {
 			stopHttpServCh := httpCh.New(subscriptions.STOP_HTTP_SERVER)
 			stopHttpServCh.Subscribe()
 			err := httpServer.Close()
 			return nil, err
 		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
 			stopHttpServCh := httpCh.New(subscriptions.STOP_HTTP_SERVER)
-			failedToStopHttpServCh := stopHttpServCh.New(subscriptions.FAILED_TO_STOP_HTTP_SERVER)
-			return failedToStopHttpServCh
+			return stopHttpServCh.New(subscriptions.FAILED_TO_STOP_HTTP_SERVER)
 		})
 
 		//START SERVER
@@ -93,8 +91,7 @@ func HttpServerSubscriptions() {
 			httpServStartedCh.Publish(msg)
 			return nil, nil
 		}, func(err error, params *msgbus.Channel) *msgbus.Channel {
-			failedToStartHttpServCh := startHttpServCh.New(subscriptions.FAILED_TO_START_HTTP_SERVER)
-			return failedToStartHttpServCh
+			return startHttpServCh.New(subscriptions.FAILED_TO_START_HTTP_SERVER)
 		})
 
 		return nil, nil

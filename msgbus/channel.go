@@ -23,7 +23,7 @@ func New(sub MsgSubId) *Channel {
 		chId := sub.Id()
 		channel, exists := allChannels[chId]
 		if !exists {
-			channel = &Channel{chId, true, make(chan string), make(map[uuid.UUID]*Channel)}
+			channel = &Channel{chId, false, make(chan string), make(map[uuid.UUID]*Channel)}
 			runtime.SetFinalizer(channel, func(ch *Channel) {
 				ch.Close()
 			})

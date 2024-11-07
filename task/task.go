@@ -4,9 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"runtime"
-	"strings"
-	"sync"
 )
 
 type task struct {
@@ -15,12 +12,9 @@ type task struct {
 	errorParam      reflect.Value
 	hasErrors       bool
 	isErrorsHandled bool
-	isChild         bool
-	callstack       []string
 }
 
 var tskStack = taskStack{}
-var mu = sync.Mutex{}
 
 func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, errorParam T2) T2) T1 {
 	defer (func() {
@@ -37,34 +31,22 @@ func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, 
 				popTsk.isErrorsHandled = false
 				popTsk.err = recErr
 			}
-
-			nextTask := tskStack.Peek()
-			isUnlocked := false
-			if !popTsk.isChild {
-				mu.Unlock()
-				isUnlocked = true
-			}
 			popTsk.errFunc(popTsk)
-			if nextTask != nil {
+			nextTask := tskStack.Peek()
+			if nextTask == nil {
+				if popTsk.hasErrors && !popTsk.isErrorsHandled {
+					panic(popTsk.err)
+				}
+			} else {
 				nextTask.hasErrors = popTsk.hasErrors
 				nextTask.isErrorsHandled = popTsk.isErrorsHandled
 				nextTask.err = popTsk.err
 				if !isZero(popTsk.errorParam) {
-
 					nextTask.errorParam = popTsk.errorParam
 				}
 			}
-			popTsk.callstack = nil
 			popTsk.errorParam = reflect.Value{}
 			popTsk.errFunc = nil
-			if !popTsk.isChild {
-				if popTsk.hasErrors && !popTsk.isErrorsHandled {
-					panic(popTsk.err)
-				}
-				if !isUnlocked {
-					mu.Unlock()
-				}
-			}
 			popTsk.err = nil
 		} else {
 			panic(recErr)
@@ -90,33 +72,6 @@ func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, 
 		reflect.Value{},
 		false,
 		true,
-		false,
-		[]string{},
-	}
-	skipFrame := 0
-	for {
-		caller := getFrame(skipFrame).Function
-		if caller == "unknown" {
-			break
-		}
-		tsk.callstack = append(tsk.callstack, caller)
-		skipFrame += 1
-	}
-	if tskStack.Len() == 0 {
-		mu.Lock()
-		tsk.isChild = false
-	} else {
-		topTsk := tskStack.Peek()
-		for _, clStk := range topTsk.callstack {
-			for _, clStk2 := range tsk.callstack {
-				if strings.Contains(clStk2, clStk) && !strings.Contains(clStk2, "task.Do") {
-					tsk.isChild = true
-				}
-			}
-		}
-		if !tsk.isChild {
-			mu.Lock()
-		}
 	}
 	tskStack.Push(tsk)
 	results, tskErr := doFunc()
@@ -137,24 +92,4 @@ func isZero(val reflect.Value) bool {
 		return true
 	}
 	return false
-}
-
-func getFrame(skipFrames int) runtime.Frame {
-	// We need the frame at index skipFrames+2, since we never want runtime.Callers and getFrame
-	targetFrameIndex := skipFrames + 2
-	// Set size to targetFrameIndex+2 to ensure we have room for one more caller than we need
-	programCounters := make([]uintptr, targetFrameIndex+2)
-	n := runtime.Callers(0, programCounters)
-	frame := runtime.Frame{Function: "unknown"}
-	if n > 0 {
-		frames := runtime.CallersFrames(programCounters[:n])
-		for more, frameIndex := true, 0; more && frameIndex <= targetFrameIndex; frameIndex++ {
-			var frameCandidate runtime.Frame
-			frameCandidate, more = frames.Next()
-			if frameIndex == targetFrameIndex {
-				frame = frameCandidate
-			}
-		}
-	}
-	return frame
 }
