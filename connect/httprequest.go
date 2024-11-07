@@ -38,36 +38,41 @@ func HttpRequestSubscriptions() {
 
 		httpMethod := task.Do(func() (string, error) {
 			httpRequestMethodCh := httpReqCh.New(subscriptions.HTTP_REQUEST_METHOD)
-			httpRequestMethod := httpRequestMethodCh.Subscribe()
-			return httpRequestMethod.String(), nil
+			requestMethodMsg := httpRequestMethodCh.Subscribe()
+			return requestMethodMsg.String(), nil
 		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
 			return httpReqCh.New(subscriptions.INVALID_HTTP_REQUEST_METHOD)
 		})
 
 		protocol := task.Do(func() (string, error) {
 			requestProtocolCh := httpReqCh.New(subscriptions.REQUEST_PROTOCAL)
-			httpScheme := requestProtocolCh.Subscribe()
-			return httpScheme.String(), nil
+			protoMsg := requestProtocolCh.Subscribe()
+			return protoMsg.String(), nil
 		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
 			return httpReqCh.New(subscriptions.INVALID_REQUEST_PROTOCAL)
 		})
 
 		address := task.Do(func() (*util.Address, error) {
-			receiveHttpAddress := httpReqCh.New(subscriptions.HTTP_REQUEST_ADDRESS)
-			msg := receiveHttpAddress.Subscribe()
-			addressStr := msg.String()
-			address := util.NewAddress(addressStr)
+			httpReqAddressCh := httpReqCh.New(subscriptions.HTTP_REQUEST_ADDRESS)
+			addressMsg := httpReqAddressCh.Subscribe()
+			address := util.NewAddress(addressMsg.String())
 			return address, nil
 		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
 			return httpReqCh.New(subscriptions.INVALID_HTTP_REQUEST_ADDRESS)
 		})
 
-		url := task.Do(func() (*url.URL, error) {
+		requestURL := task.Do(func() (*url.URL, error) {
 			httpReqPathCh := httpReqCh.New(subscriptions.HTTP_REQUEST_PATH)
-			httpReqPathCh.Subscribe()
-			url, err := url.ParseRequestURI(address.String())
+			reqPathMsg := httpReqPathCh.Subscribe()
+			addr := address.String()
+			prefix := fmt.Sprintf("%s://", protocol)
+			if !strings.HasPrefix(addr, prefix) {
+				addr = prefix + addr
+			}
+			fullAddress := addr + reqPathMsg.String()
+			url, err := url.ParseRequestURI(fullAddress)
 			if err != nil {
-				errorMsg := fmt.Sprintf("Could not parse url: %s, error: %v", address.String(), err)
+				errorMsg := fmt.Sprintf("Could not parse url: %s, error: %v", fullAddress, err)
 				return nil, errors.New(errorMsg)
 			}
 			return url, nil
@@ -77,69 +82,33 @@ func HttpRequestSubscriptions() {
 
 		reqBody := task.Do(func() (io.Reader, error) {
 			httpRequestBodyCh := httpReqCh.New(subscriptions.HTTP_REQUEST_DATA)
-			msg := httpRequestBodyCh.Subscribe()
-			reqBody := util.ReaderFromString(msg.String())
+			requestBodyMsg := httpRequestBodyCh.Subscribe()
+			reqBody := util.ReaderFromString(requestBodyMsg.String())
 			return reqBody, nil
 		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
-			invalidHttpAddress := httpReqCh.New(subscriptions.INVALID_HTTP_REQUEST_DATA)
-			return invalidHttpAddress
+			return httpReqCh.New(subscriptions.INVALID_HTTP_REQUEST_DATA)
 		})
 
-		addr := address.String()
-		prefix := fmt.Sprintf("%s://", protocol)
-		if !strings.HasPrefix(addr, prefix) {
-			addr = prefix + addr
-		}
-
-		resBody := task.Do(func() (*http.Request, error) {
+		task.Do(func() (any, error) {
 			httpReqCh.Subscribe()
-			requestURL := fmt.Sprintf("%s://%s:%d%s", addr, address.Host, address.Port, url.Path)
-			req, err := http.NewRequest(httpMethod, requestURL, reqBody)
+			req, err := http.NewRequest(httpMethod, requestURL.String(), reqBody)
 			if err != nil {
-				return nil, err
+				return "", err
 			}
-
 			res, err := http.DefaultClient.Do(req)
 			req.Body.Close()
 			req = nil
 			if err != nil {
-				return response, err
+				return "", err
 			}
-			resBody, err := util.StringFromReader(res.Body)
-			if err != nil {
-				return response, err
-			}
-
-			return resBody, nil
+			resBody := util.StringFromReader(res.Body)
+			resBodyMsg := msgbus.NewMessage(resBody)
+			httpReqCh.Publish(resBodyMsg)
+			return "", nil
 		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
-			invalidHttpRequest := httpReqCh.New(subscriptions.INVALID_HTTP_REQUEST)
-			return invalidHttpRequest
+			return httpReqCh.New(subscriptions.INVALID_HTTP_REQUEST)
 		})
 
-		resBody := task.Do(func() (*http.Request, error) {
-			httpReqCh.Subscribe()
-			requestURL := fmt.Sprintf("%s://%s:%d%s", addr, address.Host, address.Port, url.Path)
-			req, err := http.NewRequest(httpMethod, requestURL, reqBody)
-			if err != nil {
-				return nil, err
-			}
-
-			res, err := http.DefaultClient.Do(req)
-			req.Body.Close()
-			req = nil
-			if err != nil {
-				return response, err
-			}
-			resBody, err := util.StringFromReader(res.Body)
-			if err != nil {
-				return response, err
-			}
-
-			return resBody, nil
-		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
-			invalidHttpRequest := httpReqCh.New(subscriptions.INVALID_HTTP_REQUEST)
-			return invalidHttpRequest
-		})
 		return nil, nil
 	}, func(err error, errorPub *msgbus.Channel) *msgbus.Channel {
 		task.Do(func() (any, error) {

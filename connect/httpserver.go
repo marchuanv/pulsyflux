@@ -24,8 +24,7 @@ func HttpServerSubscriptions() {
 			address := util.NewAddress(addressStr)
 			return address, nil
 		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
-			invalidHttpServerAddress := startHttpServCh.New(subscriptions.INVALID_HTTP_SERVER_ADDRESS)
-			return invalidHttpServerAddress
+			return startHttpServCh.New(subscriptions.INVALID_HTTP_SERVER_ADDRESS)
 		})
 
 		listener := task.Do(func() (net.Listener, error) {
@@ -100,14 +99,10 @@ func HttpServerSubscriptions() {
 
 		return nil, nil
 	}, func(err error, errorPub *msgbus.Channel) *msgbus.Channel {
-		task.Do(func() (any, error) {
+		return task.Do[*msgbus.Channel, any](func() (*msgbus.Channel, error) {
 			errorMsg := msgbus.NewMessage(err.Error())
 			errorPub.Publish(errorMsg)
 			return nil, nil
-		}, func(err error, params any) any {
-			fmt.Println("MessagePublishFail: could not publish the error message to the channel, logging the error here: ", err)
-			return nil
 		})
-		return nil
 	})
 }

@@ -17,7 +17,11 @@ func (s *taskStack) Pop() *task {
 
 func (s *taskStack) Peek() *task {
 	l := len(s.tasks)
-	return s.tasks[l-1]
+	if l > 0 {
+		return s.tasks[l-1]
+	} else {
+		return nil
+	}
 }
 
 func (s *taskStack) Len() int {

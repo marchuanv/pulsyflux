@@ -31,7 +31,10 @@ func TestErrorHandle(test *testing.T) {
 	}, func(err error, param string) string {
 		outerMostRaised = true
 		actualParamValue = param
-		return param
+		_param := Do[string, string](func() (string, error) {
+			return param, nil
+		})
+		return _param
 	})
 	if innerMostExpectedParamValue != actualParamValue {
 		test.Log("inner most parameter was not passed to outer most parameter")
