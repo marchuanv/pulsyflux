@@ -12,9 +12,8 @@ type task struct {
 	errorParam      reflect.Value
 	hasErrors       bool
 	isErrorsHandled bool
+	isCalled        bool
 }
-
-var tskStack = taskStack{}
 
 func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, errorParam T2) T2) T1 {
 	defer (func() {
@@ -23,34 +22,34 @@ func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, 
 		if r != nil {
 			recErr = errors.New(fmt.Sprint(r))
 		}
-		if tskStack.Len() > 0 {
-			popTsk := tskStack.Pop()
-
-			if recErr != nil {
-				popTsk.hasErrors = true
-				popTsk.isErrorsHandled = false
-				popTsk.err = recErr
-			}
-			popTsk.errFunc(popTsk)
-			nextTask := tskStack.Peek()
-			if nextTask == nil {
-				if popTsk.hasErrors && !popTsk.isErrorsHandled {
-					panic(popTsk.err)
-				}
-			} else {
-				nextTask.hasErrors = popTsk.hasErrors
-				nextTask.isErrorsHandled = popTsk.isErrorsHandled
-				nextTask.err = popTsk.err
-				if !isZero(popTsk.errorParam) {
-					nextTask.errorParam = popTsk.errorParam
-				}
-			}
-			popTsk.errorParam = reflect.Value{}
-			popTsk.errFunc = nil
-			popTsk.err = nil
-		} else {
-			panic(recErr)
+		caller, tsk := callstackPop()
+		fmt.Printf("removed task from %s callstack", caller)
+		if tsk == nil {
+			panic("no task on the callstack")
 		}
+		if recErr != nil {
+			tsk.hasErrors = true
+			tsk.isErrorsHandled = false
+			tsk.err = recErr
+		}
+
+		tsk.errFunc(tsk)
+		_, nextTask := callstackPeek()
+		if nextTask == nil {
+			if tsk.hasErrors && !tsk.isErrorsHandled {
+				panic(tsk.err)
+			}
+		} else {
+			nextTask.hasErrors = tsk.hasErrors
+			nextTask.isErrorsHandled = tsk.isErrorsHandled
+			nextTask.err = tsk.err
+			if !isZero(tsk.errorParam) {
+				nextTask.errorParam = tsk.errorParam
+			}
+		}
+		tsk.errorParam = reflect.Value{}
+		tsk.errFunc = nil
+		tsk.err = nil
 	})()
 	errFunc := func(tsk *task) {
 		tsk.isErrorsHandled = false
@@ -72,8 +71,10 @@ func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, 
 		reflect.Value{},
 		false,
 		true,
+		false,
 	}
-	tskStack.Push(tsk)
+	callstackPush(tsk)
+	tsk.isCalled = true
 	results, tskErr := doFunc()
 	if tskErr != nil {
 		tsk.hasErrors = true
