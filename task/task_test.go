@@ -17,36 +17,46 @@ func TestErrorHandle(test *testing.T) {
 				Do(func() (string, error) {
 					actualFuncCalls = append(actualFuncCalls, "func")
 					return "", errors.New("something has gone wrong")
-				}, func(err error, param string) string {
+				}, nil, func(err error, param string) string {
 					actualErrFuncCalls = append(actualErrFuncCalls, "errfunc")
 					return "error occured here"
 				})
 				Do(func() (string, error) {
 					actualFuncCalls = append(actualFuncCalls, "func1")
 					return "", errors.New("something has gone wrong")
-				}, func(err error, param string) string {
+				}, nil, func(err error, param string) string {
 					actualErrFuncCalls = append(actualErrFuncCalls, "errfunc1")
 					return "error occured here"
 				})
+				// //simulate a task that never returns
+				// DoAsync(func() (string, error) {
+				// 	actualFuncCalls = append(actualFuncCalls, "longrunningfunc")
+				// 	return "hello", nil
+				// }, func(val string) {
+
+				// }, func(err error, param string) string {
+				// 	actualErrFuncCalls = append(actualErrFuncCalls, "errfunc2")
+				// 	return "error occured here"
+				// })
 				actualFuncCalls = append(actualFuncCalls, "func11")
 				return "", nil
-			}, func(err error, param string) string {
+			}, nil, func(err error, param string) string {
 				actualErrFuncCalls = append(actualErrFuncCalls, "errfunc11")
 				return param
 			})
 			actualFuncCalls = append(actualFuncCalls, "func111")
 			return "", nil
-		}, func(err error, param string) string {
+		}, nil, func(err error, param string) string {
 			actualErrFuncCalls = append(actualErrFuncCalls, "errfunc111")
 			return param
 		})
 		actualFuncCalls = append(actualFuncCalls, "func1111")
 		return "", nil
-	}, func(err error, param string) string {
+	}, nil, func(err error, param string) string {
 		actualErrFuncCalls = append(actualErrFuncCalls, "errfunc1111")
 		_param := Do[string, string](func() (string, error) {
 			return param, nil
-		})
+		}, nil)
 		return _param
 	})
 	if !reflect.DeepEqual(actualFuncCalls, expectedFuncCalls) {
@@ -70,11 +80,11 @@ func TestPanicNoErrorHandle(test *testing.T) {
 			Do[string, any](func() (string, error) {
 				Do[string, any](func() (string, error) {
 					return "", errors.New("something has gone wrong")
-				})
+				}, nil)
 				return "", nil
-			})
+			}, nil)
 			return "", nil
-		})
+		}, nil)
 		return "", nil
-	})
+	}, nil)
 }
