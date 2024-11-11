@@ -3,6 +3,7 @@ package task
 import (
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -17,18 +18,13 @@ type tskCallstack struct {
 var tskClStks = stack[*tskCallstack]{}
 
 func callstackPush(tsk *task) {
-	skipFrame := 2
-	caller := getFrame(skipFrame).Function
-	if caller == "unknown" {
-		panic("Do stack error")
-	}
+	var caller string
+	var callerStk = buildCallerStack()
+	caller, callerStk = callerStk.Pop()
 	tskClStk := &tskCallstack{caller, tsk, sync.Mutex{}}
 	tskClStk.mu.Lock()
 	fmt.Printf("\r\nattempting to push task for '%s' to the call stack\r\n", tskClStk.caller)
-	var topOfStack *tskCallstack
-	if len(tskClStks) > 0 {
-		topOfStack = tskClStks[0]
-	}
+	topOfStack := tskClStks.Peek()
 	if topOfStack == nil {
 		tskClStks = tskClStks.Push(tskClStk)
 		fmt.Printf("pushed task for '%s' to the call stack\r\n", tskClStk.caller)
@@ -36,17 +32,31 @@ func callstackPush(tsk *task) {
 		tskClStks = tskClStks.Push(tskClStk)
 		fmt.Printf("pushed task for '%s' to the call stack\r\n", tskClStk.caller)
 	} else {
-		go (func() {
-			obtainedLock := topOfStack.mu.TryLock()
-			for !obtainedLock {
-				time.Sleep(1 * time.Second)
-				obtainedLock = topOfStack.mu.TryLock()
+		var foundClStk *tskCallstack
+		for len(callerStk) > 0 && foundClStk == nil {
+			for _, tClStk := range tskClStks {
+				if strings.Contains(caller, tClStk.caller) {
+					foundClStk = tClStk
+				}
 			}
-			topOfStack.mu.Lock()
+			caller, callerStk = callerStk.Pop()
+		}
+		if foundClStk == nil {
+			go (func() {
+				obtainedLock := foundClStk.mu.TryLock()
+				for !obtainedLock {
+					time.Sleep(1 * time.Second)
+					obtainedLock = foundClStk.mu.TryLock()
+				}
+				foundClStk.mu.Lock()
+				tskClStks = tskClStks.Push(tskClStk)
+				fmt.Printf("pushed task for '%s' to the call stack\r\n", tskClStk.caller)
+				foundClStk.mu.Unlock()
+			})()
+		} else {
 			tskClStks = tskClStks.Push(tskClStk)
 			fmt.Printf("pushed task for '%s' to the call stack\r\n", tskClStk.caller)
-			topOfStack.mu.Unlock()
-		})()
+		}
 	}
 }
 
@@ -68,6 +78,25 @@ func callstackPeek() *task {
 	} else {
 		return nil
 	}
+}
+
+func buildCallerStack() stack[string] {
+	var callers []string
+	skipFrame := 2
+	caller := getFrame(skipFrame).Function
+	for caller != "unknown" {
+		if !strings.Contains(caller, "pulsyflux/task.Do[...]") {
+			callers = append(callers, caller)
+		}
+		skipFrame += 1
+		caller = getFrame(skipFrame).Function
+	}
+	slices.Reverse(callers)
+	var callerStk = stack[string]{}
+	for _, caller := range callers {
+		callerStk = callerStk.Push(caller)
+	}
+	return callerStk
 }
 
 func getFrame(skipFrames int) runtime.Frame {

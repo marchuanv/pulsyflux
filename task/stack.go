@@ -1,7 +1,6 @@
 package task
 
 import (
-	"slices"
 	"sync"
 )
 
@@ -12,10 +11,7 @@ var mu sync.Mutex
 func (s stack[T]) Push(item T) stack[T] {
 	defer mu.Unlock()
 	mu.Lock()
-	slices.Reverse(s)
-	newStack := append(s, item)
-	slices.Reverse(newStack)
-	return newStack
+	return append(s, item)
 }
 
 func (s stack[T]) Pop() (T, stack[T]) {
@@ -24,12 +20,21 @@ func (s stack[T]) Pop() (T, stack[T]) {
 	l := len(s)
 	var item T
 	if l > 0 {
-		item = s[0]
-		slices.Reverse(s)
+		item = s[l-1]
 		newStack := s[:l-1]
-		slices.Reverse(newStack)
 		return item, newStack
 	} else {
 		return item, stack[T]{}
 	}
+}
+
+func (s stack[T]) Peek() T {
+	defer mu.Unlock()
+	mu.Lock()
+	var item T
+	l := len(s)
+	if l > 0 {
+		item = s[l-1]
+	}
+	return item
 }
