@@ -1,18 +1,20 @@
 package task
 
 import (
+	"fmt"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 type tskCallstack struct {
 	caller string
 	task   *task
+	mu     sync.Mutex
 }
 
-var callstackMu sync.Mutex
-var callstack = stack[*tskCallstack]{}
+var tskClStks = stack[*tskCallstack]{}
 
 func callstackPush(tsk *task) {
 	skipFrame := 2
@@ -20,73 +22,52 @@ func callstackPush(tsk *task) {
 	if caller == "unknown" {
 		panic("Do stack error")
 	}
-	existingTask := getTaskInCallstack(caller)
-	if existingTask != nil {
-		go (func() {
-			relatedMu.Lock()
-			if existingTask.isCalled {
-				relatedMu.Unlock()
-				callstack = callstack.Push(&tskCallstack{caller, tsk})
-			} else {
-				callstack = callstack.Push(&tskCallstack{caller, tsk})
-			}
-		})()
-	} else if len(callstack) == 0 {
-		callstackMu.Lock()
-		callstack = callstack.Push(&tskCallstack{caller, tsk})
+	tskClStk := &tskCallstack{caller, tsk, sync.Mutex{}}
+	tskClStk.mu.Lock()
+	fmt.Printf("\r\nattempting to push task for '%s' to the call stack\r\n", tskClStk.caller)
+	var topOfStack *tskCallstack
+	if len(tskClStks) > 0 {
+		topOfStack = tskClStks[0]
+	}
+	if topOfStack == nil {
+		tskClStks = tskClStks.Push(tskClStk)
+		fmt.Printf("pushed task for '%s' to the call stack\r\n", tskClStk.caller)
+	} else if strings.Contains(caller, topOfStack.caller) {
+		tskClStks = tskClStks.Push(tskClStk)
+		fmt.Printf("pushed task for '%s' to the call stack\r\n", tskClStk.caller)
 	} else {
-		callstackMu.Lock()
-		callstack = callstack.Push(&tskCallstack{caller, tsk})
+		go (func() {
+			obtainedLock := topOfStack.mu.TryLock()
+			for !obtainedLock {
+				time.Sleep(1 * time.Second)
+				obtainedLock = topOfStack.mu.TryLock()
+			}
+			topOfStack.mu.Lock()
+			tskClStks = tskClStks.Push(tskClStk)
+			fmt.Printf("pushed task for '%s' to the call stack\r\n", tskClStk.caller)
+			topOfStack.mu.Unlock()
+		})()
 	}
 }
 
-func callstackPop() (string, *task) {
-	defer callstackMu.Unlock()
-	callstackMu.Lock()
-	var tskClStk *tskCallstack
-	var nextTskClStk1 *tskCallstack
-	var nextTskClStk2 *tskCallstack
-	var requeuedtskClStk *tskCallstack
-	for {
-		nextTskClStk1, callstack = callstack.Pop()
-		if nextTskClStk1 != nil {
-			if tskClStk != nil && nextTskClStk1.task == tskClStk.task {
-				continue
-			}
-			if nextTskClStk1 == requeuedtskClStk { //reached the end
-				break
-			}
-			nextTskClStk2, callstack = callstack.Pop()
-			if nextTskClStk2 != nil {
-				if nextTskClStk2.task == nextTskClStk1.task {
-					tskClStk = nextTskClStk1
-				} else {
-					callstack = callstack.Enqueue(nextTskClStk2)
-					requeuedtskClStk = nextTskClStk2
-				}
-			} else {
-				break
-			}
-		} else {
-			break
-		}
+func callstackPop() *task {
+	if len(tskClStks) > 0 {
+		var tskClStk *tskCallstack
+		tskClStk, tskClStks = tskClStks.Pop()
+		fmt.Printf("\r\npopped task for '%s' from the call stack\r\n", tskClStk.caller)
+		tskClStk.mu.Unlock()
+		return tskClStk.task
+	} else {
+		return nil
 	}
-	return tskClStk.caller, tskClStk.task
 }
 
-func callstackPeek() (string, *task) {
-	defer callstackMu.Unlock()
-	callstackMu.Lock()
-	return callstack[0].caller, callstack[0].task
-}
-
-func getTaskInCallstack(caller string) *task {
-	for _, clstk := range callstack {
-		if strings.Contains(caller, clstk.caller) {
-			return clstk.task
-		}
+func callstackPeek() *task {
+	if len(tskClStks) > 0 {
+		return tskClStks[0].task
+	} else {
+		return nil
 	}
-	return nil
 }
 
 func getFrame(skipFrames int) runtime.Frame {

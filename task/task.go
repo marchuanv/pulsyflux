@@ -12,7 +12,6 @@ type task struct {
 	errorParam      reflect.Value
 	hasErrors       bool
 	isErrorsHandled bool
-	isCalled        bool
 }
 
 func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, errorParam T2) T2) T1 {
@@ -22,8 +21,7 @@ func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, 
 		if r != nil {
 			recErr = errors.New(fmt.Sprint(r))
 		}
-		caller, tsk := callstackPop()
-		fmt.Printf("removed task from %s callstack", caller)
+		tsk := callstackPop()
 		if tsk == nil {
 			panic("no task on the callstack")
 		}
@@ -34,7 +32,7 @@ func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, 
 		}
 
 		tsk.errFunc(tsk)
-		_, nextTask := callstackPeek()
+		nextTask := callstackPeek()
 		if nextTask == nil {
 			if tsk.hasErrors && !tsk.isErrorsHandled {
 				panic(tsk.err)
@@ -71,10 +69,8 @@ func Do[T1 any, T2 any](doFunc func() (T1, error), errorFunc ...func(err error, 
 		reflect.Value{},
 		false,
 		true,
-		false,
 	}
 	callstackPush(tsk)
-	tsk.isCalled = true
 	results, tskErr := doFunc()
 	if tskErr != nil {
 		tsk.hasErrors = true

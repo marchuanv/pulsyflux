@@ -2,50 +2,59 @@ package task
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 )
 
 func TestErrorHandle(test *testing.T) {
-	outerMostRaised := false
-	innerMostRaised := false
-	innerMostExpectedParamValue := "inner parameter call"
-	actualParamValue := "inner parameter call"
+	expectedFuncCalls := []string{"func", "func1", "func11", "func111", "func1111"}
+	actualFuncCalls := []string{}
+	expectedErrFuncCalls := []string{"errfunc", "errfunc1", "errfunc11", "errfunc111", "errfunc1111"}
+	actualErrFuncCalls := []string{}
 	Do(func() (string, error) {
 		Do(func() (string, error) {
 			Do(func() (string, error) {
 				Do(func() (string, error) {
+					actualFuncCalls = append(actualFuncCalls, "func")
 					return "", errors.New("something has gone wrong")
 				}, func(err error, param string) string {
-					innerMostRaised = true
-					return "inner parameter call"
+					actualErrFuncCalls = append(actualErrFuncCalls, "errfunc")
+					return "error occured here"
 				})
+				Do(func() (string, error) {
+					actualFuncCalls = append(actualFuncCalls, "func1")
+					return "", errors.New("something has gone wrong")
+				}, func(err error, param string) string {
+					actualErrFuncCalls = append(actualErrFuncCalls, "errfunc1")
+					return "error occured here"
+				})
+				actualFuncCalls = append(actualFuncCalls, "func11")
 				return "", nil
 			}, func(err error, param string) string {
+				actualErrFuncCalls = append(actualErrFuncCalls, "errfunc11")
 				return param
 			})
+			actualFuncCalls = append(actualFuncCalls, "func111")
 			return "", nil
 		}, func(err error, param string) string {
+			actualErrFuncCalls = append(actualErrFuncCalls, "errfunc111")
 			return param
 		})
+		actualFuncCalls = append(actualFuncCalls, "func1111")
 		return "", nil
 	}, func(err error, param string) string {
-		outerMostRaised = true
-		actualParamValue = param
+		actualErrFuncCalls = append(actualErrFuncCalls, "errfunc1111")
 		_param := Do[string, string](func() (string, error) {
 			return param, nil
 		})
 		return _param
 	})
-	if innerMostExpectedParamValue != actualParamValue {
-		test.Log("inner most parameter was not passed to outer most parameter")
+	if !reflect.DeepEqual(actualFuncCalls, expectedFuncCalls) {
+		test.Log("function calls did not occur in the correct order")
 		test.Fail()
 	}
-	if !outerMostRaised {
-		test.Log("outer most error should have been raised")
-		test.Fail()
-	}
-	if !innerMostRaised {
-		test.Log("inner most error should have been raised")
+	if !reflect.DeepEqual(actualErrFuncCalls, expectedErrFuncCalls) {
+		test.Log("error function calls did not occur in the correct order")
 		test.Fail()
 	}
 }

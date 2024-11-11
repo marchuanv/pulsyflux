@@ -12,15 +12,9 @@ var mu sync.Mutex
 func (s stack[T]) Push(item T) stack[T] {
 	defer mu.Unlock()
 	mu.Lock()
+	slices.Reverse(s)
 	newStack := append(s, item)
 	slices.Reverse(newStack)
-	return newStack
-}
-
-func (s stack[T]) Enqueue(item T) stack[T] {
-	defer mu.Unlock()
-	mu.Lock()
-	newStack := append(s, item)
 	return newStack
 }
 
