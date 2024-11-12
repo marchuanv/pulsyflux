@@ -18,6 +18,8 @@ require golang.org/x/sync v0.8.0 // indirect
 
 require task v1.0.0
 
+require stack v1.0.0
+
 replace pulse v1.0.0 => /pulse
 
 replace msgbus v1.0.0 => /msgbus
@@ -29,3 +31,5 @@ replace connect v1.0.0 => /connect
 replace subscriptions v1.0.0 => /subscriptions
 
 replace task v1.0.0 => /task
+
+replace stack v1.0.0 => /stack
