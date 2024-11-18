@@ -30,37 +30,33 @@ type HttpResponse struct {
 }
 
 func HttpRequestSubscriptions() {
+	task.DoNow(msgbus.New(subscriptions.HTTP), func(httpCh *msgbus.Channel) any {
 
-	task.DoNow(func() any {
-
-		httpCh := msgbus.New(subscriptions.HTTP)
-		httpReqCh := httpCh.New(subscriptions.HTTP_REQUEST)
-
-		httpMethod := task.DoNow(func() string {
+		httpMethod := task.DoNow(httpCh.New(subscriptions.HTTP_REQUEST), func(httpReqCh *msgbus.Channel) string {
 			httpRequestMethodCh := httpReqCh.New(subscriptions.HTTP_REQUEST_METHOD)
 			requestMethodMsg := httpRequestMethodCh.Subscribe()
 			return requestMethodMsg.String()
-		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
+		}, func(err error, httpReqCh *msgbus.Channel) *msgbus.Channel {
 			return httpReqCh.New(subscriptions.INVALID_HTTP_REQUEST_METHOD)
 		})
 
-		protocol := task.DoNow(func() string {
+		protocol := task.DoNow(httpCh.New(subscriptions.HTTP_REQUEST), func(httpReqCh *msgbus.Channel) string {
 			requestProtocolCh := httpReqCh.New(subscriptions.REQUEST_PROTOCAL)
 			protoMsg := requestProtocolCh.Subscribe()
 			return protoMsg.String()
-		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
+		}, func(err error, httpReqCh *msgbus.Channel) *msgbus.Channel {
 			return httpReqCh.New(subscriptions.INVALID_REQUEST_PROTOCAL)
 		})
 
-		address := task.DoNow(func() *util.Address {
+		address := task.DoNow(httpCh.New(subscriptions.HTTP_REQUEST), func(httpReqCh *msgbus.Channel) *util.Address {
 			httpReqAddressCh := httpReqCh.New(subscriptions.HTTP_REQUEST_ADDRESS)
 			addressMsg := httpReqAddressCh.Subscribe()
 			return util.NewAddress(addressMsg.String())
-		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
+		}, func(err error, httpReqCh *msgbus.Channel) *msgbus.Channel {
 			return httpReqCh.New(subscriptions.INVALID_HTTP_REQUEST_ADDRESS)
 		})
 
-		requestURL := task.DoNow(func() *url.URL {
+		requestURL := task.DoNow(httpCh.New(subscriptions.HTTP_REQUEST), func(httpReqCh *msgbus.Channel) *url.URL {
 			httpReqPathCh := httpReqCh.New(subscriptions.HTTP_REQUEST_PATH)
 			reqPathMsg := httpReqPathCh.Subscribe()
 			addr := address.String()
@@ -76,20 +72,20 @@ func HttpRequestSubscriptions() {
 				panic(err)
 			}
 			return url
-		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
+		}, func(err error, httpReqCh *msgbus.Channel) *msgbus.Channel {
 			return httpReqCh.New(subscriptions.INVALID_HTTP_REQUEST_PATH)
 		})
 
-		reqBody := task.DoNow(func() io.Reader {
+		reqBody := task.DoNow(httpCh.New(subscriptions.HTTP_REQUEST), func(httpReqCh *msgbus.Channel) io.Reader {
 			httpRequestBodyCh := httpReqCh.New(subscriptions.HTTP_REQUEST_DATA)
 			requestBodyMsg := httpRequestBodyCh.Subscribe()
 			reqBody := util.ReaderFromString(requestBodyMsg.String())
 			return reqBody
-		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
+		}, func(err error, httpReqCh *msgbus.Channel) *msgbus.Channel {
 			return httpReqCh.New(subscriptions.INVALID_HTTP_REQUEST_DATA)
 		})
 
-		task.DoNow(func() any {
+		task.DoNow(httpCh.New(subscriptions.HTTP_REQUEST), func(httpReqCh *msgbus.Channel) any {
 			httpReqCh.Subscribe()
 			req, err := http.NewRequest(httpMethod, requestURL.String(), reqBody)
 			if err != nil {
@@ -105,20 +101,20 @@ func HttpRequestSubscriptions() {
 			resBodyMsg := msgbus.NewMessage(resBody)
 			httpReqCh.Publish(resBodyMsg)
 			return ""
-		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
+		}, func(err error, httpReqCh *msgbus.Channel) *msgbus.Channel {
 			return httpReqCh.New(subscriptions.INVALID_HTTP_REQUEST)
 		})
 
 		return nil
 	}, func(err error, errorPub *msgbus.Channel) *msgbus.Channel {
-		task.DoNow(func() any {
+		task.DoNow(errorPub, func(errorPub *msgbus.Channel) any {
 			errorMsg := msgbus.NewMessage(err.Error())
 			errorPub.Publish(errorMsg)
 			return nil
-		}, func(err error, param any) any {
+		}, func(err error, errorPub *msgbus.Channel) *msgbus.Channel {
 			fmt.Println("MessagePublishFail: could not publish the error message to the channel, logging the error here: ", err)
-			return nil
+			return errorPub
 		})
-		return nil
+		return errorPub
 	})
 }

@@ -11,34 +11,34 @@ import (
 type task struct {
 	Id           uuid.UUID
 	err          error
-	errorParam   any
 	errorHandled bool
 	fatalErr     error
 	result       any
-	doFunc       func() any
-	receiveFunc  func(variable any)
-	errorFunc    func(err error, errorParam any) any
+	doFunc       func(t *task)
+	receiveFunc  func(t *task)
+	errorFunc    func(t *task)
+	input        any
 }
 
 var taskStack = stack.Stack[*task]{}
 
-func DoNow[T1 any, T2 any](doFunc func() T1, errorFuncs ...func(err error, errorParam T2) T2) T1 {
-	var errorFunc func(err error, errorParam T2) T2
+func DoNow[T1 any, T2 any](input T1, doFunc func(input T1) T2, errorFuncs ...func(err error, input T1) T1) T2 {
+	var errorFunc func(err error, input T1) T1
 	if len(errorFuncs) > 0 {
 		errorFunc = errorFuncs[0]
 	}
-	return execute(doFunc, nil, errorFunc)
+	return execute(input, doFunc, nil, errorFunc)
 }
 
-func DoLater[T1 any, T2 any](doFunc func() T1, receive func(variable T1), errorFuncs ...func(err error, errorParam T2) T2) {
-	var errorFunc func(err error, errorParam T2) T2
+func DoLater[T1 any, T2 any](input T1, doFunc func(input T1) T2, receive func(results T2, input T1), errorFuncs ...func(err error, input T1) T1) {
+	var errorFunc func(err error, errorParam T1) T1
 	if len(errorFuncs) > 0 {
 		errorFunc = errorFuncs[0]
 	}
-	go execute(doFunc, receive, errorFunc)
+	go execute(input, doFunc, receive, errorFunc)
 }
 
-func execute[T1 any, T2 any](doFunc func() T1, receive func(variable T1), errorFunc func(err error, errorParam T2) T2) T1 {
+func execute[T1 any, T2 any](input T1, doFunc func(input T1) T2, receive func(results T2, input T1), errorFunc func(err error, input T1) T1) T2 {
 	defer (func() {
 		currentTsk := taskStack.Pop()
 		if currentTsk.fatalErr != nil {
@@ -52,44 +52,42 @@ func execute[T1 any, T2 any](doFunc func() T1, receive func(variable T1), errorF
 				}
 			} else {
 				nextTsk.err = currentTsk.err
-				nextTsk.errorParam = currentTsk.errorParam
+				nextTsk.input = currentTsk.input
 				nextTsk.fatalErr = currentTsk.fatalErr
 				nextTsk.errorHandled = currentTsk.errorHandled
 			}
 		}
 	})()
-	var result T1
+	var result T2
 	var err error
 	var fatalErr error
-	var errParam T2
 	tsk := &task{
 		uuid.New(),
 		err,
-		errParam,
 		false,
 		fatalErr,
 		result,
-		func() any {
-			return doFunc()
+		func(t *task) {
+			t.result = doFunc(t.input.(T1))
 		},
-		func(variable any) {
+		func(t *task) {
 			if receive != nil {
-				receive(variable.(T1))
+				receive(t.result.(T2), t.input.(T1))
 			}
 		},
-		func(err error, errorParam any) any {
-			wantedErrorParam := errorParam.(T2)
+		func(t *task) {
 			if errorFunc != nil {
-				return errorFunc(err, wantedErrorParam)
+				t.errorHandled = true
+				t.input = errorFunc(t.err, t.input.(T1))
 			}
-			return wantedErrorParam
 		},
+		input,
 	}
 	taskStack.Push(tsk)
 	callDoFunc(tsk)
 	callReceiveFunc(tsk)
 	callErrorFunc(tsk)
-	return tsk.result.(T1)
+	return tsk.result.(T2)
 }
 
 func callDoFunc(tsk *task) {
@@ -101,7 +99,7 @@ func callDoFunc(tsk *task) {
 		}
 	})()
 	if tsk.err == nil {
-		tsk.result = tsk.doFunc()
+		tsk.doFunc(tsk)
 	}
 }
 
@@ -114,7 +112,7 @@ func callReceiveFunc(tsk *task) {
 		}
 	})()
 	if tsk.err == nil {
-		tsk.receiveFunc(tsk.result)
+		tsk.receiveFunc(tsk)
 	}
 }
 
@@ -127,7 +125,6 @@ func callErrorFunc(tsk *task) {
 		}
 	})()
 	if tsk.err != nil {
-		tsk.errorParam = tsk.errorFunc(tsk.err, tsk.errorParam)
-		tsk.errorHandled = true
+		tsk.errorFunc(tsk)
 	}
 }

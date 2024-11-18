@@ -10,20 +10,21 @@ func TestErrorHandle(test *testing.T) {
 	actualFuncCalls := []string{}
 	expectedErrFuncCalls := []string{"errfunc", "errfunc1", "errfunc11", "errfunc111", "errfunc1111"}
 	actualErrFuncCalls := []string{}
-	DoNow(func() string {
-		DoNow(func() string {
-			DoNow(func() string {
-				DoNow(func() string {
+	input := "testdata"
+	DoNow(input, func(in string) string {
+		DoNow(input, func(in string) string {
+			DoNow(input, func(in string) string {
+				DoNow(input, func(in string) string {
 					actualFuncCalls = append(actualFuncCalls, "func")
 					panic("something went wrong")
-				}, func(err error, param string) string {
+				}, func(err error, in string) string {
 					actualErrFuncCalls = append(actualErrFuncCalls, "errfunc")
 					return "error occured here"
 				})
-				DoNow(func() string {
+				DoNow(input, func(in string) string {
 					actualFuncCalls = append(actualFuncCalls, "func1")
 					panic("something went wrong")
-				}, func(err error, param string) string {
+				}, func(err error, in string) string {
 					actualErrFuncCalls = append(actualErrFuncCalls, "errfunc1")
 					return "error occured here"
 				})
@@ -39,22 +40,22 @@ func TestErrorHandle(test *testing.T) {
 				// })
 				actualFuncCalls = append(actualFuncCalls, "func11")
 				return ""
-			}, func(err error, param string) string {
+			}, func(err error, in string) string {
 				actualErrFuncCalls = append(actualErrFuncCalls, "errfunc11")
-				return param
+				return in
 			})
 			actualFuncCalls = append(actualFuncCalls, "func111")
 			return ""
-		}, func(err error, param string) string {
+		}, func(err error, in string) string {
 			actualErrFuncCalls = append(actualErrFuncCalls, "errfunc111")
-			return param
+			return in
 		})
 		actualFuncCalls = append(actualFuncCalls, "func1111")
 		return ""
-	}, func(err error, param string) string {
+	}, func(err error, in string) string {
 		actualErrFuncCalls = append(actualErrFuncCalls, "errfunc1111")
-		_param := DoNow[string, string](func() string {
-			return param
+		_param := DoNow(input, func(in string) string {
+			return in
 		})
 		return _param
 	})
@@ -74,10 +75,11 @@ func TestPanicNoErrorHandle(test *testing.T) {
 			test.Errorf("The code did not panic")
 		}
 	}()
-	DoNow[string, any](func() string {
-		DoNow[string, any](func() string {
-			DoNow[string, any](func() string {
-				DoNow[string, any](func() string {
+	input := "testdata"
+	DoNow(input, func(in string) string {
+		DoNow(input, func(in string) string {
+			DoNow(input, func(in string) string {
+				DoNow(input, func(in string) string {
 					panic("something went wrong")
 				})
 				return ""

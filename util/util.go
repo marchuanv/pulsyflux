@@ -23,8 +23,8 @@ func Newv5UUID(data string) uuid.UUID {
 }
 
 func NewAddress(address string) *Address {
-	return task.DoNow[*Address, any](func() *Address {
-		hostStr, portStr, err := net.SplitHostPort(address)
+	return task.DoNow(address, func(addr string) *Address {
+		hostStr, portStr, err := net.SplitHostPort(addr)
 		if err != nil {
 			panic(err)
 		}
@@ -42,8 +42,8 @@ func (add *Address) String() string {
 }
 
 func IsValidUUID(u string) bool {
-	return task.DoNow[bool, any](func() bool {
-		_, err := uuid.Parse(u)
+	return task.DoNow(u, func(id string) bool {
+		_, err := uuid.Parse(id)
 		isValid := (err == nil)
 		return isValid
 	})
@@ -54,8 +54,8 @@ func IsEmptyString(str string) bool {
 }
 
 func StringFromReader(reader io.ReadCloser) string {
-	return task.DoNow[string, any](func() string {
-		output, err := io.ReadAll(reader)
+	return task.DoNow(reader, func(r io.ReadCloser) string {
+		output, err := io.ReadAll(r)
 		if err != nil {
 			panic(err)
 		}
@@ -69,18 +69,18 @@ func StringFromReader(reader io.ReadCloser) string {
 }
 
 func ReaderFromString(str string) io.Reader {
-	return task.DoNow[io.Reader, any](func() io.Reader {
-		return bytes.NewReader([]byte(str))
+	return task.DoNow(str, func(s string) io.Reader {
+		return bytes.NewReader([]byte(s))
 	})
 }
 
 func Deserialise[T any](serialised string) T {
-	return task.DoNow[T, any](func() T {
+	return task.DoNow(serialised, func(str string) T {
 		var decoded T
-		if len(serialised) == 0 {
+		if len(str) == 0 {
 			panic(errors.New("the serialised argument is an empty string"))
 		}
-		by, err := base64.StdEncoding.DecodeString(serialised)
+		by, err := base64.StdEncoding.DecodeString(str)
 		if err != nil {
 			panic(err)
 		}
@@ -95,16 +95,14 @@ func Deserialise[T any](serialised string) T {
 }
 
 func Serialise[T any](e T) string {
-	return task.DoNow[string, any](func() string {
-		gob.Register(e)
-		var base64Str string
+	return task.DoNow(e, func(t T) string {
+		gob.Register(t)
 		buf := bytes.NewBuffer(nil)
 		enc := gob.NewEncoder(buf)
-		err := enc.Encode(&e)
+		err := enc.Encode(&t)
 		if err != nil {
 			panic(err)
 		}
-		base64Str = base64.StdEncoding.EncodeToString(buf.Bytes())
-		return base64Str
+		return base64.StdEncoding.EncodeToString(buf.Bytes())
 	})
 }

@@ -12,22 +12,21 @@ import (
 )
 
 func HttpServerSubscriptions() {
-	task.DoNow(func() *msgbus.Channel {
-		httpCh := msgbus.New(subscriptions.HTTP)
-		startHttpServCh := httpCh.New(subscriptions.START_HTTP_SERVER)
-		task.DoLater(func() *util.Address {
+	task.DoNow(msgbus.New(subscriptions.HTTP), func(httpCh *msgbus.Channel) *msgbus.Channel {
+		task.DoLater(httpCh.New(subscriptions.START_HTTP_SERVER), func(startHttpServCh *msgbus.Channel) *util.Address {
 			receiveHttpServerAddress := startHttpServCh.New(subscriptions.RECEIVE_HTTP_SERVER_ADDRESS)
 			msg := receiveHttpServerAddress.Subscribe()
 			addressStr := msg.String()
 			return util.NewAddress(addressStr)
-		}, func(address *util.Address) {
-			listener := task.DoNow(func() net.Listener {
+		}, func(address *util.Address, startHttpServCh *msgbus.Channel) {
+
+			listener := task.DoNow(startHttpServCh, func(startHttpServCh *msgbus.Channel) net.Listener {
 				listener, err := net.Listen("tcp", address.String())
 				if err != nil {
 					panic(err)
 				}
 				return listener
-			}, func(err error, ch *msgbus.Channel) *msgbus.Channel {
+			}, func(err error, startHttpServCh *msgbus.Channel) *msgbus.Channel {
 				return startHttpServCh.New(subscriptions.FAILED_TO_LISTEN_ON_HTTP_SERVER_PORT)
 			})
 
@@ -38,68 +37,64 @@ func HttpServerSubscriptions() {
 				MaxHeaderBytes: 1 << 20,
 			}
 
-			httpServerResCh := httpCh.New(subscriptions.HTTP_SERVER_RESPONSE)
 			httpServer.Handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				task.DoNow(func() any {
+				task.DoNow(startHttpServCh.New(subscriptions.HTTP_SERVER_RESPONSE), func(httpServerResCh *msgbus.Channel) any {
 					requestBody := util.StringFromReader(request.Body)
 					resMsg := msgbus.NewDeserialisedMessage(requestBody)
 					httpServerSuccResCh := httpServerResCh.New(subscriptions.HTTP_SERVER_SUCCESS_RESPONSE)
 					httpServerSuccResCh.Publish(resMsg)
 					response.WriteHeader(http.StatusOK)
 					return nil
-				}, func(err error, param any) any {
-					task.DoNow(func() any {
+				}, func(err error, httpServerResCh *msgbus.Channel) *msgbus.Channel {
+					task.DoNow(httpServerResCh, func(httpServerResCh *msgbus.Channel) any {
 						httpServerErrResCh := httpServerResCh.New(subscriptions.HTTP_SERVER_ERROR_RESPONSE)
 						errorMsg := msgbus.NewMessage(err.Error())
 						httpServerErrResCh.Publish(errorMsg)
 						response.WriteHeader(http.StatusInternalServerError)
 						return nil
-					}, func(err error, param any) any {
+					}, func(err error, httpServerResCh *msgbus.Channel) *msgbus.Channel {
 						response.WriteHeader(http.StatusInternalServerError)
 						fmt.Println("MessagePublishFail: could not publish the error message to the channel, loggin the error here: ", err)
-						return nil
+						return httpServerResCh
 					})
-					return nil
+					return httpServerResCh
 				})
 			})
 
 			//STOP SERVER
-			task.DoNow(func() any {
-				stopHttpServCh := httpCh.New(subscriptions.STOP_HTTP_SERVER)
+			task.DoNow(startHttpServCh.New(subscriptions.STOP_HTTP_SERVER), func(stopHttpServCh *msgbus.Channel) any {
 				stopHttpServCh.Subscribe()
 				err := httpServer.Close()
 				if err != nil {
 					panic(err)
 				}
 				return nil
-			}, func(err error, param *msgbus.Channel) *msgbus.Channel {
-				stopHttpServCh := httpCh.New(subscriptions.STOP_HTTP_SERVER)
+			}, func(err error, stopHttpServCh *msgbus.Channel) *msgbus.Channel {
 				return stopHttpServCh.New(subscriptions.FAILED_TO_STOP_HTTP_SERVER)
 			})
 
 			//START SERVER
-			task.DoNow(func() any {
+			task.DoNow(startHttpServCh.New(subscriptions.HTTP_SERVER_STARTED), func(httpServStartedCh *msgbus.Channel) any {
 				err := httpServer.Serve(listener)
 				if err != nil {
 					panic(err)
 				}
 				msg := msgbus.NewMessage("http server started")
-				httpServStartedCh := httpCh.New(subscriptions.HTTP_SERVER_STARTED)
 				httpServStartedCh.Publish(msg)
 				return nil
-			}, func(err error, params *msgbus.Channel) *msgbus.Channel {
-				return startHttpServCh.New(subscriptions.FAILED_TO_START_HTTP_SERVER)
+			}, func(err error, httpServStartedCh *msgbus.Channel) *msgbus.Channel {
+				return httpServStartedCh.New(subscriptions.FAILED_TO_START_HTTP_SERVER)
 			})
 
-		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
+		}, func(err error, startHttpServCh *msgbus.Channel) *msgbus.Channel {
 			return startHttpServCh.New(subscriptions.INVALID_HTTP_SERVER_ADDRESS)
 		})
 		return nil
 	}, func(err error, errorPub *msgbus.Channel) *msgbus.Channel {
-		return task.DoNow[*msgbus.Channel, any](func() *msgbus.Channel {
+		return task.DoNow(errorPub, func(errorPub *msgbus.Channel) *msgbus.Channel {
 			errorMsg := msgbus.NewMessage(err.Error())
 			errorPub.Publish(errorMsg)
-			return nil
+			return errorPub
 		})
 	})
 }

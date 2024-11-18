@@ -20,22 +20,21 @@ type msg struct {
 }
 
 func NewMessage(text string) Msg {
-	return task.DoNow[Msg, any](func() Msg {
+	return task.DoNow(text, func(txt string) Msg {
 		id := uuid.New()
-		if len(text) == 0 {
+		if len(txt) == 0 {
 			err := errors.New("the msgText argument is an empty string")
 			if err != nil {
 				panic(err)
 			}
 		}
-		return msg{id, text}
+		return msg{id, txt}
 	})
 }
 
 func NewDeserialisedMessage(serialised string) Msg {
-	return task.DoNow[Msg, any](func() Msg {
-		desMsg := util.Deserialise[Msg](serialised)
-		return desMsg
+	return task.DoNow(serialised, func(ser string) Msg {
+		return util.Deserialise[Msg](ser)
 	})
 }
 
@@ -48,8 +47,8 @@ func (m msg) String() string {
 }
 
 func (m msg) Serialise() string {
-	return task.DoNow[string, any](func() string {
-		serStr := util.Serialise[Msg](m)
+	return task.DoNow(m, func(message msg) string {
+		serStr := util.Serialise[Msg](message)
 		return serStr
 	})
 }
