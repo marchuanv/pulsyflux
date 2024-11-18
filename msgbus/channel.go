@@ -2,7 +2,6 @@ package msgbus
 
 import (
 	"errors"
-	"fmt"
 	"maps"
 	"pulsyflux/task"
 	"runtime"
@@ -33,6 +32,7 @@ func New(sub MsgSubId) *Channel {
 				ch.Close()
 			})
 			channel.Open()
+			allChannels[chId] = channel
 		}
 		return channel
 	})
@@ -44,6 +44,7 @@ func (ch *Channel) New(sub MsgSubId) *Channel {
 		childCh, exists := origCh.channels[chIdRes]
 		if !exists {
 			childCh = New(sub)
+			origCh.channels[chIdRes] = childCh
 		}
 		return childCh
 	})
@@ -97,7 +98,10 @@ func (ch *Channel) Publish(msg Msg) bool {
 		} else {
 			serialisedMsg := msg.Serialise()
 			origCh.msgOut <- serialisedMsg
-			fmt.Println("message published")
+			for childCh := range origCh.channels {
+				origChildCh := origCh.channels[childCh]
+				origChildCh.msgOut <- serialisedMsg
+			}
 		}
 		return true
 	})

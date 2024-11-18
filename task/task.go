@@ -68,17 +68,23 @@ func execute[T1 any, T2 any](input T1, doFunc func(input T1) T2, receive func(re
 		fatalErr,
 		result,
 		func(t *task) {
-			t.result = doFunc(t.input.(T1))
-		},
-		func(t *task) {
-			if receive != nil {
-				receive(t.result.(T2), t.input.(T1))
+			if t.err == nil {
+				t.result = doFunc(t.input.(T1))
 			}
 		},
 		func(t *task) {
-			if errorFunc != nil {
-				t.errorHandled = true
-				t.input = errorFunc(t.err, t.input.(T1))
+			if t.err == nil {
+				if receive != nil {
+					receive(t.result.(T2), t.input.(T1))
+				}
+			}
+		},
+		func(t *task) {
+			if t.err != nil {
+				if errorFunc != nil {
+					t.errorHandled = true
+					t.input = errorFunc(t.err, t.input.(T1))
+				}
 			}
 		},
 		input,
@@ -98,9 +104,7 @@ func callDoFunc(tsk *task) {
 			fmt.Printf("\r\nTask went into recovery. Error: %s", tsk.err)
 		}
 	})()
-	if tsk.err == nil {
-		tsk.doFunc(tsk)
-	}
+	tsk.doFunc(tsk)
 }
 
 func callReceiveFunc(tsk *task) {
@@ -111,9 +115,7 @@ func callReceiveFunc(tsk *task) {
 			fmt.Printf("\r\nTask went into recovery. Error: %s", tsk.err)
 		}
 	})()
-	if tsk.err == nil {
-		tsk.receiveFunc(tsk)
-	}
+	tsk.receiveFunc(tsk)
 }
 
 func callErrorFunc(tsk *task) {
@@ -124,7 +126,5 @@ func callErrorFunc(tsk *task) {
 			fmt.Printf("\r\nTask went into recovery. Error: %s", tsk.fatalErr)
 		}
 	})()
-	if tsk.err != nil {
-		tsk.errorFunc(tsk)
-	}
+	tsk.errorFunc(tsk)
 }

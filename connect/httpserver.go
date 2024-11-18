@@ -85,11 +85,10 @@ func HttpServerSubscriptions() {
 			}, func(err error, httpServStartedCh *msgbus.Channel) *msgbus.Channel {
 				return httpServStartedCh.New(subscriptions.FAILED_TO_START_HTTP_SERVER)
 			})
-
 		}, func(err error, startHttpServCh *msgbus.Channel) *msgbus.Channel {
 			return startHttpServCh.New(subscriptions.INVALID_HTTP_SERVER_ADDRESS)
 		})
-		return nil
+		return httpCh
 	}, func(err error, errorPub *msgbus.Channel) *msgbus.Channel {
 		return task.DoNow(errorPub, func(errorPub *msgbus.Channel) *msgbus.Channel {
 			errorMsg := msgbus.NewMessage(err.Error())
