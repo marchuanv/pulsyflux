@@ -12,94 +12,94 @@ import (
 )
 
 func HttpServerSubscriptions() {
-	task.Do(func() (*msgbus.Channel, error) {
-
+	task.DoNow(func() *msgbus.Channel {
 		httpCh := msgbus.New(subscriptions.HTTP)
 		startHttpServCh := httpCh.New(subscriptions.START_HTTP_SERVER)
-
-		address := task.Do(func() (*util.Address, error) {
+		task.DoLater(func() *util.Address {
 			receiveHttpServerAddress := startHttpServCh.New(subscriptions.RECEIVE_HTTP_SERVER_ADDRESS)
 			msg := receiveHttpServerAddress.Subscribe()
 			addressStr := msg.String()
-			address := util.NewAddress(addressStr)
-			return address, nil
+			return util.NewAddress(addressStr)
+		}, func(address *util.Address) {
+			listener := task.DoNow(func() net.Listener {
+				listener, err := net.Listen("tcp", address.String())
+				if err != nil {
+					panic(err)
+				}
+				return listener
+			}, func(err error, ch *msgbus.Channel) *msgbus.Channel {
+				return startHttpServCh.New(subscriptions.FAILED_TO_LISTEN_ON_HTTP_SERVER_PORT)
+			})
+
+			httpServer := http.Server{
+				Addr:           address.String(),
+				ReadTimeout:    10 * time.Second,
+				WriteTimeout:   10 * time.Second,
+				MaxHeaderBytes: 1 << 20,
+			}
+
+			httpServerResCh := httpCh.New(subscriptions.HTTP_SERVER_RESPONSE)
+			httpServer.Handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				task.DoNow(func() any {
+					requestBody := util.StringFromReader(request.Body)
+					resMsg := msgbus.NewDeserialisedMessage(requestBody)
+					httpServerSuccResCh := httpServerResCh.New(subscriptions.HTTP_SERVER_SUCCESS_RESPONSE)
+					httpServerSuccResCh.Publish(resMsg)
+					response.WriteHeader(http.StatusOK)
+					return nil
+				}, func(err error, param any) any {
+					task.DoNow(func() any {
+						httpServerErrResCh := httpServerResCh.New(subscriptions.HTTP_SERVER_ERROR_RESPONSE)
+						errorMsg := msgbus.NewMessage(err.Error())
+						httpServerErrResCh.Publish(errorMsg)
+						response.WriteHeader(http.StatusInternalServerError)
+						return nil
+					}, func(err error, param any) any {
+						response.WriteHeader(http.StatusInternalServerError)
+						fmt.Println("MessagePublishFail: could not publish the error message to the channel, loggin the error here: ", err)
+						return nil
+					})
+					return nil
+				})
+			})
+
+			//STOP SERVER
+			task.DoNow(func() any {
+				stopHttpServCh := httpCh.New(subscriptions.STOP_HTTP_SERVER)
+				stopHttpServCh.Subscribe()
+				err := httpServer.Close()
+				if err != nil {
+					panic(err)
+				}
+				return nil
+			}, func(err error, param *msgbus.Channel) *msgbus.Channel {
+				stopHttpServCh := httpCh.New(subscriptions.STOP_HTTP_SERVER)
+				return stopHttpServCh.New(subscriptions.FAILED_TO_STOP_HTTP_SERVER)
+			})
+
+			//START SERVER
+			task.DoNow(func() any {
+				err := httpServer.Serve(listener)
+				if err != nil {
+					panic(err)
+				}
+				msg := msgbus.NewMessage("http server started")
+				httpServStartedCh := httpCh.New(subscriptions.HTTP_SERVER_STARTED)
+				httpServStartedCh.Publish(msg)
+				return nil
+			}, func(err error, params *msgbus.Channel) *msgbus.Channel {
+				return startHttpServCh.New(subscriptions.FAILED_TO_START_HTTP_SERVER)
+			})
+
 		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
 			return startHttpServCh.New(subscriptions.INVALID_HTTP_SERVER_ADDRESS)
 		})
-
-		listener := task.Do(func() (net.Listener, error) {
-			listener, err := net.Listen("tcp", address.String())
-			if err != nil {
-				return nil, err
-			}
-			return listener, nil
-		}, func(err error, ch *msgbus.Channel) *msgbus.Channel {
-			return startHttpServCh.New(subscriptions.FAILED_TO_LISTEN_ON_HTTP_SERVER_PORT)
-		})
-
-		httpServer := http.Server{
-			Addr:           address.String(),
-			ReadTimeout:    10 * time.Second,
-			WriteTimeout:   10 * time.Second,
-			MaxHeaderBytes: 1 << 20,
-		}
-
-		httpServerResCh := httpCh.New(subscriptions.HTTP_SERVER_RESPONSE)
-		httpServer.Handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-			task.Do(func() (any, error) {
-				requestBody := util.StringFromReader(request.Body)
-				resMsg := msgbus.NewDeserialisedMessage(requestBody)
-				httpServerSuccResCh := httpServerResCh.New(subscriptions.HTTP_SERVER_SUCCESS_RESPONSE)
-				httpServerSuccResCh.Publish(resMsg)
-				response.WriteHeader(http.StatusOK)
-				return nil, nil
-			}, func(err error, param any) any {
-				task.Do(func() (any, error) {
-					httpServerErrResCh := httpServerResCh.New(subscriptions.HTTP_SERVER_ERROR_RESPONSE)
-					errorMsg := msgbus.NewMessage(err.Error())
-					httpServerErrResCh.Publish(errorMsg)
-					response.WriteHeader(http.StatusInternalServerError)
-					return nil, nil
-				}, func(err error, param any) any {
-					response.WriteHeader(http.StatusInternalServerError)
-					fmt.Println("MessagePublishFail: could not publish the error message to the channel, loggin the error here: ", err)
-					return nil
-				})
-				return nil
-			})
-		})
-
-		//STOP SERVER
-		task.Do(func() (any, error) {
-			stopHttpServCh := httpCh.New(subscriptions.STOP_HTTP_SERVER)
-			stopHttpServCh.Subscribe()
-			err := httpServer.Close()
-			return nil, err
-		}, func(err error, param *msgbus.Channel) *msgbus.Channel {
-			stopHttpServCh := httpCh.New(subscriptions.STOP_HTTP_SERVER)
-			return stopHttpServCh.New(subscriptions.FAILED_TO_STOP_HTTP_SERVER)
-		})
-
-		//START SERVER
-		task.Do(func() (any, error) {
-			err := httpServer.Serve(listener)
-			if err != nil {
-				return nil, err
-			}
-			msg := msgbus.NewMessage("http server started")
-			httpServStartedCh := httpCh.New(subscriptions.HTTP_SERVER_STARTED)
-			httpServStartedCh.Publish(msg)
-			return nil, nil
-		}, func(err error, params *msgbus.Channel) *msgbus.Channel {
-			return startHttpServCh.New(subscriptions.FAILED_TO_START_HTTP_SERVER)
-		})
-
-		return nil, nil
+		return nil
 	}, func(err error, errorPub *msgbus.Channel) *msgbus.Channel {
-		return task.Do[*msgbus.Channel, any](func() (*msgbus.Channel, error) {
+		return task.DoNow[*msgbus.Channel, any](func() *msgbus.Channel {
 			errorMsg := msgbus.NewMessage(err.Error())
 			errorPub.Publish(errorMsg)
-			return nil, nil
+			return nil
 		})
 	})
 }

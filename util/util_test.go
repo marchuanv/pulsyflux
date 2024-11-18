@@ -11,10 +11,8 @@ func TestIsValidUUID(test *testing.T) {
 	}
 }
 func TestIsNotValidUUID(test *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			test.Errorf("The code did not panic")
-		}
-	}()
-	IsValidUUID("awdawdawdwad")
+	isValid := IsValidUUID("awdawdawdwad")
+	if isValid {
+		test.Fail()
+	}
 }

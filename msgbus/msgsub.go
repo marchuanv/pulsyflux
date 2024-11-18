@@ -9,11 +9,11 @@ import (
 type MsgSubId string
 
 func (msgSubId MsgSubId) Id() uuid.UUID {
-	return task.Do[uuid.UUID, any](func() (uuid.UUID, error) {
+	return task.DoNow[uuid.UUID, any](func() uuid.UUID {
 		id, err := uuid.Parse(string(msgSubId))
 		if err != nil {
-			return id, err
+			panic(err)
 		}
-		return id, err
+		return id
 	})
 }

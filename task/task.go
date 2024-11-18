@@ -41,6 +41,9 @@ func DoLater[T1 any, T2 any](doFunc func() T1, receive func(variable T1), errorF
 func execute[T1 any, T2 any](doFunc func() T1, receive func(variable T1), errorFunc func(err error, errorParam T2) T2) T1 {
 	defer (func() {
 		currentTsk := taskStack.Pop()
+		if currentTsk.fatalErr != nil {
+			panic(currentTsk.err)
+		}
 		if currentTsk.err != nil {
 			nextTsk := taskStack.Peek()
 			if nextTsk == nil {
@@ -94,7 +97,7 @@ func callDoFunc(tsk *task) {
 		r := recover()
 		if r != nil {
 			tsk.err = errors.New(fmt.Sprint(r))
-			fmt.Printf("callDoFunc went into recovery. Error: %s", tsk.err)
+			fmt.Printf("\r\nTask went into recovery. Error: %s", tsk.err)
 		}
 	})()
 	if tsk.err == nil {
@@ -107,7 +110,7 @@ func callReceiveFunc(tsk *task) {
 		r := recover()
 		if r != nil {
 			tsk.err = errors.New(fmt.Sprint(r))
-			fmt.Printf("callReceiveFunc went into recovery. Error: %s", tsk.err)
+			fmt.Printf("\r\nTask went into recovery. Error: %s", tsk.err)
 		}
 	})()
 	if tsk.err == nil {
@@ -120,7 +123,7 @@ func callErrorFunc(tsk *task) {
 		r := recover()
 		if r != nil {
 			tsk.fatalErr = errors.New(fmt.Sprint(r))
-			fmt.Printf("callErrorFunc went into recovery. Error: %s", tsk.fatalErr)
+			fmt.Printf("\r\nTask went into recovery. Error: %s", tsk.fatalErr)
 		}
 	})()
 	if tsk.err != nil {

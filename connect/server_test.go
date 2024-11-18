@@ -1,13 +1,16 @@
 package connect
 
 import (
+	"pulsyflux/msgbus"
+	"pulsyflux/subscriptions"
 	"testing"
+	"time"
 )
 
 func TestHttpServer(test *testing.T) {
 
 	// var httpServStartedCh *msgbus.Channel
-	// var startHttpServCh *msgbus.Channel
+	var startHttpServCh *msgbus.Channel
 	// var stopHttpServCh *msgbus.Channel
 	// var failedToStartHttpServCh *msgbus.Channel
 	// var failedToStopHttpServCh *msgbus.Channel
@@ -17,7 +20,7 @@ func TestHttpServer(test *testing.T) {
 	// var httpServerErrResCh *msgbus.Channel
 
 	HttpServerSubscriptions()
-	// httpCh := msgbus.New(subscriptions.HTTP)
+	httpCh := msgbus.New(subscriptions.HTTP)
 
 	// httpServerResCh = httpCh.New(subscriptions.HTTP_SERVER_RESPONSE)
 	// //HTTP RESPONSE SUCCESS
@@ -64,8 +67,10 @@ func TestHttpServer(test *testing.T) {
 	// 	test.Log(stoppedMsg)
 	// })()
 
-	// //START EVENT
-	// startHttpServCh = httpCh.New(subscriptions.START_HTTP_SERVER)
-	// startMsg := msgbus.NewMessage("start http server")
-	// startHttpServCh.Publish(startMsg)
+	//START EVENT
+	startHttpServCh = httpCh.New(subscriptions.START_HTTP_SERVER)
+	startMsg := msgbus.NewMessage("start http server")
+	startHttpServCh.Publish(startMsg)
+
+	time.Sleep(20 * time.Second)
 }
