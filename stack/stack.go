@@ -1,7 +1,6 @@
 package stack
 
 import (
-	"slices"
 	"sync"
 )
 
@@ -21,14 +20,6 @@ func (s *Stack[T]) Push(item T) {
 	defer s.mu.Unlock()
 	s.mu.Lock()
 	s.stack = append(s.stack, item)
-}
-
-func (s *Stack[T]) Enqueue(item T) {
-	defer s.mu.Unlock()
-	s.mu.Lock()
-	slices.Reverse(s.stack)
-	s.stack = append(s.stack, item)
-	slices.Reverse(s.stack)
 }
 
 func (s *Stack[T]) Pop() T {

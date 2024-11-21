@@ -9,7 +9,7 @@ import (
 
 func TestHttpServer(test *testing.T) {
 
-	// var httpServStartedCh *msgbus.Channel
+	var httpServStartedCh *msgbus.Channel
 	var startHttpServCh *msgbus.Channel
 	// var stopHttpServCh *msgbus.Channel
 	// var failedToStartHttpServCh *msgbus.Channel
@@ -48,12 +48,12 @@ func TestHttpServer(test *testing.T) {
 	// 	test.Log(failedToStartMsg)
 	// })()
 
-	// //STARTED EVENT
-	// go (func() {
-	// 	httpServStartedCh = httpCh.New(subscriptions.HTTP_SERVER_STARTED)
-	// 	startedMsg := httpServStartedCh.Subscribe()
-	// 	test.Log(startedMsg)
-	// })()
+	//STARTED EVENT
+	go (func() {
+		httpServStartedCh = httpCh.New(subscriptions.HTTP_SERVER_STARTED)
+		startedMsg := httpServStartedCh.Subscribe()
+		test.Log(startedMsg)
+	})()
 
 	// //STOPPED EVENT
 	// go (func() {
@@ -69,7 +69,7 @@ func TestHttpServer(test *testing.T) {
 
 	//START EVENT
 	startHttpServCh = httpCh.New(subscriptions.START_HTTP_SERVER)
-	startMsg := msgbus.NewMessage("start http server")
+	startMsg := msgbus.NewMessage("localhost:3000")
 	startHttpServCh.Publish(startMsg)
 
 	time.Sleep(20 * time.Second)

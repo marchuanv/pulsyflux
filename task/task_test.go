@@ -11,17 +11,18 @@ func TestErrorHandle(test *testing.T) {
 	expectedErrFuncCalls := []string{"errfunc", "errfunc1", "errfunc11", "errfunc111", "errfunc1111"}
 	actualErrFuncCalls := []string{}
 	input := "testdata"
-	DoNow(input, func(in string) string {
-		DoNow(input, func(in string) string {
-			DoNow(input, func(in string) string {
-				DoNow(input, func(in string) string {
+	tsk := NewTask[string, string](input)
+	tsk.DoNow(func(in string) string {
+		tsk.DoNow(func(in string) string {
+			tsk.DoNow(func(in string) string {
+				tsk.DoNow(func(in string) string {
 					actualFuncCalls = append(actualFuncCalls, "func")
 					panic("something went wrong")
 				}, func(err error, in string) string {
 					actualErrFuncCalls = append(actualErrFuncCalls, "errfunc")
 					return "error occured here"
 				})
-				DoNow(input, func(in string) string {
+				tsk.DoNow(func(in string) string {
 					actualFuncCalls = append(actualFuncCalls, "func1")
 					panic("something went wrong")
 				}, func(err error, in string) string {
@@ -54,7 +55,7 @@ func TestErrorHandle(test *testing.T) {
 		return ""
 	}, func(err error, in string) string {
 		actualErrFuncCalls = append(actualErrFuncCalls, "errfunc1111")
-		_param := DoNow(input, func(in string) string {
+		_param := tsk.DoNow(func(in string) string {
 			return in
 		})
 		return _param
@@ -76,10 +77,11 @@ func TestPanicNoErrorHandle(test *testing.T) {
 		}
 	}()
 	input := "testdata"
-	DoNow(input, func(in string) string {
-		DoNow(input, func(in string) string {
-			DoNow(input, func(in string) string {
-				DoNow(input, func(in string) string {
+	tsk := NewTask[string, string](input)
+	tsk.DoNow(func(in string) string {
+		tsk.DoNow(func(in string) string {
+			tsk.DoNow(func(in string) string {
+				tsk.DoNow(func(in string) string {
 					panic("something went wrong")
 				})
 				return ""

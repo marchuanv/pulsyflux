@@ -62,26 +62,29 @@ func HttpServerSubscriptions() {
 			})
 
 			//STOP SERVER
-			task.DoNow(startHttpServCh.New(subscriptions.STOP_HTTP_SERVER), func(stopHttpServCh *msgbus.Channel) any {
+			task.DoLater(startHttpServCh.New(subscriptions.STOP_HTTP_SERVER), func(stopHttpServCh *msgbus.Channel) bool {
 				stopHttpServCh.Subscribe()
 				err := httpServer.Close()
 				if err != nil {
 					panic(err)
 				}
-				return nil
+				return true
+			}, func(isListening bool, startHttpServCh *msgbus.Channel) {
+
 			}, func(err error, stopHttpServCh *msgbus.Channel) *msgbus.Channel {
 				return stopHttpServCh.New(subscriptions.FAILED_TO_STOP_HTTP_SERVER)
 			})
 
 			//START SERVER
-			task.DoNow(startHttpServCh.New(subscriptions.HTTP_SERVER_STARTED), func(httpServStartedCh *msgbus.Channel) any {
+			task.DoLater(startHttpServCh.New(subscriptions.HTTP_SERVER_STARTED), func(httpServStartedCh *msgbus.Channel) bool {
 				err := httpServer.Serve(listener)
 				if err != nil {
 					panic(err)
 				}
+				return true
+			}, func(isStarted bool, httpServStartedCh *msgbus.Channel) {
 				msg := msgbus.NewMessage("http server started")
 				httpServStartedCh.Publish(msg)
-				return nil
 			}, func(err error, httpServStartedCh *msgbus.Channel) *msgbus.Channel {
 				return httpServStartedCh.New(subscriptions.FAILED_TO_START_HTTP_SERVER)
 			})

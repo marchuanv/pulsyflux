@@ -41,12 +41,12 @@ func New(sub MsgSubId) *Channel {
 func (ch *Channel) New(sub MsgSubId) *Channel {
 	return task.DoNow(ch, func(origCh *Channel) *Channel {
 		chIdRes := sub.Id()
-		childCh, exists := origCh.channels[chIdRes]
+		childChId, exists := origCh.channels[chIdRes]
 		if !exists {
-			childCh = New(sub)
-			origCh.channels[chIdRes] = childCh
+			childChId = New(sub)
+			origCh.channels[chIdRes] = childChId
 		}
-		return childCh
+		return childChId
 	})
 }
 
@@ -98,8 +98,8 @@ func (ch *Channel) Publish(msg Msg) bool {
 		} else {
 			serialisedMsg := msg.Serialise()
 			origCh.msgOut <- serialisedMsg
-			for childCh := range origCh.channels {
-				origChildCh := origCh.channels[childCh]
+			for childChId := range origCh.channels {
+				origChildCh := origCh.channels[childChId]
 				origChildCh.msgOut <- serialisedMsg
 			}
 		}
