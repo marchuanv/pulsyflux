@@ -6,7 +6,7 @@ import (
 )
 
 func TestErrorHandle(test *testing.T) {
-	expectedFuncCalls := []string{"func", "func1", "func11", "func111", "func1111"}
+	expectedFuncCalls := []string{"func", "func1", "func11", "func111", "func1111", "func11111"}
 	actualFuncCalls := []string{}
 	expectedErrFuncCalls := []string{"errfunc", "errfunc1", "errfunc11", "errfunc111", "errfunc1111"}
 	actualErrFuncCalls := []string{}
@@ -56,6 +56,7 @@ func TestErrorHandle(test *testing.T) {
 	}, func(err error, in string) string {
 		actualErrFuncCalls = append(actualErrFuncCalls, "errfunc1111")
 		_param := tsk.DoNow(func(in string) string {
+			actualFuncCalls = append(actualFuncCalls, "func11111")
 			return in
 		})
 		return _param

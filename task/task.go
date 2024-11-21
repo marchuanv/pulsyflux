@@ -11,33 +11,32 @@ type Task[T1 any, T2 any] struct {
 	Id           string
 	input        T1
 	result       T2
-	isAsync      bool
 	err          error
 	errorHandled bool
 	fatalErr     error
 	doFunc       func(input T1) T2
 	receiveFunc  func(results T2, input T1)
 	errorFunc    func(err error, input T1) T1
-	rootLink     *NodeLink[T1, T2]
+	parent       *TaskLink[T1, T2]
+	children     map[string]*TaskLink[T1, T2]
+	isAsync      bool
 }
 
-type TaskNode[T1 any, T2 any] struct {
-	task     *Task[T1, T2]
-	parent   *NodeLink[T1, T2]
-	children map[string]*NodeLink[T1, T2]
+type TaskLink[T1 any, T2 any] Task[T1, T2]
+
+type TaskCtx[T1 any, T2 any] struct {
+	link      *TaskLink[T1, T2]
+	callCount int
 }
 
-type NodeLink[T1 any, T2 any] TaskNode[T1, T2]
-
-func NewTask[T1 any, T2 any](input T1) *Task[T1, T2] {
+func NewTask[T1 any, T2 any](input T1) *TaskCtx[T1, T2] {
 	var result T2
 	var err error
 	var fatalErr error
-	return &Task[T1, T2]{
+	tskLink := &TaskLink[T1, T2]{
 		uuid.NewString(),
 		input,
 		result,
-		false,
 		err,
 		false,
 		fatalErr,
@@ -45,22 +44,26 @@ func NewTask[T1 any, T2 any](input T1) *Task[T1, T2] {
 		nil,
 		nil,
 		nil,
+		nil,
+		false,
 	}
+	tskLink.parent = nil
+	tskLink.children = map[string]*TaskLink[T1, T2]{}
+	return &TaskCtx[T1, T2]{tskLink, 0}
 }
 
-func (tsk *Task[T1, T2]) DoNow(doFunc func(input T1) T2, errorFuncs ...func(err error, input T1) T1) T2 {
+func (taskCtx *TaskCtx[T1, T2]) DoNow(doFunc func(input T1) T2, errorFuncs ...func(err error, input T1) T1) T2 {
 	var errorFunc func(err error, input T1) T1
 	if len(errorFuncs) > 0 {
 		errorFunc = errorFuncs[0]
 	}
-	tsk.doFunc = doFunc
-	tsk.errorFunc = errorFunc
-	tsk.isAsync = false
-	execute[T1, T2](tsk)
-	return tsk.result
+	taskCtx.link.doFunc = doFunc
+	taskCtx.link.errorFunc = errorFunc
+	execute(taskCtx, false)
+	return taskCtx.link.result
 }
 
-func (tsk *Task[T1, T2]) DoLater(doFunc func(input T1) T2, receiveFunc func(results T2, input T1), errorFuncs ...func(err error, input T1) T1) {
+func (taskCtx *TaskCtx[T1, T2]) DoLater(doFunc func(input T1) T2, receiveFunc func(results T2, input T1), errorFuncs ...func(err error, input T1) T1) {
 	var errorFunc func(err error, errorParam T1) T1
 	if len(errorFuncs) > 0 {
 		errorFunc = errorFuncs[0]
@@ -68,59 +71,54 @@ func (tsk *Task[T1, T2]) DoLater(doFunc func(input T1) T2, receiveFunc func(resu
 	if receiveFunc == nil {
 		panic("receive function is nil")
 	}
-	tsk.doFunc = doFunc
-	tsk.receiveFunc = receiveFunc
-	tsk.errorFunc = errorFunc
-	tsk.isAsync = true
-	go execute(tsk)
+	taskCtx.link.doFunc = doFunc
+	taskCtx.link.receiveFunc = receiveFunc
+	taskCtx.link.errorFunc = errorFunc
+	go execute(taskCtx, true)
 }
 
-func execute[T1 any, T2 any](tsk *Task[T1, T2]) {
+func execute[T1 any, T2 any](taskCtx *TaskCtx[T1, T2], isAsync bool) {
+	defer (func() {
+		err := recover()
+		taskCtx.link.unlink()
+		if err != nil {
+			panic(err)
+		}
+	})()
 
-	if tsk.rootLink == nil {
-		tsk.rootLink = &NodeLink[T1, T2]{tsk, nil, map[string]*NodeLink[T1, T2]{}}
-	}
-
-	parentLink := tsk.rootLink.getLeafNode(tsk.isAsync)
-	newTsk := tsk.new()
-	parentLink.newLink(newTsk)
-	tskLink := tsk.rootLink.getLeafNode(tsk.isAsync)
-
+	taskCtx.next(isAsync)
+	newTsk := taskCtx.link
 	newTsk.callDoFunc()
 	newTsk.callReceiveFunc()
 	newTsk.callErrorFunc()
 
-	if !newTsk.isAsync {
-		if newTsk.fatalErr != nil {
-			panic(newTsk.fatalErr)
-		}
+	if newTsk.fatalErr != nil {
+		panic(newTsk.fatalErr)
+	}
+
+	if newTsk.isAsync {
 		if newTsk.err != nil {
-			if tskLink.parent == nil {
+			if !newTsk.errorHandled {
+				panic(newTsk.err)
+			}
+		}
+	} else {
+		if newTsk.err != nil {
+			if newTsk.parent == nil {
 				if !newTsk.errorHandled {
 					panic(newTsk.err)
 				}
 			} else {
-				tskLink.parent.task.err = newTsk.err
-				tskLink.parent.task.input = newTsk.input
-				tskLink.parent.task.fatalErr = newTsk.fatalErr
-				tskLink.parent.task.errorHandled = newTsk.errorHandled
-			}
-		} else {
-			if newTsk.fatalErr != nil {
-				panic(newTsk.err)
-			}
-			if newTsk.err != nil {
-				if !newTsk.errorHandled {
-					parentLink.unlink(newTsk)
-					panic(newTsk.err)
-				}
+				newTsk.parent.err = newTsk.err
+				newTsk.parent.input = newTsk.input
+				newTsk.parent.fatalErr = newTsk.fatalErr
+				newTsk.parent.errorHandled = newTsk.errorHandled
 			}
 		}
 	}
-	parentLink.unlink(newTsk)
 }
 
-func (tsk *Task[T1, T2]) callDoFunc() {
+func (tsk *TaskLink[T1, T2]) callDoFunc() {
 	defer (func() {
 		r := recover()
 		if r != nil {
@@ -133,7 +131,7 @@ func (tsk *Task[T1, T2]) callDoFunc() {
 	}
 }
 
-func (tsk *Task[T1, T2]) callReceiveFunc() {
+func (tsk *TaskLink[T1, T2]) callReceiveFunc() {
 	defer (func() {
 		r := recover()
 		if r != nil {
@@ -148,7 +146,7 @@ func (tsk *Task[T1, T2]) callReceiveFunc() {
 	}
 }
 
-func (tsk *Task[T1, T2]) callErrorFunc() {
+func (tsk *TaskLink[T1, T2]) callErrorFunc() {
 	defer (func() {
 		r := recover()
 		if r != nil {
@@ -164,53 +162,55 @@ func (tsk *Task[T1, T2]) callErrorFunc() {
 	}
 }
 
-func (tsk *Task[T1, T2]) new() *Task[T1, T2] {
-	return &Task[T1, T2]{
+func (taskLink *TaskLink[T1, T2]) new() {
+	newTskLink := &TaskLink[T1, T2]{
 		uuid.NewString(),
-		tsk.input,
-		tsk.result,
-		tsk.isAsync,
-		tsk.err,
-		tsk.errorHandled,
-		tsk.fatalErr,
-		tsk.doFunc,
-		tsk.receiveFunc,
-		tsk.errorFunc,
-		nil,
+		taskLink.input,
+		taskLink.result,
+		taskLink.err,
+		taskLink.errorHandled,
+		taskLink.fatalErr,
+		taskLink.doFunc,
+		taskLink.receiveFunc,
+		taskLink.errorFunc,
+		taskLink,
+		map[string]*TaskLink[T1, T2]{},
+		taskLink.isAsync,
 	}
+	taskLink.children[newTskLink.Id] = newTskLink
 }
 
-func (nodeLink *NodeLink[T1, T2]) newLink(tsk *Task[T1, T2]) {
-	newLink := &NodeLink[T1, T2]{
-		tsk,
-		nodeLink,
-		map[string]*NodeLink[T1, T2]{},
-	}
-	nodeLink.children[tsk.Id] = newLink
-}
-
-func (node *NodeLink[T1, T2]) getLeafNode(isAsync bool) *NodeLink[T1, T2] {
+func (node *TaskLink[T1, T2]) getLeafNode(isAsync bool) *TaskLink[T1, T2] {
 	for _, child := range node.children {
 		n := child.getLeafNode(isAsync)
 		if n != nil {
 			return n
 		}
 	}
-	if node.task.isAsync && !isAsync {
+	if node.isAsync && !isAsync {
 		return nil
 	}
-	if !node.task.isAsync && isAsync {
+	if !node.isAsync && isAsync {
 		return nil
 	}
 	return node
 }
 
-func (nodeLink *NodeLink[T1, T2]) unlink(tsk *Task[T1, T2]) {
-	child, exists := nodeLink.children[tsk.Id]
-	if exists {
-		delete(nodeLink.children, tsk.Id)
-		child.parent = nil
-	} else {
-		panic("fatal error task is not a child")
+func (nodeLink *TaskLink[T1, T2]) unlink() {
+	if nodeLink.parent != nil {
+		if len(nodeLink.children) > 0 {
+			panic("fatal error node has children")
+		}
+		delete(nodeLink.parent.children, nodeLink.Id)
+		nodeLink.parent = nil
 	}
+}
+
+func (taskCtx *TaskCtx[T1, T2]) next(isAsync bool) {
+	taskCtx.link = taskCtx.link.getLeafNode(isAsync)
+	if taskCtx.callCount > 0 {
+		taskCtx.link.new()
+		taskCtx.link = taskCtx.link.getLeafNode(isAsync)
+	}
+	taskCtx.callCount += 1
 }
