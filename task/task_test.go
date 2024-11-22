@@ -11,7 +11,7 @@ func TestErrorHandle(test *testing.T) {
 	expectedErrFuncCalls := []string{"errfunc", "errfunc1", "errfunc11", "errfunc111", "errfunc1111"}
 	actualErrFuncCalls := []string{}
 	input := "testdata"
-	tsk := NewTask[string, string](input)
+	tsk := NewTskCtx[string, string](input)
 	tsk.DoNow(func(in string) string {
 		tsk.DoNow(func(in string) string {
 			tsk.DoNow(func(in string) string {
@@ -78,7 +78,7 @@ func TestPanicNoErrorHandle(test *testing.T) {
 		}
 	}()
 	input := "testdata"
-	tsk := NewTask[string, string](input)
+	tsk := NewTskCtx[string, string](input)
 	tsk.DoNow(func(in string) string {
 		tsk.DoNow(func(in string) string {
 			tsk.DoNow(func(in string) string {
