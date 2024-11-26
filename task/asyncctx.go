@@ -8,29 +8,25 @@ func (taskCtx *tskCtx[T1, T2]) DoLater(doFunc func(input T1) T2, receiveFunc fun
 	if len(errorFuncs) > 0 {
 		errorFunc = errorFuncs[0]
 	}
-	tLink := taskCtx.root
-	if taskCtx.asyncCallCount > 0 {
-		taskCtx.root.spawnChildAsyncTskLink()
+	var tLink *tskLink[T1, T2]
+	tLinkByDoFuncCall := taskCtx.root.getNodeBy(DoFunc)
+	tLinkByRecvFuncCall := taskCtx.root.getNodeBy(ReceiveFunc)
+	tLinkByErrorFuncCall := taskCtx.root.getNodeBy(ErrorFunc)
+	if tLinkByErrorFuncCall != nil {
+		tLinkByErrorFuncCall.newChildTsk(taskCtx.root.input)
+		tLink = tLinkByErrorFuncCall
+	} else if tLinkByRecvFuncCall != nil {
+		tLinkByRecvFuncCall.newChildClnTsk()
+		tLink = tLinkByRecvFuncCall
+	} else if tLinkByDoFuncCall != nil {
+		tLinkByDoFuncCall.newChildClnTsk()
+		tLink = tLinkByDoFuncCall
+	} else {
+		tLink = taskCtx.root
 	}
-	tLink = tLink.getAsyncLeafNode()
+	tLink = tLink.getLeafNode() //Most recent child node created without children
 	tLink.doFunc = doFunc
 	tLink.receiveFunc = receiveFunc
 	tLink.errorFunc = errorFunc
-	taskCtx.asyncCallCount += 1
-	taskCtx.doAsync(tLink)
-}
-
-func (taskCtx *tskCtx[T1, T2]) doAsync(tLink *tskLink[T1, T2]) {
-	go (func() {
-		defer tLink.unlinkAsync()
-		tLink.run()
-		if tLink.errOnHandle != nil {
-			panic(tLink.errOnHandle)
-		}
-		if tLink.err != nil {
-			if !tLink.errorHandled {
-				panic(tLink.err)
-			}
-		}
-	})()
+	tLink.run()
 }

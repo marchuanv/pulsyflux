@@ -6,7 +6,8 @@ import (
 )
 
 func TestErrorHandle(test *testing.T) {
-	expectedFuncCalls := []string{"func", "func1", "func11", "func111", "func1111", "func11111"}
+	//func 2 & 4 should not be called, context is in error
+	expectedFuncCalls := []string{"func1", "func3", "func5", "func6", "func7", "func8"}
 	actualFuncCalls := []string{}
 	expectedErrFuncCalls := []string{"errfunc", "errfunc1", "errfunc11", "errfunc111", "errfunc1111"}
 	actualErrFuncCalls := []string{}
@@ -16,14 +17,14 @@ func TestErrorHandle(test *testing.T) {
 		tsk.DoNow(func(in string) string {
 			tsk.DoNow(func(in string) string {
 				tsk.DoNow(func(in string) string {
-					actualFuncCalls = append(actualFuncCalls, "func")
+					actualFuncCalls = append(actualFuncCalls, "func1")
 					panic("something went wrong")
 				}, func(err error, in string) string {
 					actualErrFuncCalls = append(actualErrFuncCalls, "errfunc")
 					return "error occured here"
 				})
 				tsk.DoNow(func(in string) string {
-					actualFuncCalls = append(actualFuncCalls, "func1")
+					actualFuncCalls = append(actualFuncCalls, "func2")
 					panic("something went wrong")
 				}, func(err error, in string) string {
 					actualErrFuncCalls = append(actualErrFuncCalls, "errfunc1")
@@ -39,24 +40,32 @@ func TestErrorHandle(test *testing.T) {
 				// 	actualErrFuncCalls = append(actualErrFuncCalls, "errfunc2")
 				// 	return "error occured here"
 				// })
-				actualFuncCalls = append(actualFuncCalls, "func11")
+				actualFuncCalls = append(actualFuncCalls, "func3")
 				return ""
 			}, func(err error, in string) string {
 				actualErrFuncCalls = append(actualErrFuncCalls, "errfunc11")
 				return in
 			})
-			actualFuncCalls = append(actualFuncCalls, "func111")
+			tsk.DoNow(func(in string) string {
+				actualFuncCalls = append(actualFuncCalls, "func4")
+				return in
+			})
+			actualFuncCalls = append(actualFuncCalls, "func5")
 			return ""
 		}, func(err error, in string) string {
 			actualErrFuncCalls = append(actualErrFuncCalls, "errfunc111")
+			tsk.DoNow(func(in string) string {
+				actualFuncCalls = append(actualFuncCalls, "func6")
+				return in
+			})
 			return in
 		})
-		actualFuncCalls = append(actualFuncCalls, "func1111")
+		actualFuncCalls = append(actualFuncCalls, "func7")
 		return ""
 	}, func(err error, in string) string {
 		actualErrFuncCalls = append(actualErrFuncCalls, "errfunc1111")
 		_param := tsk.DoNow(func(in string) string {
-			actualFuncCalls = append(actualFuncCalls, "func11111")
+			actualFuncCalls = append(actualFuncCalls, "func8")
 			return in
 		})
 		return _param
@@ -74,7 +83,8 @@ func TestErrorHandle(test *testing.T) {
 func TestPanicNoErrorHandle(test *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
-			test.Errorf("The code did not panic")
+			test.Errorf("The implementation did not panic")
+			test.Fail()
 		}
 	}()
 	input := "testdata"
