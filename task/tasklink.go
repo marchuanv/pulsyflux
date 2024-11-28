@@ -163,7 +163,7 @@ func (tLink *tskLink[T1, T2]) unlink() {
 	}
 }
 
-func (tLink *tskLink[T1, T2]) newChildClnTsk() {
+func (tLink *tskLink[T1, T2]) newChildTskClone() {
 	newTskLink := &tskLink[T1, T2]{
 		uuid.NewString(),
 		tLink.input,

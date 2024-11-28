@@ -16,10 +16,10 @@ func (taskCtx *tskCtx[T1, T2]) DoLater(doFunc func(input T1) T2, receiveFunc fun
 		tLinkByErrorFuncCall.newChildTsk(taskCtx.root.input)
 		tLink = tLinkByErrorFuncCall
 	} else if tLinkByRecvFuncCall != nil {
-		tLinkByRecvFuncCall.newChildClnTsk()
+		tLinkByRecvFuncCall.newChildTskClone()
 		tLink = tLinkByRecvFuncCall
 	} else if tLinkByDoFuncCall != nil {
-		tLinkByDoFuncCall.newChildClnTsk()
+		tLinkByDoFuncCall.newChildTskClone()
 		tLink = tLinkByDoFuncCall
 	} else {
 		tLink = taskCtx.root

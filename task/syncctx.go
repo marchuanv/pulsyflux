@@ -10,7 +10,7 @@ func (taskCtx *tskCtx[T1, T2]) DoNow(doFunc func(input T1) T2, errorFuncs ...fun
 	case ErrorFunc:
 		tLink.newChildTsk(taskCtx.root.input)
 	case DoFunc:
-		tLink.newChildClnTsk()
+		tLink.newChildTskClone()
 	}
 	tLink = tLink.getLeafNode() //Most recent child node created without children
 	tLink.doFunc = doFunc
