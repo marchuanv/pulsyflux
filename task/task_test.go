@@ -82,7 +82,8 @@ func TestErrorHandle(test *testing.T) {
 
 func TestPanicNoErrorHandle(test *testing.T) {
 	defer func() {
-		if r := recover(); r == nil {
+		r := recover()
+		if r == nil {
 			test.Errorf("The implementation did not panic")
 			test.Fail()
 		}

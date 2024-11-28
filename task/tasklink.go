@@ -3,33 +3,32 @@ package task
 import (
 	"errors"
 	"fmt"
-	"slices"
+	"pulsyflux/stack"
 
 	"github.com/google/uuid"
 )
 
-type funcCall int
+type funcCall string
 
 const (
-	None funcCall = iota
-	DoFunc
-	ReceiveFunc
-	ErrorFunc
+	DoFunc      funcCall = "pulsyflux/task.(*tskLink[...]).callDoFunc"
+	ReceiveFunc funcCall = "pulsyflux/task.(*tskLink[...]).callReceiveFunc"
+	ErrorFunc   funcCall = "pulsyflux/task.(*tskLink[...]).callErrorFunc"
 )
 
 type task[T1 any, T2 any] struct {
-	Id           string
-	input        T1
-	result       T2
-	err          error
-	errorHandled bool
-	doFunc       func(input T1) T2
-	receiveFunc  func(results T2, input T1)
-	errorFunc    func(err error, input T1) T1
-	parent       *tskLink[T1, T2]
-	children     []*tskLink[T1, T2]
-	isRoot       bool
-	lstFuncCall  funcCall
+	Id            string
+	input         T1
+	result        T2
+	err           error
+	errorHandled  bool
+	doFunc        func(input T1) T2
+	receiveFunc   func(results T2, input T1)
+	errorFunc     func(err error, input T1) T1
+	parent        *tskLink[T1, T2]
+	children      *stack.Stack[*tskLink[T1, T2]]
+	isRoot        bool
+	funcCallstack *stack.Stack[funcCall]
 }
 type tskLink[T1 any, T2 any] task[T1, T2]
 
@@ -46,9 +45,9 @@ func newTskLink[T1 any, T2 any](input T1) *tskLink[T1, T2] {
 		nil,
 		nil,
 		nil,
-		[]*tskLink[T1, T2]{},
+		stack.NewStack[*tskLink[T1, T2]](),
 		false,
-		None,
+		stack.NewStack[funcCall](),
 	}
 	return tLink
 }
@@ -56,9 +55,13 @@ func newTskLink[T1 any, T2 any](input T1) *tskLink[T1, T2] {
 func (tLink *tskLink[T1, T2]) run() {
 	if tLink.err == nil {
 		tLink.callDoFunc()
-		tLink.callReceiveFunc()
+		if tLink.receiveFunc != nil {
+			tLink.callReceiveFunc()
+		}
 	}
-	tLink.callErrorFunc()
+	if tLink.err != nil && tLink.errorFunc != nil {
+		tLink.callErrorFunc()
+	}
 	if tLink.isRoot {
 		if tLink.err != nil && !tLink.errorHandled {
 			panic(tLink.err)
@@ -67,6 +70,7 @@ func (tLink *tskLink[T1, T2]) run() {
 		tLink.parent.err = tLink.err
 		tLink.parent.errorHandled = tLink.errorHandled
 	}
+	tLink.unlink()
 }
 
 func (tLink *tskLink[T1, T2]) callDoFunc() {
@@ -77,9 +81,8 @@ func (tLink *tskLink[T1, T2]) callDoFunc() {
 			fmt.Printf("\r\ncallDoFunc() error recovery: %s", tLink.err)
 		}
 	})()
-	tLink.lstFuncCall = DoFunc
+	tLink.updateCallstack()
 	tLink.result = tLink.doFunc(tLink.input)
-	tLink.lstFuncCall = None
 }
 
 func (tLink *tskLink[T1, T2]) callReceiveFunc() {
@@ -90,11 +93,8 @@ func (tLink *tskLink[T1, T2]) callReceiveFunc() {
 			fmt.Printf("\r\ncallReceiveFunc() error recovery: %s", tLink.err)
 		}
 	})()
-	if tLink.receiveFunc != nil {
-		tLink.lstFuncCall = ReceiveFunc
-		tLink.receiveFunc(tLink.result, tLink.input)
-		tLink.lstFuncCall = None
-	}
+	tLink.updateCallstack()
+	tLink.receiveFunc(tLink.result, tLink.input)
 }
 
 func (tLink *tskLink[T1, T2]) callErrorFunc() {
@@ -106,55 +106,62 @@ func (tLink *tskLink[T1, T2]) callErrorFunc() {
 			tLink.errorHandled = false
 		}
 	})()
-	if tLink.errorFunc != nil {
-		tLink.lstFuncCall = ErrorFunc
-		tLink.input = tLink.errorFunc(tLink.err, tLink.input)
-		tLink.errorHandled = true
-		tLink.lstFuncCall = None
-	}
+	tLink.updateCallstack()
+	tLink.input = tLink.errorFunc(tLink.err, tLink.input)
+	tLink.errorHandled = true
 }
 
-func (tLink *tskLink[T1, T2]) getLeafNode() *tskLink[T1, T2] {
-	for _, child := range tLink.children {
-		return child.getLeafNode()
-	}
-	return tLink
-}
-
-func (tLink *tskLink[T1, T2]) getNodeBy(lastFuncCall funcCall) *tskLink[T1, T2] {
-	for _, child := range tLink.children {
-		c := child.getNodeBy(lastFuncCall)
-		if c != nil {
-			return c
+func (tLink *tskLink[T1, T2]) getLeafNode(filters ...funcCall) *tskLink[T1, T2] {
+	child := tLink.children.Peek()
+	if child != nil {
+		return child.getLeafNode(filters...)
+	} else {
+		for _, filter := range filters {
+			if tLink.funcCallstack.Peek() == filter {
+				return tLink
+			}
 		}
-	}
-	if tLink.lstFuncCall == lastFuncCall {
 		return tLink
 	}
-	return nil
 }
 
-// func children(*tskLink[T1, T2]) {
-// 	for _, child := range tLink.children {
-// 		c := child.getNodeBy(lastFuncCall)
-// 		if c != nil {
-// 			return c
-// 		}
-// 	}
-// 	if tLink.lstFuncCall == lastFuncCall {
-// 		return tLink
-// 	}
-// 	return nil
-// }
+func (tLink *tskLink[T1, T2]) findNode(fCall funcCall) *tskLink[T1, T2] {
+	var found *tskLink[T1, T2]
+	if tLink.funcCallstack.Peek() == fCall {
+		found = tLink
+	}
+	if found == nil {
+		child := tLink.children.Peek()
+		if child != nil {
+			return child.findNode(fCall)
+		}
+	}
+	return found
+}
 
-// func (tLink *tskLink[T1, T2]) unlink() {
-// 	if len(tLink.children) > 0 {
-// 		panic("fatal error node has children")
-// 	}
-// 	if tLink.parent != nil {
-// 		delete(tLink.parent.children, tLink.Id)
-// 	}
-// }
+func (tLink *tskLink[T1, T2]) updateCallstack() {
+	clstk := getCallstack()
+	for clstk.Len() > 0 {
+		funcName := clstk.Pop()
+		switch funcName {
+		case string(DoFunc):
+			tLink.funcCallstack.Push(DoFunc)
+		case string(ReceiveFunc):
+			tLink.funcCallstack.Push(ReceiveFunc)
+		case string(ErrorFunc):
+			tLink.funcCallstack.Push(ErrorFunc)
+		}
+	}
+}
+
+func (tLink *tskLink[T1, T2]) unlink() {
+	if tLink.children.Len() > 0 {
+		panic("fatal error node has children")
+	}
+	if tLink.parent != nil {
+		tLink.parent.children.Pop()
+	}
+}
 
 func (tLink *tskLink[T1, T2]) newChildClnTsk() {
 	newTskLink := &tskLink[T1, T2]{
@@ -167,17 +174,15 @@ func (tLink *tskLink[T1, T2]) newChildClnTsk() {
 		tLink.receiveFunc,
 		tLink.errorFunc,
 		tLink,
-		[]*tskLink[T1, T2]{},
+		stack.NewStack[*tskLink[T1, T2]](),
 		false,
-		None,
+		stack.NewStack[funcCall](),
 	}
-	tLink.children = append(tLink.children, newTskLink)
-	slices.Reverse(tLink.children)
+	tLink.children.Push(newTskLink)
 }
 
 func (tLink *tskLink[T1, T2]) newChildTsk(input T1) {
 	newTskLink := newTskLink[T1, T2](input)
 	newTskLink.parent = tLink
-	tLink.children = append(tLink.children, newTskLink)
-	slices.Reverse(tLink.children)
+	tLink.children.Push(newTskLink)
 }

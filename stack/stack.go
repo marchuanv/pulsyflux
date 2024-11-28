@@ -9,6 +9,10 @@ type Stack[T any] struct {
 	mu    sync.Mutex
 }
 
+func NewStack[T any]() *Stack[T] {
+	return &Stack[T]{}
+}
+
 func (s *Stack[T]) Len() int {
 	defer s.mu.Unlock()
 	s.mu.Lock()

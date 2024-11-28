@@ -5,17 +5,12 @@ func (taskCtx *tskCtx[T1, T2]) DoNow(doFunc func(input T1) T2, errorFuncs ...fun
 	if len(errorFuncs) > 0 {
 		errorFunc = errorFuncs[0]
 	}
-	var tLink *tskLink[T1, T2]
-	tLinkByDoFuncCall := taskCtx.root.getNodeBy(DoFunc)
-	tLinkByErrorFuncCall := taskCtx.root.getNodeBy(ErrorFunc)
-	if tLinkByErrorFuncCall != nil {
-		tLinkByErrorFuncCall.newChildTsk(taskCtx.root.input)
-		tLink = tLinkByErrorFuncCall
-	} else if tLinkByDoFuncCall != nil {
-		tLinkByDoFuncCall.newChildClnTsk()
-		tLink = tLinkByDoFuncCall
-	} else {
-		tLink = taskCtx.root
+	tLink := taskCtx.root.getLeafNode(ErrorFunc, DoFunc)
+	switch tLink.funcCallstack.Peek() {
+	case ErrorFunc:
+		tLink.newChildTsk(taskCtx.root.input)
+	case DoFunc:
+		tLink.newChildClnTsk()
 	}
 	tLink = tLink.getLeafNode() //Most recent child node created without children
 	tLink.doFunc = doFunc

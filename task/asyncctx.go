@@ -9,9 +9,9 @@ func (taskCtx *tskCtx[T1, T2]) DoLater(doFunc func(input T1) T2, receiveFunc fun
 		errorFunc = errorFuncs[0]
 	}
 	var tLink *tskLink[T1, T2]
-	tLinkByDoFuncCall := taskCtx.root.getNodeBy(DoFunc)
-	tLinkByRecvFuncCall := taskCtx.root.getNodeBy(ReceiveFunc)
-	tLinkByErrorFuncCall := taskCtx.root.getNodeBy(ErrorFunc)
+	tLinkByDoFuncCall := taskCtx.root.findNode(DoFunc)
+	tLinkByRecvFuncCall := taskCtx.root.findNode(ReceiveFunc)
+	tLinkByErrorFuncCall := taskCtx.root.findNode(ErrorFunc)
 	if tLinkByErrorFuncCall != nil {
 		tLinkByErrorFuncCall.newChildTsk(taskCtx.root.input)
 		tLink = tLinkByErrorFuncCall
