@@ -1,81 +1,53 @@
 package task
 
 import (
-	"reflect"
 	"testing"
+	"time"
 )
 
 func TestErrorHandle(test *testing.T) {
-	//func 2 & 4 should not be called, context is in error
-	expectedFuncCalls := []string{"func1", "func3", "func5", "func6", "func7", "func8"}
-	actualFuncCalls := []string{}
-	expectedErrFuncCalls := []string{"errfunc", "errfunc1", "errfunc11", "errfunc111", "errfunc1111"}
-	actualErrFuncCalls := []string{}
-	input := "testdata"
-	tsk := NewTskCtx[string, string](input)
-	tsk.DoNow(func(in string) string {
-		tsk.DoNow(func(in string) string {
-			tsk.DoNow(func(in string) string {
-				tsk.DoNow(func(in string) string {
-					actualFuncCalls = append(actualFuncCalls, "func1")
-					panic("something went wrong")
-				}, func(err error, in string) string {
-					actualErrFuncCalls = append(actualErrFuncCalls, "errfunc")
-					return "error occured here"
+	failTest := true
+	failTestMsg := ""
+	ctx := NewTskCtx()
+	ctx.Do(func(chl Channel) {
+		chl.Write("Do_1")
+		ctx.Do(func(chl Channel) {
+			chl.Write("Do_1.1")
+			ctx.Do(func(chl Channel) {
+				chl.Write("Do_1.1.1")
+				ctx.Do(func(chl Channel) {
+					chl.Write("Do_1.1.1.1")
+					panic("Do_1.1.1.1")
+				}, func(err error, chl Channel) {
+					chl.Write("Do_1.1.1.1_ErrorHandle")
 				})
-				tsk.DoNow(func(in string) string {
-					actualFuncCalls = append(actualFuncCalls, "func2")
-					panic("something went wrong")
-				}, func(err error, in string) string {
-					actualErrFuncCalls = append(actualErrFuncCalls, "errfunc1")
-					return "error occured here"
+				ctx.Do(func(chl Channel) {
+					chl.Write("Do_1.1.1.2")
+					panic("Do_1.1.1.2")
+				}, func(err error, chl Channel) {
+					chl.Write("Do_1.1.1.2_ErrorHandle")
 				})
-				// //simulate a task that never returns
-				// DoAsync(func() (string, error) {
-				// 	actualFuncCalls = append(actualFuncCalls, "longrunningfunc")
-				// 	return "hello", nil
-				// }, func(val string) {
-
-				// }, func(err error, param string) string {
-				// 	actualErrFuncCalls = append(actualErrFuncCalls, "errfunc2")
-				// 	return "error occured here"
-				// })
-				actualFuncCalls = append(actualFuncCalls, "func3")
-				return ""
-			}, func(err error, in string) string {
-				actualErrFuncCalls = append(actualErrFuncCalls, "errfunc11")
-				return in
+			}, func(err error, chl Channel) {
+				chl.Write("Do_1.1.1_ErrorHandle")
 			})
-			tsk.DoNow(func(in string) string {
-				actualFuncCalls = append(actualFuncCalls, "func4")
-				return in
+			ctx.Do(func(chl Channel) {
+				chl.Write("Do_1.2")
 			})
-			actualFuncCalls = append(actualFuncCalls, "func5")
-			return ""
-		}, func(err error, in string) string {
-			actualErrFuncCalls = append(actualErrFuncCalls, "errfunc111")
-			tsk.DoNow(func(in string) string {
-				actualFuncCalls = append(actualFuncCalls, "func6")
-				return in
+		}, func(err error, chl Channel) {
+			chl.Write("Do_1.1_ErrorHandle")
+			ctx.Do(func(chl Channel) {
+				chl.Write("Do_1.1_ErrorHandle_Do")
 			})
-			return in
 		})
-		actualFuncCalls = append(actualFuncCalls, "func7")
-		return ""
-	}, func(err error, in string) string {
-		actualErrFuncCalls = append(actualErrFuncCalls, "errfunc1111")
-		_param := tsk.DoNow(func(in string) string {
-			actualFuncCalls = append(actualFuncCalls, "func8")
-			return in
+	}, func(err error, chl Channel) {
+		chl.Write("Do_1_ErrorHandle")
+		ctx.Do(func(chl Channel) {
+			chl.Write("Do_1_ErrorHandle_Do")
 		})
-		return _param
 	})
-	if !reflect.DeepEqual(actualFuncCalls, expectedFuncCalls) {
-		test.Log("function calls did not occur in the correct order")
-		test.Fail()
-	}
-	if !reflect.DeepEqual(actualErrFuncCalls, expectedErrFuncCalls) {
-		test.Log("error function calls did not occur in the correct order")
+	time.Sleep(5 * time.Second)
+	if failTest {
+		test.Log(failTestMsg)
 		test.Fail()
 	}
 }
@@ -88,18 +60,14 @@ func TestPanicNoErrorHandle(test *testing.T) {
 			test.Fail()
 		}
 	}()
-	input := "testdata"
-	tsk := NewTskCtx[string, string](input)
-	tsk.DoNow(func(in string) string {
-		tsk.DoNow(func(in string) string {
-			tsk.DoNow(func(in string) string {
-				tsk.DoNow(func(in string) string {
+	ctx := NewTskCtx()
+	ctx.Do(func(chl Channel) {
+		ctx.Do(func(chl Channel) {
+			ctx.Do(func(chl Channel) {
+				ctx.Do(func(chl Channel) {
 					panic("something went wrong")
 				})
-				return ""
 			})
-			return ""
 		})
-		return ""
 	})
 }

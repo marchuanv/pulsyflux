@@ -1,14 +1,14 @@
 package task
 
-func (taskCtx *tskCtx[T1, T2]) DoNow(doFunc func(input T1) T2, errorFuncs ...func(err error, input T1) T1) T2 {
-	var errorFunc func(err error, input T1) T1
+func (taskCtx *tskCtx) Do(doFunc func(channel Channel), errorFuncs ...func(err error, channel Channel)) Channel {
+	var errorFunc func(err error, channel Channel)
 	if len(errorFuncs) > 0 {
 		errorFunc = errorFuncs[0]
 	}
-	tLink := taskCtx.root.getLeafNode(ErrorFunc, DoFunc)
+	tLink := taskCtx.curTsk.getLeafNode(ErrorFunc, DoFunc)
 	switch tLink.funcCallstack.Peek() {
 	case ErrorFunc:
-		tLink.newChildTsk(taskCtx.root.input)
+		tLink.newChildTsk()
 	case DoFunc:
 		tLink.newChildTskClone()
 	}
@@ -16,5 +16,5 @@ func (taskCtx *tskCtx[T1, T2]) DoNow(doFunc func(input T1) T2, errorFuncs ...fun
 	tLink.doFunc = doFunc
 	tLink.errorFunc = errorFunc
 	tLink.run()
-	return tLink.result
+	return tLink.channel
 }

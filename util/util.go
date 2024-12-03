@@ -22,8 +22,8 @@ func Newv5UUID(data string) uuid.UUID {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(data))
 }
 
-func NewAddress(address string) *Address {
-	return task.DoNow(address, func(addr string) *Address {
+func NewAddress(context task.TaskCtx[string, *Address]) {
+	context.DoNow(func(addr string) *Address {
 		hostStr, portStr, err := net.SplitHostPort(addr)
 		if err != nil {
 			panic(err)

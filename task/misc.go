@@ -1,13 +1,13 @@
 package task
 
 import (
-	"pulsyflux/stack"
+	"pulsyflux/sliceext"
 	"runtime"
 	"strings"
 )
 
-func getCallstack() *stack.Stack[string] {
-	clStk := &stack.Stack[string]{}
+func getCallstack() *sliceext.Stack[string] {
+	clStk := &sliceext.Stack[string]{}
 	frame := 0
 	funcName := getFrame(frame).Function
 	for funcName != "unknown" {
