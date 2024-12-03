@@ -40,9 +40,9 @@ func newTskLink() *tskLink {
 		nil,
 		nil,
 		nil,
-		stack.NewStack[*tskLink](),
+		sliceext.NewStack[*tskLink](),
 		false,
-		stack.NewStack[funcCall](),
+		sliceext.NewStack[funcCall](),
 	}
 }
 
@@ -80,6 +80,7 @@ func (tLink *tskLink) run() {
 	tLink.channel.Read(func(data any) {
 		fmt.Printf("\r\n%s\r\n", data)
 	})
+	tLink.channel.close()
 }
 
 func (tLink *tskLink) callDoFunc() {

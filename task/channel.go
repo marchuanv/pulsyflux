@@ -17,7 +17,7 @@ type chnl struct {
 	Id        string
 	state     chnlState
 	mu        sync.Mutex
-	dataQueue sliceext.Queue[*chnlData]
+	dataQueue *sliceext.Queue[*chnlData]
 }
 
 type chnlData struct {
@@ -36,7 +36,7 @@ func newChl() *chnl {
 		uuid.NewString(),
 		Open,
 		sync.Mutex{},
-		sliceext.Queue[*chnlData]{},
+		sliceext.NewQueue[*chnlData](),
 	}
 }
 
@@ -63,9 +63,9 @@ func (ch *chnl) Write(data any) {
 }
 
 func (ch *chnl) close() {
+	defer ch.unlock()
 	ch.lock()
 	ch.state = Closed
-	ch.unlock()
 }
 
 func (ch *chnl) lock() bool {
@@ -82,6 +82,7 @@ func (ch *chnl) lock() bool {
 func (ch *chnl) unlock() {
 	if ch.getState() == Locked {
 		ch.state = Open
+	} else if ch.getState() == Closed {
 	} else {
 		panic("channel is not locked")
 	}
