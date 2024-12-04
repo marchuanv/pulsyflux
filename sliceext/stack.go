@@ -4,47 +4,94 @@ import (
 	"sync"
 )
 
-type Stack[T any] struct {
-	stack []T
+type Stack[T any] interface {
+	Len() int
+	Push(item T)
+	Pop() T
+	Peek() T
+	CloneLen() int
+	ClonePush(item T)
+	ClonePop() T
+	ClonePeek() T
+}
+
+type stack[T any] struct {
+	stk   []T
 	mu    sync.Mutex
+	clone *stack[T]
 }
 
-func NewStack[T any]() *Stack[T] {
-	return &Stack[T]{}
+func NewStack[T any]() Stack[T] {
+	st := &stack[T]{}
+	st.clone = &stack[T]{}
+	return st
 }
 
-func (s *Stack[T]) Len() int {
+func (s *stack[T]) Len() int {
+	return length(s)
+}
+
+func (s *stack[T]) Push(item T) {
+	push(s.clone, item)
+	push(s, item)
+}
+
+func (s *stack[T]) Pop() T {
+	pop(s.clone)
+	return pop(s)
+}
+
+func (s *stack[T]) Peek() T {
+	return peek(s)
+}
+
+func (s *stack[T]) CloneLen() int {
+	return length(s.clone)
+}
+
+func (s *stack[T]) ClonePush(item T) {
+	push(s.clone, item)
+}
+
+func (s *stack[T]) ClonePop() T {
+	return pop(s.clone)
+}
+
+func (s *stack[T]) ClonePeek() T {
+	return peek(s.clone)
+}
+
+func length[T any](s *stack[T]) int {
 	defer s.mu.Unlock()
 	s.mu.Lock()
-	l := len(s.stack)
-	return l
+	return len(s.stk)
 }
 
-func (s *Stack[T]) Push(item T) {
+func push[T any](s *stack[T], item T) {
 	defer s.mu.Unlock()
 	s.mu.Lock()
-	s.stack = append(s.stack, item)
+	s.stk = append(s.stk, item)
 }
 
-func (s *Stack[T]) Pop() T {
+func pop[T any](s *stack[T]) T {
+	defer s.mu.Unlock()
+	s.mu.Lock()
 	var top T
-	defer s.mu.Unlock()
-	s.mu.Lock()
-	l := len(s.stack)
+	l := len(s.stk)
 	if l > 0 {
-		top = s.stack[l-1]
-		s.stack = s.stack[:l-1]
+		top = s.stk[l-1]
+		s.stk = s.stk[:l-1]
 	}
 	return top
 }
 
-func (s *Stack[T]) Peek() T {
+func peek[T any](s *stack[T]) T {
 	defer s.mu.Unlock()
 	s.mu.Lock()
 	var top T
-	l := len(s.stack)
+	l := len(s.stk)
 	if l > 0 {
-		top = s.stack[l-1]
+		top = s.stk[l-1]
 	}
 	return top
 }

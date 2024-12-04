@@ -20,6 +20,10 @@ require task v1.0.0
 
 require sliceext v1.0.0
 
+require tree v1.0.0
+
+require channel v1.0.0
+
 replace pulse v1.0.0 => /pulse
 
 replace msgbus v1.0.0 => /msgbus
@@ -33,3 +37,7 @@ replace subscriptions v1.0.0 => /subscriptions
 replace task v1.0.0 => /task
 
 replace sliceext v1.0.0 => /sliceext
+
+replace tree v1.0.0 => /tree
+
+replace channel v1.0.0 => /channel

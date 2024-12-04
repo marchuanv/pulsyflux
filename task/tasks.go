@@ -1,7 +1,9 @@
 package task
 
-func (taskCtx *tskCtx) Do(doFunc func(channel Channel), errorFuncs ...func(err error, channel Channel)) Channel {
-	var errorFunc func(err error, channel Channel)
+import "pulsyflux/channel"
+
+func (taskCtx *tskCtx) Do(doFunc func(channel channel.Channel), errorFuncs ...func(err error, channel channel.Channel)) channel.Channel {
+	var errorFunc func(err error, channel channel.Channel)
 	if len(errorFuncs) > 0 {
 		errorFunc = errorFuncs[0]
 	}
@@ -16,5 +18,8 @@ func (taskCtx *tskCtx) Do(doFunc func(channel Channel), errorFuncs ...func(err e
 	tLink.doFunc = doFunc
 	tLink.errorFunc = errorFunc
 	tLink.run()
-	return tLink.channel
+	if tLink.isRoot {
+		taskCtx.ch = tLink.channel
+	}
+	return taskCtx.ch
 }

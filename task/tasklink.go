@@ -3,6 +3,7 @@ package task
 import (
 	"errors"
 	"fmt"
+	"pulsyflux/channel"
 	"pulsyflux/sliceext"
 
 	"github.com/google/uuid"
@@ -17,21 +18,21 @@ const (
 
 type task struct {
 	Id            string
-	channel       *chnl
+	channel       channel.Channel
 	err           error
 	errorHandled  bool
-	doFunc        func(channel Channel)
-	errorFunc     func(err error, channel Channel)
+	doFunc        func(channel channel.Channel)
+	errorFunc     func(err error, channel channel.Channel)
 	parent        *tskLink
-	children      *sliceext.Stack[*tskLink]
+	children      sliceext.Stack[*tskLink]
 	isRoot        bool
-	funcCallstack *sliceext.Stack[funcCall]
+	funcCallstack sliceext.Stack[funcCall]
 }
 type tskLink task
 
 func newTskLink() *tskLink {
 	var err error
-	channel := newChl()
+	channel := channel.NewChnlNode()
 	return &tskLink{
 		uuid.NewString(),
 		channel,
@@ -74,13 +75,19 @@ func (tLink *tskLink) run() {
 		} else if tLink.err != nil {
 			tLink.parent.err = tLink.err
 			tLink.parent.errorHandled = tLink.errorHandled
+
 		}
 		tLink.unlink()
+		tLink.channel.RaiseEvent(channel.ChannelReadReady)
 	})()
+	tLink.channel.WaitForEvent(channel.ChannelReadReady)
 	tLink.channel.Read(func(data any) {
-		fmt.Printf("\r\n%s\r\n", data)
 	})
-	tLink.channel.close()
+	// if tLink.parent != nil {
+	// 	tLink.channel.Read(func(data any) {
+	// 		tLink.parent.channel.Write(data)
+	// 	})
+	// }
 }
 
 func (tLink *tskLink) callDoFunc() {
@@ -88,7 +95,6 @@ func (tLink *tskLink) callDoFunc() {
 		r := recover()
 		if r != nil {
 			tLink.err = errors.New(fmt.Sprint(r))
-			fmt.Printf("\r\ncallDoFunc() error recovery: %s", tLink.err)
 		}
 	})()
 	tLink.updateCallstack()
@@ -100,7 +106,6 @@ func (tLink *tskLink) callErrorFunc() {
 		r := recover()
 		if r != nil {
 			tLink.err = errors.New(fmt.Sprint(r))
-			fmt.Printf("\r\ncallErrorFunc() error recovery: %s", tLink.err)
 			tLink.errorHandled = false
 		}
 	})()

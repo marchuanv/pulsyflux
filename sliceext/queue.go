@@ -5,23 +5,30 @@ import (
 	"sync"
 )
 
-type Queue[T any] struct {
+type Queue[T any] interface {
+	Len() int
+	Enqueue(item T)
+	Dequeue() T
+	Peek() T
+}
+
+type queue[T any] struct {
 	queue []T
 	mu    sync.Mutex
 }
 
-func NewQueue[T any]() *Queue[T] {
-	return &Queue[T]{}
+func NewQueue[T any]() Queue[T] {
+	return &queue[T]{}
 }
 
-func (s *Queue[T]) Len() int {
+func (s *queue[T]) Len() int {
 	defer s.mu.Unlock()
 	s.mu.Lock()
 	l := len(s.queue)
 	return l
 }
 
-func (s *Queue[T]) Enqueue(item T) {
+func (s *queue[T]) Enqueue(item T) {
 	defer s.mu.Unlock()
 	s.mu.Lock()
 	slices.Reverse(s.queue)
@@ -29,7 +36,7 @@ func (s *Queue[T]) Enqueue(item T) {
 	slices.Reverse(s.queue)
 }
 
-func (q *Queue[T]) Dequeue() T {
+func (q *queue[T]) Dequeue() T {
 	var front T
 	defer q.mu.Unlock()
 	q.mu.Lock()
@@ -41,7 +48,7 @@ func (q *Queue[T]) Dequeue() T {
 	return front
 }
 
-func (q *Queue[T]) Peek() T {
+func (q *queue[T]) Peek() T {
 	defer q.mu.Unlock()
 	q.mu.Lock()
 	var front T

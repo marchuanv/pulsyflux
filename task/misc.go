@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-func getCallstack() *sliceext.Stack[string] {
-	clStk := &sliceext.Stack[string]{}
+func getCallstack() sliceext.Stack[string] {
+	clStk := sliceext.NewStack[string]()
 	frame := 0
 	funcName := getFrame(frame).Function
 	for funcName != "unknown" {
