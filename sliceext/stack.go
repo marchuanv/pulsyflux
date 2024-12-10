@@ -13,6 +13,7 @@ type Stack[T any] interface {
 	ClonePush(item T)
 	ClonePop() T
 	ClonePeek() T
+	CloneReset()
 }
 
 type stack[T any] struct {
@@ -23,7 +24,7 @@ type stack[T any] struct {
 
 func NewStack[T any]() Stack[T] {
 	st := &stack[T]{}
-	st.clone = &stack[T]{}
+	st.CloneReset()
 	return st
 }
 
@@ -51,6 +52,13 @@ func (s *stack[T]) CloneLen() int {
 
 func (s *stack[T]) ClonePush(item T) {
 	push(s.clone, item)
+}
+
+func (s *stack[T]) CloneReset() {
+	defer s.mu.Unlock()
+	s.mu.Lock()
+	s.clone = &stack[T]{}
+	s.clone.stk = append(s.clone.stk, s.stk...)
 }
 
 func (s *stack[T]) ClonePop() T {
