@@ -34,10 +34,12 @@ func TestPtrChnl(test *testing.T) {
 }
 
 func TestChnlMsgTimeout(test *testing.T) {
-	ptr := &someStruct{}
+	defer (func() {
+		err := recover()
+		if err == nil {
+			test.Fail()
+		}
+	})()
 	ch := NewChnl()
-	msg, _ := ch.Message().Content()
-	if msg != ptr {
-		test.Fail()
-	}
+	ch.Message().Content()
 }

@@ -37,11 +37,11 @@ func (ch *chnl) Message() ChannelMsg {
 		if time.Now().UTC().UnixMilli() > timeout.UnixMilli() {
 			ch.err = errors.New("timeout reading message")
 			return ch.Message()
-		} else {
+		} else if ch.messages.Len() == 0 {
 			ch.messages.Enqueue(NewChnlMsg(timeout))
 			time.Sleep(100 * time.Millisecond)
-			return ch.Message()
 		}
+		return ch.Message()
 	}
 	return msg
 }
@@ -53,10 +53,6 @@ func (ch *chnl) Close() {
 
 func (ch *chnl) IsClosed() bool {
 	return ch.state.name() == "Closed"
-}
-
-func (ch *chnl) hasError() bool {
-	return ch.state.name() == "Error"
 }
 
 func (ch *chnl) raiseErrors() {
