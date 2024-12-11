@@ -1,118 +1,70 @@
 package channel
 
 import (
+	"errors"
 	"pulsyflux/sliceext"
 	"time"
 )
 
-type chnl[T any] struct {
-	events sliceext.Stack[Msg[ChannelEvent]]
-	msgs   sliceext.Queue[Msg[T]]
+type chnl struct {
+	state    ChannelState
+	err      error
+	messages sliceext.Queue[ChannelMsg]
 }
 
-func NewChnl[T any]() Channel[T] {
-	ch := &chnl[T]{
-		sliceext.NewStack[Msg[ChannelEvent]](),
-		sliceext.NewQueue[Msg[T]](),
-	}
-	ensureGlbChnlEventLookup()
-	ch.raiseEvent(glbChnlEventLookup[ChannelWriteReady])
-	return ch
-}
-
-func (ch *chnl[T]) Receive() Msg[T] {
-	defer ch.raiseErrorEvent()
-	if ch.hasEvent(glbChnlEventLookup[ChannelReadReady]) {
-		msg := ch.msgs.Dequeue()
-		ch.raiseEvent(glbChnlEventLookup[ChannelRead])
-		return msg
-	} else {
-		panic("channel is not read ready")
+func NewChnl() Channel {
+	return &chnl{
+		newState("Open"),
+		nil,
+		sliceext.NewQueue[ChannelMsg](),
 	}
 }
-func (ch *chnl[T]) OnReceived() {
-	ch.waitForEvent(glbChnlEventLookup[ChannelRead])
+
+func (ch *chnl) Send(chnlMsg ChannelMsg) {
+	ch.raiseErrors()
+	ch.messages.Enqueue(chnlMsg)
 }
 
-func (ch *chnl[T]) Send(msg Msg[T]) {
-	defer ch.raiseErrorEvent()
-	if ch.hasEvent(glbChnlEventLookup[ChannelWriteReady]) {
-		ch.msgs.Enqueue(msg)
-		ch.raiseEvent(glbChnlEventLookup[ChannelReadReady])
-	} else {
-		panic("channel is not write ready")
+func (ch *chnl) Message() ChannelMsg {
+	ch.raiseErrors()
+	if ch.messages.Len() == 0 {
+		timeout := time.Now().Add(10 * time.Second)
+		ch.messages.Enqueue(NewChnlMsg(timeout))
 	}
-}
-func (ch *chnl[T]) OnSent() {
-	ch.waitForEvent(glbChnlEventLookup[ChannelReadReady])
-}
-
-func (ch *chnl[T]) SetReadOnly() {
-	defer ch.raiseErrorEvent()
-	if ch.hasEventHistory(glbChnlEventLookup[ChannelReadReady]) {
-		if ch.msgs.Len() > 0 {
-			ch.raiseEvent(glbChnlEventLookup[ChannelReadOnly])
-			return
+	msg := ch.messages.Dequeue()
+	canConvert, timeout := convert[time.Time](msg)
+	if canConvert {
+		if time.Now().UTC().UnixMilli() > timeout.UnixMilli() {
+			ch.err = errors.New("timeout reading message")
+			return ch.Message()
+		} else {
+			ch.messages.Enqueue(NewChnlMsg(timeout))
+			time.Sleep(100 * time.Millisecond)
+			return ch.Message()
 		}
 	}
-	panic("attempting to make a channel read only when no message was sent")
+	return msg
 }
 
-func (ch *chnl[T]) Close() {
-	defer ch.raiseErrorEvent()
-	if ch.msgs.Len() == 0 {
-		ch.raiseEvent(glbChnlEventLookup[ChannelClosed])
-	} else {
-		panic("attempting to close a channel that has messages")
+func (ch *chnl) Close() {
+	ch.raiseErrors()
+	ch.state = newState("Closed")
+}
+
+func (ch *chnl) IsClosed() bool {
+	return ch.state.name() == "Closed"
+}
+
+func (ch *chnl) hasError() bool {
+	return ch.state.name() == "Error"
+}
+
+func (ch *chnl) raiseErrors() {
+	if ch.IsClosed() {
+		ch.err = errors.New("channel is closed")
 	}
-}
-
-func (ch *chnl[T]) OnClosed() {
-	ch.waitForEvent(glbChnlEventLookup[ChannelClosed])
-}
-
-func (ch *chnl[T]) waitForEvent(eMsg Msg[ChannelEvent]) {
-	if !ch.hasEvent(eMsg) {
-		time.Sleep(100 * time.Millisecond)
-		ch.waitForEvent(eMsg)
+	if ch.err != nil {
+		ch.state = newState("Error")
+		panic(ch.err)
 	}
-}
-
-func (ch *chnl[T]) hasEvent(eMsg Msg[ChannelEvent]) bool {
-	defer ch.raiseErrorEvent()
-	poppedMsg := ch.events.ClonePop()
-	if poppedMsg != nil {
-		msg := poppedMsg.Data()
-		eventMsg := eMsg.Data()
-		if string(msg) == string(eventMsg) {
-			return true
-		}
-	}
-	return false
-}
-
-func (ch *chnl[T]) hasEventHistory(eMsg Msg[ChannelEvent]) bool {
-	defer ch.raiseErrorEvent()
-	poppedMsg := ch.events.ClonePop()
-	for poppedMsg != nil {
-		msg := poppedMsg.Data()
-		eventMsg := eMsg.Data()
-		if string(msg) == string(eventMsg) {
-			return true
-		}
-		poppedMsg = ch.events.ClonePop()
-	}
-	return false
-}
-
-func (ch *chnl[T]) raiseErrorEvent() {
-	r := recover()
-	if r != nil {
-		ch.raiseEvent(glbChnlEventLookup[ChannelError])
-	}
-	ch.events.CloneReset()
-}
-
-func (ch *chnl[T]) raiseEvent(eMsg Msg[ChannelEvent]) {
-	ch.events.Push(eMsg)
 }
