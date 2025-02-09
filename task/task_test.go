@@ -9,39 +9,39 @@ import (
 func TestErrorHandle(test *testing.T) {
 	ctx := NewTskCtx()
 	chnl := ctx.Do(func(chl channel.Channel) {
-		chl.Write("Do_1")
+		chl.Send(channel.NewChnlMsg("Do_1"))
 		ctx.Do(func(chl channel.Channel) {
-			chl.Write("Do_1.1")
+			chl.Send(channel.NewChnlMsg("Do_1.1"))
 			ctx.Do(func(chl channel.Channel) {
-				chl.Write("Do_1.1.1")
+				chl.Send(channel.NewChnlMsg("Do_1.1.1"))
 				ctx.Do(func(chl channel.Channel) {
-					chl.Write("Do_1.1.1.1")
+					chl.Send(channel.NewChnlMsg("Do_1.1.1.1"))
 					panic("Do_1.1.1.1")
 				}, func(err error, chl channel.Channel) {
-					chl.Write("Do_1.1.1.1_ErrorHandle")
+					chl.Send(channel.NewChnlMsg("Do_1.1.1.1_ErrorHandle"))
 				})
 				ctx.Do(func(chl channel.Channel) {
-					chl.Write("Do_1.1.1.2")
+					chl.Send(channel.NewChnlMsg("Do_1.1.1.2"))
 					panic("Do_1.1.1.2")
 				}, func(err error, chl channel.Channel) {
-					chl.Write("Do_1.1.1.2_ErrorHandle")
+					chl.Send(channel.NewChnlMsg("Do_1.1.1.2_ErrorHandle"))
 				})
 			}, func(err error, chl channel.Channel) {
-				chl.Write("Do_1.1.1_ErrorHandle")
+				chl.Send(channel.NewChnlMsg("Do_1.1.1_ErrorHandle"))
 			})
 			ctx.Do(func(chl channel.Channel) {
-				chl.Write("Do_1.2")
+				chl.Send(channel.NewChnlMsg("Do_1.2"))
 			})
 		}, func(err error, chl channel.Channel) {
-			chl.Write("Do_1.1_ErrorHandle")
+			chl.Send(channel.NewChnlMsg("Do_1.1_ErrorHandle"))
 			ctx.Do(func(chl channel.Channel) {
-				chl.Write("Do_1.1_ErrorHandle_Do")
+				chl.Send(channel.NewChnlMsg("Do_1.1_ErrorHandle_Do"))
 			})
 		})
 	}, func(err error, chl channel.Channel) {
-		chl.Write("Do_1_ErrorHandle")
+		chl.Send(channel.NewChnlMsg("Do_1_ErrorHandle"))
 		ctx.Do(func(chl channel.Channel) {
-			chl.Write("Do_1_ErrorHandle_Do")
+			chl.Send(channel.NewChnlMsg("Do_1_ErrorHandle_Do"))
 		})
 	})
 	chnl.Read(func(data any) {

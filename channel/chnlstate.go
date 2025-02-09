@@ -9,8 +9,7 @@ import (
 type ChannelState uuid.UUID
 
 func newState(name string) ChannelState {
-	state := ChannelState{}.create(name)
-	return state
+	return ChannelState{}.create(name)
 }
 
 func (chSt ChannelState) create(name string) ChannelState {

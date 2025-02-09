@@ -32,7 +32,7 @@ type tskLink task
 
 func newTskLink() *tskLink {
 	var err error
-	channel := channel.NewChnlNode()
+	channel := channel.NewChnl()
 	return &tskLink{
 		uuid.NewString(),
 		channel,
@@ -78,11 +78,11 @@ func (tLink *tskLink) run() {
 
 		}
 		tLink.unlink()
-		tLink.channel.RaiseEvent(channel.ChannelReadReady)
 	})()
-	tLink.channel.WaitForEvent(channel.ChannelReadReady)
-	tLink.channel.Read(func(data any) {
-	})
+	msg := tLink.channel.Message()
+	for msg != nil {
+		msg = tLink.channel.Message()
+	}
 	// if tLink.parent != nil {
 	// 	tLink.channel.Read(func(data any) {
 	// 		tLink.parent.channel.Write(data)

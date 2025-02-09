@@ -5,27 +5,25 @@ import (
 )
 
 type chnlmsg func() (any, uuid.UUID)
-type ChannelMsg interface {
-	Content() (any, uuid.UUID)
-}
 
-func NewChnlMsg(data any) ChannelMsg {
+func newChnlMsg(data any) *chnlmsg {
 	Id := uuid.New()
-	return chnlmsg(func() (any, uuid.UUID) {
+	_chMsgF := chnlmsg(func() (any, uuid.UUID) {
 		return data, Id
 	})
+	return &_chMsgF
 }
-func (chMsg chnlmsg) Content() (any, uuid.UUID) {
+func (chMsg chnlmsg) content() (any, uuid.UUID) {
 	return chMsg()
 }
 
-func convert[T any](msg ChannelMsg) (canConvert bool, converted T) {
+func convert[T any](msg *chnlmsg) (canConvert bool, converted T) {
 	defer (func() {
 		err := recover()
 		if err != nil {
 			canConvert = false
 		}
 	})()
-	content, _ := msg.Content()
+	content, _ := msg.content()
 	return true, content.(T)
 }

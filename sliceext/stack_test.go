@@ -3,43 +3,19 @@ package sliceext
 import (
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 func TestStack(test *testing.T) {
-	cloneStkId := uuid.New()
 	someStruct := &struct{}{}
-
 	stk := NewStack[*struct{}]()
-	stkUnder := stk.(*stack[*struct{}])
-
 	stk.Push(someStruct)
-	stk.Clone(cloneStkId)
-
-	if len(stkUnder.clones) == 0 {
+	if stk.Len() == 0 {
 		test.Fail()
 	}
-
-	clonePop := stk.ClonePop(cloneStkId)
-	stkPop := stk.Pop()
-
-	if len(stkUnder.clones) == 0 {
+	stk.Pop()
+	if stk.Len() != 0 {
 		test.Fail()
 	}
-	stk.CloneClear(cloneStkId)
-	if len(stkUnder.clones) != 0 {
-		test.Fail()
-	}
-
-	if clonePop != stkPop {
-		test.Fail()
-	}
-
-	if stk.Len() != 0 || stk.CloneLen(cloneStkId) != 0 {
-		test.Fail()
-	}
-
 }
 
 func TestStackConcurrency(test *testing.T) {
@@ -48,31 +24,37 @@ func TestStackConcurrency(test *testing.T) {
 	msgC := "690c0887-512f-468e-af48-734436467425"
 	stk := NewStack[string]()
 	exit := false
-	cloneStkId := uuid.New()
 	go (func() {
 		for !exit {
 			stk.Push(msgA)
-			stk.Push(msgB)
-			stk.Push(msgC)
+			pop := stk.Pop()
+			if pop != msgA {
+				test.Fail()
+				exit = true
+			}
 			time.Sleep(3 * time.Second)
 		}
 	})()
 	go (func() {
 		for !exit {
-			stk.Clone(cloneStkId)
-			msg := stk.ClonePop(cloneStkId)
-			if msg != "" {
-				test.Logf("Popped: %v\r\n", msg)
+			stk.Push(msgB)
+			pop := stk.Pop()
+			if pop != msgB {
+				test.Fail()
+				exit = true
 			}
-			msg = stk.ClonePop(cloneStkId)
-			if msg != "" {
-				test.Logf("Popped: %v\r\n", msg)
+			time.Sleep(3 * time.Second)
+		}
+	})()
+	go (func() {
+		for !exit {
+			stk.Push(msgC)
+			pop := stk.Pop()
+			if pop != msgC {
+				test.Fail()
+				exit = true
 			}
-			msg = stk.ClonePop(cloneStkId)
-			if msg != "" {
-				test.Logf("Popped: %v\r\n", msg)
-			}
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(3 * time.Second)
 		}
 	})()
 	time.Sleep(15 * time.Second)
