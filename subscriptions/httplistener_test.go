@@ -15,6 +15,10 @@ func TestHttpListener(test *testing.T) {
 		test.Log(err)
 		test.Fail()
 	})
+	SubscribeToErrors(chnlId, func(err error) {
+		test.Log(err)
+		test.Fail()
+	})
 	SubscribeToHttpListener(chnlId, func(listener net.Listener, addr *HostAddress) {
 		subRslvd = true
 	})
