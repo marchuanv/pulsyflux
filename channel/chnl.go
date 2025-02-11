@@ -4,39 +4,38 @@ import (
 	"errors"
 	"fmt"
 	"pulsyflux/sliceext"
-	"time"
 
 	"github.com/google/uuid"
 )
 
-type chnlId uuid.UUID
+type ChnlId uuid.UUID
 
-var channels = sliceext.NewDictionary[chnlId, *Channel]()
-var channelSubs = sliceext.NewDictionary[chnlId, *sliceext.List[subId]]()
-var timeoutErrEnvlp = newChnlEnvlp(newChnlError("timeout waiting for channel to receive envelopes"))
-
-type Channel struct {
-	Id        chnlId
-	timeout   time.Time
-	err       error
-	envelopes *sliceext.Queue[*chnlEnvlp]
+func (chId ChnlId) String() string {
+	uuid := uuid.UUID(chId)
+	return uuid.String()
 }
 
-func OpenChnl(Id chnlId) {
+var channels = sliceext.NewDictionary[ChnlId, *Channel]()
+var channelSubs = sliceext.NewDictionary[ChnlId, *sliceext.List[SubId]]()
+
+type Channel struct {
+	id  ChnlId
+	err error
+}
+
+func OpenChnl(Id ChnlId) {
 	if channels.Has(Id) {
 		msg := fmt.Sprintf("channel Id(%s) is already open", Id)
 		panic(newChnlError(msg))
 	} else {
 		channels.Add(Id, &Channel{
 			Id,
-			time.Time{},
 			nil,
-			sliceext.NewQueue[*chnlEnvlp](),
 		})
 	}
 }
 
-func CloseChnl(Id chnlId) {
+func CloseChnl(Id ChnlId) {
 	if channelSubs.Has(Id) {
 		msg := fmt.Sprintf("failed to close channel Id(%s) with active subscriptions", Id)
 		panic(newChnlError(msg))
@@ -48,44 +47,49 @@ func CloseChnl(Id chnlId) {
 	}
 }
 
-func Publish[T any](channelId chnlId, content T) {
+func Publish[T any](channelId ChnlId, content T) {
 	defer (func() {
-		var chnlErr error
-		var err error
-		var canConv bool
 		rec := recover()
-		chnlErr, canConv = isChnlError(rec)
+		err, canConv := isError[error](rec)
 		if canConv {
-			panic(chnlErr)
-		}
-		err, canConv = isError[error](rec)
-		if canConv {
-			fmt.Print(err)
+			panic(err)
 		}
 	})()
 	if !channels.Has(channelId) {
 		msg := fmt.Sprintf("channel Id(%s) is not open. Call OpenChnl() function", channelId)
 		panic(newChnlError(msg))
 	}
+	if !channelSubs.Has(channelId) {
+		msg := fmt.Sprintf("channel Id(%s) does not have subscriptions", channelId)
+		panic(newChnlError(msg))
+	}
 	ch := channels.Get(channelId)
-	ch.envelopes.Enqueue(newChnlEnvlp(content))
-	go ch.broadcast()
+	envlp := newChnlEnvlp(content)
+	subs := channelSubs.Get(ch.id)
+	for _, sub := range subs.All() {
+		go sub.rcvEnvlp(envlp)
+	}
 }
 
-func Subscribe[T any](sub subId, channelId chnlId, rcvContent func(content T), rcvError func(err error)) {
+func Subscribe[T any](sub SubId, channelId ChnlId, rcvContent func(content T)) {
+	defer (func() {
+		rec := recover()
+		err, canConv := isError[error](rec)
+		if canConv {
+			panic(err)
+		}
+	})()
 	if !channels.Has(channelId) {
 		msg := fmt.Sprintf("channel Id(%s) is not open. Call OpenChnl() function", channelId)
-		rcvError(errors.New(msg))
-		return
+		panic(errors.New(msg))
 	}
 	if !channelSubs.Has(channelId) {
-		channelSubs.Add(channelId, sliceext.NewList[subId]())
+		channelSubs.Add(channelId, sliceext.NewList[SubId]())
 	}
 	subscriptions := channelSubs.Get(channelId)
 	if subscriptions.Has(sub) {
 		msg := fmt.Sprintf("channel Id(%s) already has subscription %s", channelId, sub)
-		rcvError(errors.New(msg))
-		return
+		panic(errors.New(msg))
 	}
 	subscriptions.Add(sub)
 	sub.callback(func(envlp *chnlEnvlp) {
@@ -93,10 +97,10 @@ func Subscribe[T any](sub subId, channelId chnlId, rcvContent func(content T), r
 		if isWantedContent {
 			rcvContent(content)
 		}
-	}, rcvError)
+	})
 }
 
-func Unsubscribe(subId subId, channelId chnlId) {
+func Unsubscribe(subId SubId, channelId ChnlId) {
 	if !channels.Has(channelId) {
 		msg := fmt.Sprintf("channel Id(%s) is not open. Call OpenChnl() function", channelId)
 		panic(newChnlError(msg))
@@ -115,33 +119,5 @@ func Unsubscribe(subId subId, channelId chnlId) {
 	} else {
 		msg := fmt.Sprintf("failed to unsubscribe from channel Id(%s)", channelId)
 		panic(newChnlError(msg))
-	}
-}
-
-func (ch *Channel) broadcast() {
-	var envlp *chnlEnvlp
-	var wait time.Duration
-	if ch.envelopes.Len() == 0 {
-		if ch.timeout.IsZero() {
-			ch.timeout = time.Now().Add(10 * time.Second)
-		}
-		if time.Now().UTC().UnixMilli() > ch.timeout.UnixMilli() {
-			envlp = timeoutErrEnvlp
-		}
-		wait = 1000
-	} else {
-		envlp = ch.envelopes.Dequeue()
-		ch.timeout = time.Now().Add(10 * time.Second) //refresh timeout
-		wait = 100
-	}
-	if envlp != nil {
-		subs := channelSubs.Get(ch.Id)
-		for _, sub := range subs.All() {
-			sub.rcvEnvlp(envlp)
-		}
-	}
-	time.Sleep(wait * time.Millisecond)
-	if channelSubs.Len() > 0 {
-		ch.broadcast()
 	}
 }

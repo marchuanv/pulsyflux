@@ -6,22 +6,35 @@ import (
 	"github.com/google/uuid"
 )
 
-var rcvContentDic = sliceext.NewDictionary[subId, func(envlp *chnlEnvlp)]()
-var rcvErrDic = sliceext.NewDictionary[subId, func(err error)]()
+var rcvContentDic = sliceext.NewDictionary[SubId, func(envlp *chnlEnvlp)]()
 
-type subId uuid.UUID
+type SubId uuid.UUID
 
-func (sub subId) rcvEnvlp(envlp *chnlEnvlp) {
+func NewSubId(uuidStr string) SubId {
+	Id, err := uuid.Parse(uuidStr)
+	if err != nil {
+		panic(err)
+	}
+	return SubId(Id)
+}
+
+func (sub SubId) rcvEnvlp(envlp *chnlEnvlp) {
+	defer (func() {
+		rec := recover()
+		err, canConv := isError[error](rec)
+		if canConv {
+			panic(err)
+		}
+	})()
 	cb := rcvContentDic.Get(sub)
 	cb(envlp)
 }
 
-func (sub subId) rcvError(err error) {
-	cb := rcvErrDic.Get(sub)
-	cb(err)
+func (sub SubId) String() string {
+	uuid := uuid.UUID(sub)
+	return uuid.String()
 }
 
-func (sub subId) callback(rcvEnvlpFunc func(envlp *chnlEnvlp), rcvErrFunc func(err error)) {
+func (sub SubId) callback(rcvEnvlpFunc func(envlp *chnlEnvlp)) {
 	rcvContentDic.Add(sub, rcvEnvlpFunc)
-	rcvErrDic.Add(sub, rcvErrFunc)
 }
