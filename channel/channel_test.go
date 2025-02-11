@@ -56,11 +56,10 @@ func TestChnlSubscribe(test *testing.T) {
 	})()
 	exMsgContent1 := &msgImpA{}
 	exMsgContent2 := &msgImpB{}
-	subId := SubId(uuid.New())
 	chnlId := ChnlId(uuid.New())
 	OpenChnl(chnlId)
 	subReceivedCount := 0
-	Subscribe(subId, chnlId, func(msgContent msgContract) {
+	Subscribe(chnlId, func(msgContent msgContract) {
 		subReceivedCount++
 		if msgContent != exMsgContent1 {
 			if msgContent != exMsgContent2 {
@@ -78,7 +77,6 @@ func TestChnlSubscribe(test *testing.T) {
 	Publish(chnlId, exMsgContent1)
 	Publish(chnlId, exMsgContent2)
 	time.Sleep(1000 * time.Millisecond)
-	Unsubscribe(subId, chnlId)
 	CloseChnl(chnlId)
 	if subReceivedCount != 2 {
 		test.Logf("expected only two subscriptions to be resolved, received %d", subReceivedCount)
@@ -96,11 +94,10 @@ func TestChnlUnsubscribe(test *testing.T) {
 	})()
 	exMsgContent1 := &msgImpA{}
 	exMsgContent2 := &msgImpB{}
-	subId := SubId(uuid.New())
 	chnlId := ChnlId(uuid.New())
 	OpenChnl(chnlId)
 	subReceivedCount := 0
-	Subscribe(subId, chnlId, func(msgContent msgContract) {
+	Subscribe(chnlId, func(msgContent msgContract) {
 		subReceivedCount++
 		if msgContent != exMsgContent1 {
 			if msgContent != exMsgContent2 {
@@ -118,7 +115,6 @@ func TestChnlUnsubscribe(test *testing.T) {
 	Publish(chnlId, exMsgContent1)
 	Publish(chnlId, exMsgContent2)
 	time.Sleep(1000 * time.Millisecond)
-	Unsubscribe(subId, chnlId)
 	if subReceivedCount != 2 {
 		test.Logf("expected only two subscriptions to be resolved, received %d", subReceivedCount)
 		test.Fail()

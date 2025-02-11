@@ -38,7 +38,7 @@ func (d *Dictionary[Key, Value]) Delete(key Key) bool {
 	return false
 }
 
-func (d *Dictionary[Key, Value]) Keys(key Key) []Key {
+func (d *Dictionary[Key, Value]) Keys() []Key {
 	keys := make([]Key, d.keySlice.len())
 	copy(keys, d.keySlice.arr)
 	return keys

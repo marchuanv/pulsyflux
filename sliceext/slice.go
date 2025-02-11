@@ -14,60 +14,67 @@ func newSlice[T any]() *slice[T] {
 	return &slice[T]{}
 }
 
-func (l *slice[T]) len() int {
-	defer l.mu.Unlock()
-	l.mu.Lock()
-	return len(l.arr)
+func (s *slice[T]) len() int {
+	defer s.mu.Unlock()
+	s.mu.Lock()
+	return len(s.arr)
 }
 
-func (l *slice[T]) peek() T {
-	defer l.mu.Unlock()
-	l.mu.Lock()
+func (s *slice[T]) peek() T {
+	defer s.mu.Unlock()
+	s.mu.Lock()
 	var item T
-	length := len(l.arr)
+	length := len(s.arr)
 	if length > 0 {
-		item = l.arr[length-1]
+		item = s.arr[length-1]
 	}
 	return item
 }
 
-func (l *slice[T]) append(item T) {
-	defer l.mu.Unlock()
-	l.mu.Lock()
-	l.arr = append(l.arr, item)
+func (s *slice[T]) append(item T) {
+	defer s.mu.Unlock()
+	s.mu.Lock()
+	s.arr = append(s.arr, item)
 }
 
-func (l *slice[T]) reverse() {
-	defer l.mu.Unlock()
-	l.mu.Lock()
-	slices.Reverse(l.arr)
+func (s *slice[T]) reverse() {
+	defer s.mu.Unlock()
+	s.mu.Lock()
+	slices.Reverse(s.arr)
 }
 
-func (l *slice[T]) remove() T {
-	defer l.mu.Unlock()
-	l.mu.Lock()
+func (s *slice[T]) remove() T {
+	defer s.mu.Unlock()
+	s.mu.Lock()
 	var item T
-	length := len(l.arr)
+	length := len(s.arr)
 	if length > 0 {
-		item = l.arr[length-1]
-		l.arr = l.arr[:length-1]
+		item = s.arr[length-1]
+		s.arr = s.arr[:length-1]
 	}
 	return item
 }
 
-func (l *slice[T]) getAt(index int) T {
-	defer l.mu.Unlock()
-	l.mu.Lock()
+func (s *slice[T]) getAt(index int) T {
+	defer s.mu.Unlock()
+	s.mu.Lock()
 	var item T
-	length := len(l.arr)
+	length := len(s.arr)
 	if length > 0 {
-		item = l.arr[index]
+		item = s.arr[index]
 	}
 	return item
 }
 
-func (l *slice[T]) rmvAt(index int) {
-	defer l.mu.Unlock()
-	l.mu.Lock()
-	l.arr = append(l.arr[:index], l.arr[index+1:]...)
+func (s *slice[T]) rmvAt(index int) {
+	defer s.mu.Unlock()
+	s.mu.Lock()
+	s.arr = append(s.arr[:index], s.arr[index+1:]...)
+}
+
+func (s *slice[T]) copy() *slice[T] {
+	sliceCln := newSlice[T]()
+	sliceCln.arr = make([]T, len(s.arr))
+	copy(sliceCln.arr, s.arr)
+	return sliceCln
 }

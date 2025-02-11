@@ -18,8 +18,6 @@ require golang.org/x/sync v0.8.0 // indirect
 
 require sliceext v1.0.0
 
-require tree v1.0.0
-
 require channel v1.0.0
 
 replace pulse v1.0.0 => /pulse
@@ -33,7 +31,5 @@ replace connect v1.0.0 => /connect
 replace subscriptions v1.0.0 => /subscriptions
 
 replace sliceext v1.0.0 => /sliceext
-
-replace tree v1.0.0 => /tree
 
 replace channel v1.0.0 => /channel

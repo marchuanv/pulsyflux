@@ -1,30 +1,61 @@
 package subscriptions
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"pulsyflux/channel"
 	"pulsyflux/util"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-var HttpServerSubscription = channel.NewSubId("ca7bed9f-6697-4fdb-9937-8c5e274525b2")
+type StopServerEvent uuid.UUID
+
+type StartServerEvent uuid.UUID
+
+type ReceiveRequest func() (data string, auth string, contentType string)
 
 func SubscribeToHttpServer(chnlId channel.ChnlId, receive func(listener net.Listener, server *http.Server, addr *HostAddress)) {
 	SubscribeToHttpListener(chnlId, func(listener net.Listener, addr *HostAddress) {
-		channel.Subscribe(HttpServerSubscription, chnlId, func(server *http.Server) {
-			receive(listener, server, addr)
-		})
-	})
-}
+		channel.Subscribe(chnlId, func(server *http.Server) {
 
-func SubscribeToHttpServerRequest(chnlId channel.ChnlId, receive func(requestData string)) {
-	channel.Subscribe(HttpServerSubscription, chnlId, func(response http.ResponseWriter) {
-		channel.Subscribe(HttpServerSubscription, chnlId, func(request *http.Request) {
-			requestBody := util.StringFromReader(request.Body)
-			response.WriteHeader(http.StatusOK)
-			response.WriteHeader(http.StatusInternalServerError)
-			receive(requestBody)
+			channel.Subscribe(chnlId, func(startServer StartServerEvent) {
+				err := server.Serve(listener)
+				if err != nil {
+					channel.Publish(chnlId, err)
+				}
+			})
+
+			channel.Subscribe(chnlId, func(stopServer StopServerEvent) {
+				err := server.Close()
+				if err != nil {
+					channel.Publish(chnlId, err)
+				}
+			})
+
+			channel.Subscribe(chnlId, func(response http.ResponseWriter) {
+				channel.Subscribe(chnlId, func(receiveRequest ReceiveRequest) {
+					data, auth, contentType := receiveRequest()
+					response.WriteHeader(http.StatusOK)
+					fmt.Println(auth)
+					fmt.Println(contentType)
+					fmt.Println(data)
+					// response.WriteHeader(http.StatusInternalServerError)
+				})
+			})
+
+			channel.Subscribe(chnlId, func(request *http.Request) {
+				_data := util.StringFromReader(request.Body)
+				_contentType := request.Header.Get("content-type")
+				_auth := request.Header.Get("Authorization")
+				channel.Publish(chnlId, ReceiveRequest(func() (data string, auth string, contentType string) {
+					return _data, _auth, _contentType
+				}))
+			})
+
+			receive(listener, server, addr)
 		})
 	})
 }
@@ -49,20 +80,10 @@ func PublishHttpServer(chnlId channel.ChnlId) {
 	})
 }
 
-func PublishStartHttpServer(chnlId channel.ChnlId) {
-	SubscribeToHttpServer(chnlId, func(listener net.Listener, server *http.Server, addr *HostAddress) {
-		err := server.Serve(listener)
-		if err != nil {
-			channel.Publish(chnlId, err)
-		}
-	})
+func PublishStopHttpServer(chnlId channel.ChnlId) {
+	channel.Publish(chnlId, StopServerEvent(uuid.New()))
 }
 
-func PublishStopHttpServer(chnlId channel.ChnlId) {
-	SubscribeToHttpServer(chnlId, func(listener net.Listener, server *http.Server, addr *HostAddress) {
-		err := server.Close()
-		if err != nil {
-			channel.Publish(chnlId, err)
-		}
-	})
+func PublishStartHttpServer(chnlId channel.ChnlId) {
+	channel.Publish(chnlId, StartServerEvent(uuid.New()))
 }

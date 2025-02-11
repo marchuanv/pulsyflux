@@ -5,11 +5,9 @@ import (
 	"pulsyflux/channel"
 )
 
-var HttpListenerSubscription = channel.NewSubId("20875b6d-84c4-4d34-b39c-4596aa4af9ad")
-
 func SubscribeToHttpListener(chnlId channel.ChnlId, receive func(listener net.Listener, addr *HostAddress)) {
 	SubscribeToHostAddress(chnlId, func(addr *HostAddress) {
-		channel.Subscribe(HttpListenerSubscription, chnlId, func(listener net.Listener) {
+		channel.Subscribe(chnlId, func(listener net.Listener) {
 			receive(listener, addr)
 		})
 	})

@@ -6,20 +6,18 @@ import (
 	"strconv"
 )
 
-var HostAddressSubscription = channel.NewSubId("d0180947-2c4f-4b29-a6eb-ce3d9916580e")
-
 type HostAddress struct {
 	Host string
 	Port int
 }
 
 func SubscribeToHostAddress(chnlId channel.ChnlId, receive func(addr *HostAddress)) {
-	channel.Subscribe(HostAddressSubscription, chnlId, func(addr *HostAddress) {
+	channel.Subscribe(chnlId, func(addr *HostAddress) {
 		receive(addr)
 	})
 }
 
-func PublishNewHostAddress(chnlId channel.ChnlId, address string) {
+func PublishHostAddress(chnlId channel.ChnlId, address string) {
 	hostStr, portStr, err := net.SplitHostPort(address)
 	if err == nil {
 		port, convErr := strconv.Atoi(portStr)
