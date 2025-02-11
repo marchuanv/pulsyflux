@@ -5,12 +5,12 @@ import (
 	"sync"
 )
 
-type slice[T comparable] struct {
+type slice[T any] struct {
 	arr []T
 	mu  sync.Mutex
 }
 
-func newSlice[T comparable]() *slice[T] {
+func newSlice[T any]() *slice[T] {
 	return &slice[T]{}
 }
 

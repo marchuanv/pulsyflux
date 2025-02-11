@@ -6,39 +6,13 @@ import (
 	"encoding/gob"
 	"errors"
 	"io"
-	"net"
 	"pulsyflux/task"
-	"strconv"
 
 	"github.com/google/uuid"
 )
 
-type Address struct {
-	Host string
-	Port int
-}
-
 func Newv5UUID(data string) uuid.UUID {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(data))
-}
-
-func NewAddress(context task.TaskCtx[string, *Address]) {
-	context.DoNow(func(addr string) *Address {
-		hostStr, portStr, err := net.SplitHostPort(addr)
-		if err != nil {
-			panic(err)
-		}
-		port, convErr := strconv.Atoi(portStr)
-		if convErr != nil {
-			panic(convErr)
-		}
-		address := &Address{hostStr, port}
-		return address
-	})
-}
-
-func (add *Address) String() string {
-	return add.Host + ":" + strconv.Itoa(add.Port)
 }
 
 func IsValidUUID(u string) bool {

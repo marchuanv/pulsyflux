@@ -4,8 +4,8 @@ type List[T comparable] struct {
 	slice *slice[T]
 }
 
-func NewList[T comparable]() List[T] {
-	return List[T]{newSlice[T]()}
+func NewList[T comparable]() *List[T] {
+	return &List[T]{newSlice[T]()}
 }
 
 func (l *List[T]) Len() int {
@@ -20,6 +20,12 @@ func (l *List[T]) Has(item T) bool {
 		}
 	}
 	return false
+}
+
+func (l *List[T]) All() []T {
+	arrCopy := make([]T, len(l.slice.arr))
+	copy(arrCopy, l.slice.arr)
+	return arrCopy
 }
 
 func (l *List[T]) Delete(item T) bool {

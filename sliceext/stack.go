@@ -4,8 +4,8 @@ type Stack[T comparable] struct {
 	slice *slice[T]
 }
 
-func NewStack[T comparable]() Stack[T] {
-	return Stack[T]{newSlice[T]()}
+func NewStack[T comparable]() *Stack[T] {
+	return &Stack[T]{newSlice[T]()}
 }
 
 func (s *Stack[T]) Len() int {

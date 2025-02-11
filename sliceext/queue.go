@@ -4,8 +4,8 @@ type Queue[T comparable] struct {
 	slice *slice[T]
 }
 
-func NewQueue[T comparable]() Queue[T] {
-	return Queue[T]{newSlice[T]()}
+func NewQueue[T comparable]() *Queue[T] {
+	return &Queue[T]{newSlice[T]()}
 }
 
 func (q *Queue[T]) Len() int {

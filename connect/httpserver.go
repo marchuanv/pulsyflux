@@ -4,27 +4,34 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"pulsyflux/channel"
 	"pulsyflux/msgbus"
 	"pulsyflux/subscriptions"
 	"pulsyflux/task"
 	"pulsyflux/util"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-func HttpServerSubscriptions() {
-	task.DoNow(msgbus.New(subscriptions.HTTP), func(httpCh *msgbus.Channel) *msgbus.Channel {
-		task.DoLater(httpCh.New(subscriptions.START_HTTP_SERVER), func(startHttpServCh *msgbus.Channel) *util.Address {
-			receiveHttpServerAddress := startHttpServCh.New(subscriptions.RECEIVE_HTTP_SERVER_ADDRESS)
-			msg := receiveHttpServerAddress.Subscribe()
-			addressStr := msg.String()
-			return util.NewAddress(addressStr)
+func HttpServerSubscriptions(chnlId uuid.UUID) {
+	subscriptions.SubscribeToNewHostAddress(chnlId, func(addr *subscriptions.HostAddress) {
+		listener, err := net.Listen("tcp", addr.String())
+		if err != nil {
+			panic(err)
+		}
+	})
+	channel.Subscribe(subscriptions.HTTP, ch, func(msg string) {
+		channel.Subscribe(subscriptions.START_HTTP_SERVER.Id(), ch, func(httpServerAddress string) {
+			util.NewHostAddress(ch, func(hostAddr *util.HostAddress) {
+
+			})
+		})
+		task.DoLater(httpCh.New(), func(startHttpServCh *msgbus.Channel) *util.Address {
 		}, func(address *util.Address, startHttpServCh *msgbus.Channel) {
 
 			listener := task.DoNow(startHttpServCh, func(startHttpServCh *msgbus.Channel) net.Listener {
-				listener, err := net.Listen("tcp", address.String())
-				if err != nil {
-					panic(err)
-				}
+
 				return listener
 			}, func(err error, startHttpServCh *msgbus.Channel) *msgbus.Channel {
 				return startHttpServCh.New(subscriptions.FAILED_TO_LISTEN_ON_HTTP_SERVER_PORT)
