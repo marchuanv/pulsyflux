@@ -23,7 +23,7 @@ func TestHttpListener(test *testing.T) {
 		subRslvd = true
 	})
 	PublishHttpListener(chnlId)
-	PublishHostAddress(chnlId, "localhost:3000")
+	PublishHostAddress(chnlId)
 	time.Sleep(1000 * time.Millisecond)
 	if !subRslvd {
 		test.Fail()

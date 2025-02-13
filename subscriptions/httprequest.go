@@ -7,12 +7,6 @@ import (
 	"pulsyflux/channel"
 )
 
-func SubscribeToHttpRequest(chnlId channel.ChnlId, receive func(url *url.URL)) {
-	channel.Subscribe(chnlId, func(url *url.URL) {
-		receive(url)
-	})
-}
-
 func PublishHttpRequest(chnlId channel.ChnlId) {
 	SubscribeToHttpSchema(chnlId, func(httpSchema string) {
 		SubscribeToHttpRequestMethod(chnlId, func(httpMethod string) {

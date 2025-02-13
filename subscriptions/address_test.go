@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestHostAddress(test *testing.T) {
+func TestAddress(test *testing.T) {
 	chnlId := channel.NewChnlId("58ff24d9-1de4-49ba-bd9d-7cc400e1bbdf")
 	channel.OpenChnl(chnlId)
 	subRslvd := false
@@ -14,7 +14,7 @@ func TestHostAddress(test *testing.T) {
 		test.Log(err)
 		test.Fail()
 	})
-	SubscribeToHostAddress(chnlId, func(addr *HostAddress) {
+	SubscribeToAddress(chnlId, func(addr *Address) {
 		subRslvd = true
 	})
 	PublishAddress(chnlId, "localhost:3000")

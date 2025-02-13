@@ -32,6 +32,10 @@ func (chId ChnlId) String() string {
 
 var channels = sliceext.NewDictionary[ChnlId, *Channel]()
 
+func HasChnl(Id ChnlId) bool {
+	return channels.Has(Id)
+}
+
 func OpenChnl(Id ChnlId) {
 	if channels.Has(Id) {
 		msg := fmt.Sprintf("channel Id(%s) is already open", Id)

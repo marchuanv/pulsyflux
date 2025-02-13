@@ -23,7 +23,11 @@
 		},
 		{
 			"path": "channel"
+		},
+		{
+			"path": "events"
 		}
+
 
 	]
 }

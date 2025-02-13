@@ -20,6 +20,8 @@ require sliceext v1.0.0
 
 require channel v1.0.0
 
+require events v1.0.0
+
 replace pulse v1.0.0 => /pulse
 
 replace msgbus v1.0.0 => /msgbus
@@ -33,3 +35,5 @@ replace subscriptions v1.0.0 => /subscriptions
 replace sliceext v1.0.0 => /sliceext
 
 replace channel v1.0.0 => /channel
+
+replace events v1.0.0 => /events
