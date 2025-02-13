@@ -2,22 +2,56 @@ package subscriptions
 
 import (
 	"net"
+	"net/http"
 	"net/url"
 	"pulsyflux/channel"
+	"pulsyflux/sliceext"
+	"strconv"
 )
 
-type URI interface {
-	Host() string
-	Port() string
-	Path() string
-	String() string
+type HttpRequest func(response http.ResponseWriter, request *http.Request)
+type ReceiveHttpRequest func(recv HttpRequest)
+
+type HttpRequestHandler struct {
+	handlers *sliceext.Stack[HttpRequest]
 }
 
-type HostURI interface {
-	Host() string
-	Port() string
-	Path() string
-	String() string
+func (handler *HttpRequestHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	clonedHandlers := handler.handlers.Clone()
+	for clonedHandlers.Len() > 0 {
+		handler := clonedHandlers.Pop()
+		handler(response, request)
+	}
+}
+
+type uri struct {
+	protocol string
+	host     string
+	path     string
+	port     int
+}
+
+func (u uri) Protocol() string {
+	return u.protocol
+}
+func (u uri) Host() string {
+	return u.host
+}
+func (u uri) Port() int {
+	return u.port
+}
+func (u uri) PortStr() string {
+	return strconv.Itoa(u.port)
+}
+func (u uri) Path() string {
+	return u.path
+}
+func (u uri) String() string {
+	portStr := ":"
+	if u.port > 0 {
+		portStr = portStr + u.PortStr()
+	}
+	return u.protocol + ":" + u.host + portStr + "/" + u.path
 }
 
 type HttpSchema string

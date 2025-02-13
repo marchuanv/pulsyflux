@@ -19,7 +19,7 @@ func TestEvent(test *testing.T) {
 			test.Fail()
 		}
 	})
-	HelloWorldEvent.Convert(func(globalMsg *GlobalMsg) *LocalMsg {
+	HelloWorldEvent.New(func(globalMsg *GlobalMsg) *LocalMsg {
 		if expectedGlobalMsg != globalMsg {
 			test.Fail()
 		}

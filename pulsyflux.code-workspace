@@ -26,6 +26,12 @@
 		},
 		{
 			"path": "events"
+		},
+		{
+			"path": "contracts"
+		},
+		{
+			"path": "factory"
 		}
 
 

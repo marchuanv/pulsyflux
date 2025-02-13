@@ -34,7 +34,7 @@ func (ev Event[pubT, subT]) Subscribe(raised func(data subT)) {
 	})
 }
 
-func (ev Event[pubT, subT]) Convert(conv func(data pubT) subT) {
+func (ev Event[pubT, subT]) New(conv func(data pubT) subT) {
 	channel.Subscribe(eventChnl, func(conEv *convertEvent[pubT]) {
 		if conEv.id.String() == string(ev) {
 			channel.Publish(eventChnl, &publishedEvent[subT]{
