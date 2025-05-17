@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	URIFactory Factory[contracts.URI] = "99047248-a20c-471d-bb10-ec1b8e528d05"
+	uriFactory factory[contracts.URI] = "99047248-a20c-471d-bb10-ec1b8e528d05"
 )
 
 type uri struct {
@@ -15,6 +15,28 @@ type uri struct {
 	host     string
 	path     string
 	port     int
+}
+
+func URIFactory() factory[contracts.URI] {
+	uriFactory.ctor(func(args ...*Arg) contracts.URI {
+		isUrl, url := argValue[*url.URL](args[0])
+		if isUrl {
+			conv := uri{
+				url.Scheme,
+				url.Host,
+				url.Path,
+				0,
+			}
+			_port, err := strconv.Atoi(url.Port())
+			if err != nil {
+				panic(err)
+			}
+			conv.port = _port
+			return contracts.URI(conv)
+		}
+		return nil
+	})
+	return uriFactory
 }
 
 func (u uri) Protocol() string {
@@ -38,25 +60,4 @@ func (u uri) String() string {
 		portStr = portStr + u.PortStr()
 	}
 	return u.protocol + ":" + u.host + portStr + "/" + u.path
-}
-
-func init() {
-	URIFactory.Ctor(func(args []*Arg) contracts.URI {
-		isUrl, url := ArgValue[*url.URL](args[0])
-		if isUrl {
-			conv := uri{
-				url.Scheme,
-				url.Host,
-				url.Path,
-				0,
-			}
-			_port, err := strconv.Atoi(url.Port())
-			if err != nil {
-				panic(err)
-			}
-			conv.port = _port
-			return contracts.URI(conv)
-		}
-		return nil
-	})
 }

@@ -14,8 +14,9 @@ type Envelope interface {
 }
 
 type Connection interface {
-	Open()
+	State() ConnectionState
 	Close()
+	Open()
 	Receive(recv func(envelope Envelope))
 	Send(envelope Envelope)
 }
