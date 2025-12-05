@@ -45,13 +45,13 @@ func TestChnlErrorConvert(test *testing.T) {
 }
 
 func TestChnlSubscribe(test *testing.T) {
-	var chnlId ChlId
+	var chlId ChlId
 	var chlSubAId ChlSubId
 	var chlSubBId ChlSubId
 	defer (func() {
 		err := recover()
 		if err == nil {
-			chnlId.CloseChnl()
+			chlId.CloseChnl()
 		} else {
 			test.Log(err)
 			test.Fail()
@@ -60,30 +60,30 @@ func TestChnlSubscribe(test *testing.T) {
 	msgA := &msgA{}
 	msgB := &msgB{}
 
-	chnlId = NewChl(uuid.NewString())
+	chlId = NewChl(uuid.NewString())
 	chlSubAId = NewChlSub(uuid.NewString())
 	chlSubBId = NewChlSub(uuid.NewString())
 
-	chnlId.OpenChnl()
+	chlId.OpenChnl()
 	subReceivedCount := 0
-	chnlId.Subscribe(chlSubAId, func(msg any) {
+	chlSubAId.Subscribe(chlId, func(msg any) {
 		subReceivedCount++
 		if msg != msgA {
 			test.Log("expected recevied msg to match either msgA or msgB")
 			test.Fail()
 		}
 	})
-	chnlId.Publish(msgA)
-	chnlId.Unsubscribe(chlSubAId)
-	chnlId.Subscribe(chlSubBId, func(msg any) {
+	chlId.Publish(msgA)
+	chlSubAId.Unsubscribe(chlId)
+	chlSubBId.Subscribe(chlId, func(msg any) {
 		subReceivedCount++
 		if msg != msgB {
 			test.Log("expected recevied msg to match either msgA or msgB")
 			test.Fail()
 		}
 	})
-	chnlId.Publish(msgB)
-	chnlId.Unsubscribe(chlSubBId)
+	chlId.Publish(msgB)
+	chlSubBId.Unsubscribe(chlId)
 	time.Sleep(1000 * time.Millisecond)
 	if subReceivedCount != 2 {
 		test.Logf("expected only two subscriptions to be resolved, received %d", subReceivedCount)

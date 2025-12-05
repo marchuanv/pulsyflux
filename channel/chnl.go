@@ -1,40 +1,59 @@
 package channel
 
-func (Id ChlId) HasChnl() bool {
-	return chlReg.has(Id)
+import (
+	"github.com/google/uuid"
+)
+
+func NewChl(uuidStr string) ChlId {
+	Id, err := uuid.Parse(uuidStr)
+	if err != nil {
+		panic(err)
+	}
+	return ChlId(Id)
 }
 
-func (Id ChlId) HasSub(chlSubId ChlSubId) bool {
-	return chlSubReg.has(Id, chlSubId)
+func NewChlSub(uuidStr string) ChlSubId {
+	Id, err := uuid.Parse(uuidStr)
+	if err != nil {
+		panic(err)
+	}
+	return ChlSubId(Id)
+}
+
+func (chId ChlId) String() string {
+	uuid := uuid.UUID(chId)
+	return uuid.String()
+}
+
+func (subId ChlSubId) String() string {
+	uuid := uuid.UUID(subId)
+	return uuid.String()
 }
 
 func (Id ChlId) OpenChnl() {
-	chlReg.register(Id)
+	Id.register()
 }
 
 func (Id ChlId) CloseChnl() {
-	chlReg.unregister(Id)
+	Id.unregister()
 }
 
 func (Id ChlId) Publish(msg any) {
 	nvlp := newChnlMsg(msg)
-	chlSubReg.chlsubs(Id, func(sub *ChlSub) {
-		go sub.rcvMsg(nvlp)
-	})
+	for _, chlSubId := range Id.subs().All() {
+		chlSubId.callback()(nvlp)
+	}
 }
 
-func (Id ChlId) Subscribe(chlSubId ChlSubId, rcvMsg func(msg any)) {
-	chlSubReg.register(Id, chlSubId)
-	chlSubReg.get(Id, chlSubId, func(sub *ChlSub) {
-		sub.rcvMsg = func(nvlp *chnlMsg) {
-			canConv, cvrtMsg := getMsg[any](nvlp)
-			if canConv {
-				rcvMsg(cvrtMsg)
-			}
+func (chlSubId ChlSubId) Subscribe(chlId ChlId, rcvMsg func(msg any)) {
+	chlSubId.subscribe(chlId, func(nvlp *chnlMsg) {
+		canConv, content := getMsg[any](nvlp)
+		if canConv {
+			go rcvMsg(content)
 		}
 	})
 }
 
-func (Id ChlId) Unsubscribe(chlSubId ChlSubId) {
-	chlSubReg.unregister(Id, chlSubId)
+func (chlSubId ChlSubId) Unsubscribe(chlId ChlId) {
+	chlSubId.unsubscribe(chlId)
 }
