@@ -24,6 +24,7 @@ func ConnFactory() factory[contracts.Connection] {
 		isUri, uri := argValue[contracts.URI](args[0])
 		if isUri {
 			conn := &httpConnection{}
+			conn.handlers = sliceext.NewStack[HttpRequest]()
 			conn.server = &http.Server{
 				Addr:           uri.String(),
 				ReadTimeout:    10 * time.Second,
@@ -55,7 +56,6 @@ func (conn *httpConnection) Receive(recv func(envelope contracts.Envelope)) {
 	})
 }
 func (conn *httpConnection) Send(envelope contracts.Envelope) {
-
 }
 func (handler *httpConnection) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	clonedHandlers := handler.handlers.Clone()

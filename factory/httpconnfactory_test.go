@@ -17,6 +17,10 @@ func TestHttpConnFactory(test *testing.T) {
 				conn.Receive(func(envelope contracts.Envelope) {
 					test.Log(envelope.Content())
 				})
+				msgArg := &Arg{"message", "Hello World"}
+				EnvlpFactory().get(func(obj contracts.Envelope) {
+					conn.Send(obj)
+				}, msgArg)
 			}, uriArg)
 		}, urlArg)
 	}, urlStrArg)

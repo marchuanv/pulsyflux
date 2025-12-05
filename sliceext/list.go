@@ -42,3 +42,13 @@ func (l *List[T]) Delete(item T) bool {
 func (l *List[T]) Add(item T) {
 	l.slice.append(item)
 }
+
+func (l *List[T]) Clone() *List[T] {
+	listCln := NewList[T]()
+	listCln.slice = l.slice.copy()
+	return listCln
+}
+
+func (l *List[T]) Clear() {
+	l.slice = newSlice[T]()
+}

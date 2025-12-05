@@ -1,6 +1,7 @@
 package factory
 
 import (
+	"net/url"
 	"pulsyflux/contracts"
 )
 
@@ -9,13 +10,15 @@ const (
 )
 
 type envelope struct {
+	url *url.URL
 	msg func() any
 }
 
 func EnvlpFactory() factory[contracts.Envelope] {
 	envelopeFactory.ctor(func(args ...*Arg) contracts.Envelope {
-		_, msg := argValue[any](args[0])
-		return &envelope{func() any {
+		_, url := argValue[*url.URL](args[0])
+		_, msg := argValue[any](args[1])
+		return &envelope{url, func() any {
 			return msg
 		}}
 	})
@@ -24,4 +27,7 @@ func EnvlpFactory() factory[contracts.Envelope] {
 
 func (envlp *envelope) Content() any {
 	return envlp.msg()
+}
+func (envlp *envelope) Address() *url.URL {
+	return envlp.url
 }

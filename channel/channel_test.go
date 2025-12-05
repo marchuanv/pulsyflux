@@ -8,15 +8,13 @@ import (
 	"github.com/google/uuid"
 )
 
-type msgImpA struct{}
+type msgA struct{}
 
-type msgImpB struct{}
+type msgB struct{}
 
-func (imp *msgImpA) helloWorld(msg string) {
-}
+func (imp *msgA) helloWorld(msg string) {}
 
-func (imp *msgImpB) helloWorld(msg string) {
-}
+func (imp *msgB) helloWorld(msg string) {}
 
 type msgContract interface{ helloWorld(msg string) }
 
@@ -47,77 +45,48 @@ func TestChnlErrorConvert(test *testing.T) {
 }
 
 func TestChnlSubscribe(test *testing.T) {
+	var chnlId ChlId
+	var chlSubAId ChlSubId
+	var chlSubBId ChlSubId
 	defer (func() {
 		err := recover()
-		if err != nil {
+		if err == nil {
+			chnlId.CloseChnl()
+		} else {
 			test.Log(err)
 			test.Fail()
 		}
 	})()
-	exMsgContent1 := &msgImpA{}
-	exMsgContent2 := &msgImpB{}
-	chnlId := ChnlId(uuid.New())
-	OpenChnl(chnlId)
-	subReceivedCount := 0
-	Subscribe(chnlId, func(msgContent msgContract) {
-		subReceivedCount++
-		if msgContent != exMsgContent1 {
-			if msgContent != exMsgContent2 {
-				test.Log("expected all messages")
-				test.Fail()
-			}
-		}
-		if msgContent != exMsgContent2 {
-			if msgContent != exMsgContent1 {
-				test.Log("expected all messages")
-				test.Fail()
-			}
-		}
-	})
-	Publish(chnlId, exMsgContent1)
-	Publish(chnlId, exMsgContent2)
-	time.Sleep(1000 * time.Millisecond)
-	CloseChnl(chnlId)
-	if subReceivedCount != 2 {
-		test.Logf("expected only two subscriptions to be resolved, received %d", subReceivedCount)
-		test.Fail()
-	}
-}
+	msgA := &msgA{}
+	msgB := &msgB{}
 
-func TestChnlUnsubscribe(test *testing.T) {
-	defer (func() {
-		err := recover()
-		if err != nil {
-			test.Log(err)
+	chnlId = NewChl(uuid.NewString())
+	chlSubAId = NewChlSub(uuid.NewString())
+	chlSubBId = NewChlSub(uuid.NewString())
+
+	chnlId.OpenChnl()
+	subReceivedCount := 0
+	chnlId.Subscribe(chlSubAId, func(msg any) {
+		subReceivedCount++
+		if msg != msgA {
+			test.Log("expected recevied msg to match either msgA or msgB")
 			test.Fail()
 		}
-	})()
-	exMsgContent1 := &msgImpA{}
-	exMsgContent2 := &msgImpB{}
-	chnlId := ChnlId(uuid.New())
-	OpenChnl(chnlId)
-	subReceivedCount := 0
-	Subscribe(chnlId, func(msgContent msgContract) {
+	})
+	chnlId.Publish(msgA)
+	chnlId.Unsubscribe(chlSubAId)
+	chnlId.Subscribe(chlSubBId, func(msg any) {
 		subReceivedCount++
-		if msgContent != exMsgContent1 {
-			if msgContent != exMsgContent2 {
-				test.Log("expected all messages")
-				test.Fail()
-			}
-		}
-		if msgContent != exMsgContent2 {
-			if msgContent != exMsgContent1 {
-				test.Log("expected all messages")
-				test.Fail()
-			}
+		if msg != msgB {
+			test.Log("expected recevied msg to match either msgA or msgB")
+			test.Fail()
 		}
 	})
-	Publish(chnlId, exMsgContent1)
-	Publish(chnlId, exMsgContent2)
+	chnlId.Publish(msgB)
+	chnlId.Unsubscribe(chlSubBId)
 	time.Sleep(1000 * time.Millisecond)
 	if subReceivedCount != 2 {
 		test.Logf("expected only two subscriptions to be resolved, received %d", subReceivedCount)
 		test.Fail()
 	}
-	CloseChnl(chnlId)
 }
