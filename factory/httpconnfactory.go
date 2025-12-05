@@ -19,9 +19,9 @@ type httpConnection struct {
 	server   *http.Server
 }
 
-func ConnFactory() factory[contracts.Connection] {
-	httpConnFactory.ctor(func(args ...*Arg) contracts.Connection {
-		isUri, uri := argValue[contracts.URI](args[0])
+func RegisterConnFactory() factory[contracts.Connection] {
+	httpConnFactory.register(func(args ...Arg) contracts.Connection {
+		isUri, uri := argValue[contracts.URI](&args[0])
 		if isUri {
 			conn := &httpConnection{}
 			conn.handlers = sliceext.NewStack[HttpRequest]()
@@ -50,9 +50,10 @@ func (conn *httpConnection) Close() {
 }
 func (conn *httpConnection) Receive(recv func(envelope contracts.Envelope)) {
 	conn.handlers.Push(func(response http.ResponseWriter, request *http.Request) {
-		msgArg := &Arg{"ReceivedHttpMessage", util.StringFromReader(request.Body)}
-		EnvlpFactory().get(recv, msgArg)
-		response.WriteHeader(http.StatusOK)
+		msgArg := Arg{"ReceivedHttpMessage", util.StringFromReader(request.Body)}
+		RegisterEnvlpFactory().get(func(obj contracts.Envelope) {
+			response.WriteHeader(http.StatusOK)
+		}, msgArg)
 	})
 }
 func (conn *httpConnection) Send(envelope contracts.Envelope) {

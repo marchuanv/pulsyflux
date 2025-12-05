@@ -14,10 +14,10 @@ type envelope struct {
 	msg func() any
 }
 
-func EnvlpFactory() factory[contracts.Envelope] {
-	envelopeFactory.ctor(func(args ...*Arg) contracts.Envelope {
-		_, url := argValue[*url.URL](args[0])
-		_, msg := argValue[any](args[1])
+func RegisterEnvlpFactory() factory[contracts.Envelope] {
+	envelopeFactory.register(func(args ...Arg) contracts.Envelope {
+		_, url := argValue[*url.URL](&args[0])
+		_, msg := argValue[any](&args[1])
 		return &envelope{url, func() any {
 			return msg
 		}}

@@ -45,13 +45,13 @@ func TestChnlErrorConvert(test *testing.T) {
 }
 
 func TestChnlSubscribe(test *testing.T) {
-	var chlId ChlId
-	var chlSubAId ChlSubId
-	var chlSubBId ChlSubId
+	var chl Chl[msgContract]
+	var chlSubA ChlSub[msgContract]
+	var chlSubB ChlSub[msgContract]
 	defer (func() {
 		err := recover()
 		if err == nil {
-			chlId.CloseChnl()
+			chl.Close()
 		} else {
 			test.Log(err)
 			test.Fail()
@@ -60,33 +60,33 @@ func TestChnlSubscribe(test *testing.T) {
 	msgA := &msgA{}
 	msgB := &msgB{}
 
-	chlId = NewChl(uuid.NewString())
-	chlSubAId = NewChlSub(uuid.NewString())
-	chlSubBId = NewChlSub(uuid.NewString())
+	chl = GetChl[msgContract](uuid.NewString())
+	chlSubA = GetChlSub[msgContract](uuid.NewString())
+	chlSubB = GetChlSub[msgContract](uuid.NewString())
 
-	chlId.OpenChnl()
+	chl.Open()
 	subReceivedCount := 0
-	chlSubAId.Subscribe(chlId, func(msg any) {
+	chlSubA.Subscribe(chl, func(msg msgContract) {
 		subReceivedCount++
 		if msg != msgA {
 			test.Log("expected recevied msg to match either msgA or msgB")
 			test.Fail()
 		}
 	})
-	chlId.Publish(msgA)
-	chlSubAId.Unsubscribe(chlId)
-	chlSubBId.Subscribe(chlId, func(msg any) {
+	chl.Publish(msgA)
+	chlSubA.Unsubscribe(chl)
+	chlSubB.Subscribe(chl, func(msg msgContract) {
 		subReceivedCount++
 		if msg != msgB {
 			test.Log("expected recevied msg to match either msgA or msgB")
 			test.Fail()
 		}
 	})
-	chlId.Publish(msgB)
-	chlSubBId.Unsubscribe(chlId)
+	chl.Publish(msgB)
+	chlSubB.Unsubscribe(chl)
 	time.Sleep(1000 * time.Millisecond)
 	if subReceivedCount != 2 {
-		test.Logf("expected only two subscriptions to be resolved, received %d", subReceivedCount)
+		test.Logf("expected two subscriptions, received %d", subReceivedCount)
 		test.Fail()
 	}
 }

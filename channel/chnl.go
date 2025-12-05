@@ -1,59 +1,74 @@
 package channel
 
 import (
+	"pulsyflux/sliceext"
+
 	"github.com/google/uuid"
 )
 
-func NewChl(uuidStr string) ChlId {
+type Chl[T any] ChlId
+type ChlSub[T any] ChlSubId
+
+var chlIds = sliceext.NewDictionary[string, ChlId]()
+
+func GetChl[T any](uuidStr string) Chl[T] {
 	Id, err := uuid.Parse(uuidStr)
 	if err != nil {
 		panic(err)
 	}
-	return ChlId(Id)
+	if !chlIds.Has(Id.String()) {
+		chlIds.Add(Id.String(), ChlId(Id))
+	}
+	chlId := chlIds.Get(Id.String())
+	return Chl[T](chlId)
 }
 
-func NewChlSub(uuidStr string) ChlSubId {
+func GetChlSub[T any](uuidStr string) ChlSub[T] {
 	Id, err := uuid.Parse(uuidStr)
 	if err != nil {
 		panic(err)
 	}
-	return ChlSubId(Id)
+	return ChlSub[T](Id)
 }
 
-func (chId ChlId) String() string {
-	uuid := uuid.UUID(chId)
+func (ch Chl[T]) String() string {
+	uuid := uuid.UUID(ch)
 	return uuid.String()
 }
 
-func (subId ChlSubId) String() string {
-	uuid := uuid.UUID(subId)
+func (chSub ChlSub[T]) String() string {
+	uuid := uuid.UUID(chSub)
 	return uuid.String()
 }
 
-func (Id ChlId) OpenChnl() {
-	Id.register()
+func (ch Chl[T]) IsOpen() bool {
+	return ChlId(ch).registered()
 }
 
-func (Id ChlId) CloseChnl() {
-	Id.unregister()
+func (ch Chl[T]) Open() {
+	ChlId(ch).register()
 }
 
-func (Id ChlId) Publish(msg any) {
+func (ch Chl[T]) Close() {
+	ChlId(ch).unregister()
+}
+
+func (ch Chl[T]) Publish(msg T) {
 	nvlp := newChnlMsg(msg)
-	for _, chlSubId := range Id.subs().All() {
+	for _, chlSubId := range ChlId(ch).subs().All() {
 		chlSubId.callback()(nvlp)
 	}
 }
 
-func (chlSubId ChlSubId) Subscribe(chlId ChlId, rcvMsg func(msg any)) {
-	chlSubId.subscribe(chlId, func(nvlp *chnlMsg) {
-		canConv, content := getMsg[any](nvlp)
+func (chSub ChlSub[T]) Subscribe(chl Chl[T], rcvMsg func(msg T)) {
+	ChlSubId(chSub).subscribe(ChlId(chl), func(nvlp *chnlMsg) {
+		canConv, content := getMsg[T](nvlp)
 		if canConv {
 			go rcvMsg(content)
 		}
 	})
 }
 
-func (chlSubId ChlSubId) Unsubscribe(chlId ChlId) {
-	chlSubId.unsubscribe(chlId)
+func (chSub ChlSub[T]) Unsubscribe(chl Chl[T]) {
+	ChlSubId(chSub).unsubscribe(ChlId(chl))
 }

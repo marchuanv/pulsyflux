@@ -17,9 +17,9 @@ type uri struct {
 	port     int
 }
 
-func URIFactory() factory[contracts.URI] {
-	uriFactory.ctor(func(args ...*Arg) contracts.URI {
-		isUrl, url := argValue[*url.URL](args[0])
+func RegisterURIFactory() factory[contracts.URI] {
+	uriFactory.register(func(args ...Arg) contracts.URI {
+		isUrl, url := argValue[*url.URL](&args[0])
 		if isUrl {
 			conv := uri{
 				url.Scheme,
