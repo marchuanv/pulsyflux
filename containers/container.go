@@ -5,6 +5,7 @@ import (
 	"pulsyflux/contracts"
 	"pulsyflux/sliceext"
 	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -15,12 +16,48 @@ type metadata struct {
 	field        reflect.Value
 	dependencies *sliceext.List[*metadata]
 	once         *sync.Once
+	useField     bool
+	setter       reflect.Value
 }
 
 var (
 	types   = sliceext.NewDictionary[string, *metadata]()
 	typesMu sync.RWMutex
 )
+
+// convert "wheel04" -> "Wheel04"
+func pascalCase(s string) string {
+	if s == "" {
+		return ""
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// find setter "Set" + PascalCase(argName) on inst, validate it accepts the dependency's type
+func findSetterFor(depName string, inst any, depValue any) (reflect.Value, error) {
+	methodName := "Set" + pascalCase(depName)
+	mv := reflect.ValueOf(inst).MethodByName(methodName)
+	if !mv.IsValid() {
+		return reflect.Value{}, fmt.Errorf("DI Error: method %s not found on %T", methodName, inst)
+	}
+	mt := mv.Type()
+	if mt.NumIn() != 1 {
+		return reflect.Value{}, fmt.Errorf("DI Error: method %s on %T must accept exactly 1 argument", methodName, inst)
+	}
+
+	paramType := mt.In(0)
+	valType := reflect.TypeOf(depValue)
+
+	// Check assignability: a value of valType must be assignable to paramType
+	if !valType.AssignableTo(paramType) {
+		// also allow convertible case when the value is assignable via interface (rare edge)
+		if !(valType.ConvertibleTo(paramType)) {
+			return reflect.Value{}, fmt.Errorf("DI Error: method %s expects %v but dependency has %v", methodName, paramType, valType)
+		}
+	}
+
+	return mv, nil
+}
 
 // Register a type
 func addType[T comparable](typeId contracts.TypeId[T], value *T) {
@@ -105,9 +142,20 @@ func addArgType[T comparable, ArgT comparable](
 		panic(fmt.Sprintf("Field %s on type %s must be a pointer", argName, meta.Id))
 	}
 
+	depMeta.useField = field.CanSet()
+	if !depMeta.useField {
+		parentInst := meta.typeValue.Interface()   // concrete pointer (e.g., *car)
+		childInst := depMeta.typeValue.Interface() // concrete pointer (e.g., *wheel)
+		s, err := findSetterFor(argName, parentInst, childInst)
+		if err != nil {
+			panic(err)
+		}
+		depMeta.setter = s
+	}
 	depMeta.name = argName
 	depMeta.field = field
 	meta.dependencies.Add(depMeta)
+
 }
 
 // Recursively inject dependencies with cycle detection
@@ -124,18 +172,20 @@ func resolveDependencies(meta *metadata, visited map[*metadata]bool, stack map[*
 		// Resolve dependencies of the child first
 		resolveDependencies(dep, visited, stack)
 
-		if !dep.field.CanSet() {
-			panic(fmt.Sprintf("Cannot inject field %s on type %s: field not settable", dep.name, meta.Id))
+		if !dep.useField {
+			dep.setter.Call([]reflect.Value{dep.typeValue})
+		} else {
+			// inject pointer
+			dep.field.Set(dep.typeValue)
 		}
-		// inject pointer
-		dep.field.Set(dep.typeValue)
+
 	}
 
 	stack[meta] = false
 	visited[meta] = true
 }
 
-func Get[T any](typeId contracts.TypeId[T]) *T {
+func Get[T interface{}, T2 any](typeId contracts.TypeId[T2]) T {
 	typesMu.RLock()
 	meta := types.Get(string(typeId))
 	typesMu.RUnlock()
@@ -144,9 +194,18 @@ func Get[T any](typeId contracts.TypeId[T]) *T {
 		panic(fmt.Sprintf("Type %s is not registered", typeId))
 	}
 
+	// Ensure dependencies are resolved
 	meta.once.Do(func() {
 		resolveDependencies(meta, make(map[*metadata]bool), make(map[*metadata]bool))
 	})
 
-	return meta.typeValue.Interface().(*T) // return pointer
+	// Return as interface
+	val := meta.typeValue.Interface() // concrete pointer
+
+	tInterface, ok := val.(T)
+	if !ok {
+		panic(fmt.Sprintf("Type %s does not implement requested interface", typeId))
+	}
+
+	return tInterface
 }

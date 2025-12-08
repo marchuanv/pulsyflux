@@ -2,16 +2,21 @@ package httpcontainers
 
 import (
 	"net/url"
+	"pulsyflux/containers"
 	"pulsyflux/contracts"
-)
-
-const (
-	envelopeFactory contracts.TypeId[contracts.Envelope] = "f9b8f074-5883-4888-94a2-91a9fad2c6ac"
 )
 
 type envelope struct {
 	url *url.URL
 	msg func() any
+}
+
+const (
+	envelopeFactory contracts.TypeId[contracts.Envelope] = "f9b8f074-5883-4888-94a2-91a9fad2c6ac"
+)
+
+func init() {
+	containers.RegisterType(envelopeFactory)
 }
 
 func RegisterEnvlpFactory() contracts.Container2[contracts.Envelope] {
