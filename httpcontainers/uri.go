@@ -1,13 +1,7 @@
 package httpcontainers
 
 import (
-	"net/url"
-	"pulsyflux/contracts"
 	"strconv"
-)
-
-const (
-	uriFactory factory[contracts.URI] = "99047248-a20c-471d-bb10-ec1b8e528d05"
 )
 
 type uri struct {
@@ -17,47 +11,40 @@ type uri struct {
 	port     int
 }
 
-func RegisterURIFactory() factory[contracts.URI] {
-	uriFactory.register(func(args ...Arg) contracts.URI {
-		isUrl, url := argValue[*url.URL](&args[0])
-		if isUrl {
-			conv := uri{
-				url.Scheme,
-				url.Host,
-				url.Path,
-				0,
-			}
-			_port, err := strconv.Atoi(url.Port())
-			if err != nil {
-				panic(err)
-			}
-			conv.port = _port
-			return contracts.URI(conv)
-		}
-		return nil
-	})
-	return uriFactory
-}
-
-func (u uri) Protocol() string {
+func (u *uri) GetScheme() string {
 	return u.protocol
 }
-func (u uri) Host() string {
+func (u *uri) GetHost() string {
 	return u.host
 }
-func (u uri) Port() int {
-	return u.port
-}
-func (u uri) PortStr() string {
-	return strconv.Itoa(u.port)
-}
-func (u uri) Path() string {
+func (u *uri) GetPath() string {
 	return u.path
 }
-func (u uri) String() string {
+func (u *uri) GetPort() int {
+	return u.port
+}
+
+func (u *uri) SetScheme(scheme string) {
+	u.protocol = scheme
+}
+func (u *uri) SetHost(host string) {
+	u.host = host
+}
+func (u *uri) SetPath(path string) {
+	u.path = path
+}
+func (u *uri) SetPort(port int) {
+	u.port = port
+}
+
+func (u *uri) GetPortStr() string {
+	return strconv.Itoa(u.port)
+}
+
+func (u *uri) String() string {
 	portStr := ":"
 	if u.port > 0 {
-		portStr = portStr + u.PortStr()
+		portStr = portStr + u.GetPortStr()
 	}
 	return u.protocol + ":" + u.host + portStr + "/" + u.path
 }
