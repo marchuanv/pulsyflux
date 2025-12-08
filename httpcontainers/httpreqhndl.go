@@ -2,35 +2,44 @@ package httpcontainers
 
 import (
 	"net/http"
+	"pulsyflux/containers"
 	"pulsyflux/contracts"
 	"pulsyflux/sliceext"
+	"pulsyflux/util"
 )
 
 type httpRequestHandler struct {
-	handlers *sliceext.List[contracts.HttpRequest]
+	envelopes *sliceext.List[contracts.Envelope]
+	rcvNvlp   chan contracts.Envelope
 }
 
-func (conn *httpRequestHandler) GetHandlers() *sliceext.[contracts.HttpRequest] {
-	return conn.handlers
+func (rh *httpRequestHandler) GetEnvelopes() *sliceext.List[contracts.Envelope] {
+	return rh.envelopes
 }
 
-func (conn *httpRequestHandler) SetHandlers(handlers *sliceext.List[contracts.HttpRequest]) {
-	conn.handlers = handlers
+func (rh *httpRequestHandler) SetEnvelopes(envelopes *sliceext.List[contracts.Envelope]) {
+	rh.envelopes = envelopes
 }
 
-func (conn *httpRequestHandler) Receive(recv func(envelope contracts.Envelope)) {
-	conn.handlers.Add(func(response http.ResponseWriter, request *http.Request) {
-		// msgArg := Arg{"ReceivedHttpMessage", util.StringFromReader(request.Body)}
-		// nvlp := RegisterEnvlpFactory().get(msgArg)
-		response.WriteHeader(http.StatusOK)
-	})
-}
-
-func (conn *httpRequestHandler) Send(envelope contracts.Envelope) {
-}
-
-func (conn *httpRequestHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	for _, handler := range conn.GetHandlers().All() {
-		handler(response, request)
+func (rh *httpRequestHandler) Receive(nvlpTypeId contracts.TypeId[contracts.Envelope]) contracts.Envelope {
+	path := containers.Get[contracts.Envelope](nvlpTypeId).GetUrl().Path
+	for nvlp := range rh.rcvNvlp {
+		if nvlp.GetUrl().Path == path {
+			return nvlp
+		}
 	}
+	return nil
+}
+
+func (rh *httpRequestHandler) Send(nvlpTypeId contracts.TypeId[contracts.Envelope]) {
+}
+
+func (rh *httpRequestHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	for _, nvlp := range rh.GetEnvelopes().All() {
+		if request.URL.Path == nvlp.GetUrl().Path {
+			nvlp.SetMsg(util.StringFromReader(request.Body))
+			rh.rcvNvlp <- nvlp
+		}
+	}
+	response.WriteHeader(http.StatusOK)
 }

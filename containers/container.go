@@ -138,8 +138,11 @@ func addArgType[T comparable, ArgT comparable](
 	}
 
 	// Ensure field is a pointer for injection
-	if field.Kind() != reflect.Ptr {
-		panic(fmt.Sprintf("Field %s on type %s must be a pointer", argName, meta.Id))
+	fieldKind := field.Kind()
+	if fieldKind != reflect.String && fieldKind != reflect.Int {
+		if fieldKind != reflect.Ptr {
+			panic(fmt.Sprintf("Field %s on type %s must be a pointer", argName, meta.Id))
+		}
 	}
 
 	depMeta.useField = field.CanSet()

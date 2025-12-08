@@ -5,47 +5,55 @@ import (
 	"pulsyflux/containers"
 	"pulsyflux/contracts"
 	"pulsyflux/sliceext"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 const (
-	HttpRequestHandlerId  contracts.TypeId[httpRequestHandler]                     = "02c88068-3a66-4856-b2bf-e2dce244761b"
-	HttpConnURIId         contracts.TypeId[uri]                                    = "467be880-a887-42dd-b6f8-49591a47c5da"
-	httpRequestHandlersId contracts.TypeId[*sliceext.Stack[contracts.HttpRequest]] = "172c2cd8-4869-43a7-aa1a-af341e0b439f"
+	HttpRequestHandlerId      contracts.TypeId[httpRequestHandler]                = "02c88068-3a66-4856-b2bf-e2dce244761b"
+	httpRequestHandlerNvlpsId contracts.TypeId[sliceext.List[contracts.Envelope]] = "172c2cd8-4869-43a7-aa1a-af341e0b439f"
 
-	httpServerId               contracts.TypeId[httpServer]   = "fccaca3e-54a4-400d-a9d3-b80a2161c20f"
+	HttpServerId               contracts.TypeId[httpServer]   = "fccaca3e-54a4-400d-a9d3-b80a2161c20f"
+	HttpServerAddressId        contracts.TypeId[uri]          = "467be880-a887-42dd-b6f8-49591a47c5da"
 	httpServerReadTimeoutId    contracts.TypeId[timeDuration] = "49e0575b-a6bc-45d1-aba0-4cf57c48fc06"
 	httpServerWriteTimeoutId   contracts.TypeId[timeDuration] = "1958180b-bd2d-4691-8a3f-50a35b5dbaf5"
 	httpServerMaxHeaderBytesId contracts.TypeId[int]          = "a22a6899-499f-4779-b66b-75952f4d766a"
 )
 
-func uriConfig(uriTypeId contracts.TypeId[uri]) {
+func uriConfig(uriTypeId contracts.TypeId[uri], protocol *string, host *string, port *int, path *string) {
 	protocolTypeId := contracts.TypeId[string](uuid.NewString())
 	hostTypeId := contracts.TypeId[string](uuid.NewString())
 	pathTypeId := contracts.TypeId[string](uuid.NewString())
 	portTypeId := contracts.TypeId[int](uuid.NewString())
 	containers.RegisterType(uriTypeId)
-	containers.RegisterTypeDependency(uriTypeId, protocolTypeId, "scheme", nil)
-	containers.RegisterTypeDependency(uriTypeId, hostTypeId, "host", nil)
-	containers.RegisterTypeDependency(uriTypeId, pathTypeId, "path", nil)
-	containers.RegisterTypeDependency(uriTypeId, portTypeId, "port", nil)
+	containers.RegisterTypeDependency(uriTypeId, protocolTypeId, "protocol", protocol)
+	containers.RegisterTypeDependency(uriTypeId, hostTypeId, "host", host)
+	containers.RegisterTypeDependency(uriTypeId, pathTypeId, "path", path)
+	containers.RegisterTypeDependency(uriTypeId, portTypeId, "port", port)
 }
 
 func init() {
 
-	uriConfig(HttpConnURIId)
+	protocol := "http"
+	host := "localhost"
+	port := 3000
+	path := "unknown"
 
-	containers.RegisterType(httpServerId)
-	containers.RegisterTypeDependency(httpServerId, HttpConnURIId, "address", nil)
-	containers.RegisterTypeDependency(httpServerId, httpServerReadTimeoutId, "ReadTimeout", nil)
-	containers.RegisterTypeDependency(httpServerId, httpServerWriteTimeoutId, "WriteTimeout", nil)
-	containers.RegisterTypeDependency(httpServerId, httpServerMaxHeaderBytesId, "maxHeaderBytes", nil)
+	uriConfig(HttpServerAddressId, &protocol, &host, &port, &path)
+
+	containers.RegisterType(HttpServerId)
+	containers.RegisterTypeDependency(HttpServerId, HttpServerAddressId, "address", nil)
+	timeDuration := &timeDuration{duration: 10 * time.Second}
+	containers.RegisterTypeDependency(HttpServerId, httpServerReadTimeoutId, "readTimeout", timeDuration)
+	containers.RegisterTypeDependency(HttpServerId, httpServerWriteTimeoutId, "writeTimeout", timeDuration)
+	maxHeaderBytes := 16 * 1024 //16KB (16 * 1024 bytes)
+	containers.RegisterTypeDependency(HttpServerId, httpServerMaxHeaderBytesId, "maxHeaderBytes", &maxHeaderBytes)
 
 	containers.RegisterType(HttpRequestHandlerId)
-	containers.RegisterTypeDependency(HttpRequestHandlerId, httpRequestHandlersId, "handlers", nil)
+	containers.RegisterTypeDependency(HttpRequestHandlerId, httpRequestHandlerNvlpsId, "envelopes", nil)
 
-	containers.RegisterTypeDependency(httpServerId, HttpRequestHandlerId, "handler", nil)
+	containers.RegisterTypeDependency(HttpServerId, HttpRequestHandlerId, "handler", nil)
 }
 
 func EnvelopeConfig(_url *url.URL) contracts.TypeId[contracts.Envelope] {
@@ -57,29 +65,3 @@ func EnvelopeConfig(_url *url.URL) contracts.TypeId[contracts.Envelope] {
 	containers.RegisterTypeDependency(nvlpTypeId, envelopeMsgTypeId, "msg", nil)
 	return nvlpTypeId
 }
-
-func URIConfig(_url *url.URL) contracts.TypeId[contracts.URI] {
-	uriTypeId := contracts.TypeId[uri](uuid.NewString())
-	uriConfig(uriTypeId)
-	return uriTypeId
-}
-
-// func RegisterConnFactory() factory[contracts.Connection] {
-// 	httpConnFactory.register(func(args ...Arg) contracts.Connection {
-// 		isUri, uri := argValue[contracts.URI](&args[0])
-// 		if isUri {
-// 			conn := &httpConnection{}
-// 			conn.handlers = sliceext.NewStack[HttpRequest]()
-// 			conn.server = &http.Server{
-// 				Addr:           uri.String(),
-// 				ReadTimeout:    10 * time.Second,
-// 				WriteTimeout:   10 * time.Second,
-// 				MaxHeaderBytes: 1 << 20,
-// 				Handler:        conn,
-// 			}
-// 			return conn
-// 		}
-// 		return nil
-// 	})
-// 	return httpConnFactory
-// }

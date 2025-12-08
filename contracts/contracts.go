@@ -7,38 +7,34 @@ import (
 	"time"
 )
 
-type HttpRequest func(response http.ResponseWriter, request *http.Request)
-
 type URI interface {
-	GetProtocol() string
-	GetHost() string
-	GetPath() string
-	GetPort() int
+	GetProtocol() *string
+	GetHost() *string
+	GetPath() *string
+	GetPort() *int
 
-	SetProtocol(scheme string)
-	SetHost(host string)
-	SetPath(path string)
-	SetPort(port int)
+	SetProtocol(protocol *string)
+	SetHost(host *string)
+	SetPath(path *string)
+	SetPort(port *int)
 
-	PortStr() string
+	GetPortStr() string
+	GetHostAddress() string
 	String() string
 }
 
 type Envelope interface {
-	GetUrl() url.URL
+	GetUrl() *url.URL
 	SetUrl(url *url.URL)
 	SetMsg(msg any)
 	GetMsg() any
 }
 
 type HttpRequestHandler interface {
-	State() ConnectionState
-	Close()
-	Open()
-	Receive(recv func(envelope Envelope))
-	Send(envelope Envelope)
-	GetHandlers() *sliceext.Stack[HttpRequest]
-	SetHandlers(handlers *sliceext.Stack[HttpRequest])
+	Receive(nvlpTypeId TypeId[Envelope]) Envelope
+	Send(nvlpTypeId TypeId[Envelope])
+	GetEnvelopes() *sliceext.List[Envelope]
+	SetEnvelopes(handlers *sliceext.List[Envelope])
 	ServeHTTP(http.ResponseWriter, *http.Request)
 }
 
@@ -48,16 +44,18 @@ type TimeDuration interface {
 }
 
 type HttpServer interface {
-	GetAddress() *URI
-	SetAddress(addr *URI)
-	GetReadTimeout() *TimeDuration
-	SetReadTimeout(duration *TimeDuration)
-	GetWriteTimeout() *TimeDuration
-	SetWriteTimeout(duration *TimeDuration)
+	GetAddress() URI
+	SetAddress(addr URI)
+	GetReadTimeout() TimeDuration
+	SetReadTimeout(duration TimeDuration)
+	GetWriteTimeout() TimeDuration
+	SetWriteTimeout(duration TimeDuration)
 	GetMaxHeaderBytes() int
-	SetMaxHeaderBytes(size int)
-	GetHandler() *HttpRequestHandler
-	SetHandler(handler *HttpRequestHandler)
+	SetMaxHeaderBytes(size *int)
+	GetHandler() HttpRequestHandler
+	SetHandler(handler HttpRequestHandler)
+	Start()
+	Stop()
 }
 
 type ConnectionState interface {
