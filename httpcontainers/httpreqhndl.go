@@ -10,7 +10,7 @@ type httpRequestHandler struct {
 	handlers *sliceext.List[contracts.HttpRequest]
 }
 
-func (conn *httpRequestHandler) GetHandlers() *sliceext.List[contracts.HttpRequest] {
+func (conn *httpRequestHandler) GetHandlers() *sliceext.[contracts.HttpRequest] {
 	return conn.handlers
 }
 
