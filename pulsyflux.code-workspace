@@ -32,8 +32,13 @@
 		},
 		{
 			"path": "factory"
+		},
+		{
+			"path": "containers"
+		},
+		{
+			"path": "httpcontainers"
 		}
-
 
 	]
 }

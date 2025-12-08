@@ -6,24 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type Arg struct {
-	name  string
-	value any
-}
-
 type factory[T interface{}] string
-
-func argValue[T any](arg *Arg) (canConvert bool, content T) {
-	defer (func() {
-		err := recover()
-		if err != nil {
-			canConvert = false
-		}
-	})()
-	content = arg.value.(T)
-	canConvert = true
-	return canConvert, content
-}
 
 func (f factory[T]) register(ctor func(args ...Arg) T) {
 	factoryChlId := string(f)
@@ -43,7 +26,7 @@ func (f factory[T]) register(ctor func(args ...Arg) T) {
 	})
 }
 
-func (f factory[T]) get(rcvObj func(obj T), args ...Arg) {
+func (f factory[T]) get(args ...Arg) T {
 	factoryChlId := string(f)
 	factoryArgsChl := channel.GetChl[[]Arg](factoryChlId)
 	if !factoryArgsChl.IsOpen() {
@@ -55,5 +38,9 @@ func (f factory[T]) get(rcvObj func(obj T), args ...Arg) {
 		factoryGetObjChl.Open()
 	}
 	factoryGetObjSubChl := channel.GetChlSub[T](uuid.NewString())
-	factoryGetObjSubChl.Subscribe(factoryGetObjChl, rcvObj)
+	results := make(chan T)
+	factoryGetObjSubChl.Subscribe(factoryGetObjChl, func(msg T) {
+		results <- msg
+	})
+	return <-results
 }

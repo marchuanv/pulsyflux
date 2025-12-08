@@ -1,10 +1,9 @@
-package factory
+package containers
 
 import (
 	"net/http"
 	"pulsyflux/contracts"
 	"pulsyflux/sliceext"
-	"pulsyflux/util"
 	"time"
 )
 
@@ -50,16 +49,15 @@ func (conn *httpConnection) Close() {
 }
 func (conn *httpConnection) Receive(recv func(envelope contracts.Envelope)) {
 	conn.handlers.Push(func(response http.ResponseWriter, request *http.Request) {
-		msgArg := Arg{"ReceivedHttpMessage", util.StringFromReader(request.Body)}
-		RegisterEnvlpFactory().get(func(obj contracts.Envelope) {
-			response.WriteHeader(http.StatusOK)
-		}, msgArg)
+		// msgArg := Arg{"ReceivedHttpMessage", util.StringFromReader(request.Body)}
+		// nvlp := RegisterEnvlpFactory().get(msgArg)
+		response.WriteHeader(http.StatusOK)
 	})
 }
 func (conn *httpConnection) Send(envelope contracts.Envelope) {
 }
-func (handler *httpConnection) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	clonedHandlers := handler.handlers.Clone()
+func (conn *httpConnection) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	clonedHandlers := conn.handlers.Clone()
 	for clonedHandlers.Len() > 0 {
 		handler := clonedHandlers.Pop()
 		handler(response, request)

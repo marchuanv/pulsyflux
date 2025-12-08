@@ -1,4 +1,4 @@
-package factory
+package containers
 
 import (
 	"net/url"

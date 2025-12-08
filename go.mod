@@ -45,3 +45,7 @@ replace events v1.0.0 => /events
 replace  contracts v1.0.0 => /contracts
 
 replace factory v1.0.0 => /factory
+
+replace containers v1.0.0 => /containers
+
+replace httpcontainers v1.0.0 => /httpcontainers

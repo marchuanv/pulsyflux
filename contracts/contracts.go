@@ -25,3 +25,5 @@ type ConnectionState interface {
 	IsOpen() bool
 	IsClosed() bool
 }
+
+type TypeId[T any] string

@@ -1,4 +1,4 @@
-package factory
+package containers
 
 import (
 	"net/url"
@@ -14,7 +14,7 @@ type envelope struct {
 	msg func() any
 }
 
-func RegisterEnvlpFactory() factory[contracts.Envelope] {
+func RegisterEnvlpFactory() contracts.Container2[contracts.Envelope] {
 	envelopeFactory.register(func(args ...Arg) contracts.Envelope {
 		_, url := argValue[*url.URL](&args[0])
 		_, msg := argValue[any](&args[1])
