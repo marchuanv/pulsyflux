@@ -6,7 +6,7 @@ import (
 
 type envelope struct {
 	url *url.URL
-	msg func() any
+	msg *string
 }
 
 func (nvlp *envelope) GetUrl() *url.URL {
@@ -14,15 +14,21 @@ func (nvlp *envelope) GetUrl() *url.URL {
 }
 
 func (nvlp *envelope) SetUrl(url *url.URL) {
-	nvlp.url = url
-}
-
-func (nvlp *envelope) SetMsg(msg any) {
-	nvlp.msg = func() any {
-		return msg
+	if nvlp.url == nil {
+		nvlp.url = url // use the pointer passed in
+		return
 	}
+	*(nvlp.url) = *url
 }
 
-func (nvlp *envelope) GetMsg() any {
-	return nvlp.msg()
+func (nvlp *envelope) SetMsg(msg *string) {
+	if nvlp.msg == nil {
+		nvlp.msg = msg // use the pointer passed in
+		return
+	}
+	*(nvlp.msg) = *msg
+}
+
+func (nvlp *envelope) GetMsg() *string {
+	return nvlp.msg
 }

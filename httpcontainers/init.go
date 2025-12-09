@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	HttpRequestHandlerId      contracts.TypeId[httpRequestHandler]                = "02c88068-3a66-4856-b2bf-e2dce244761b"
-	httpRequestHandlerNvlpsId contracts.TypeId[sliceext.List[contracts.Envelope]] = "172c2cd8-4869-43a7-aa1a-af341e0b439f"
+	HttpRequestHandlerId          contracts.TypeId[httpRequestHandler]                                      = "02c88068-3a66-4856-b2bf-e2dce244761b"
+	httpRequestHandlerResponsesId contracts.TypeId[sliceext.List[contracts.TypeId[contracts.HttpResponse]]] = "172c2cd8-4869-43a7-aa1a-af341e0b439f"
 
 	HttpServerId               contracts.TypeId[httpServer]   = "fccaca3e-54a4-400d-a9d3-b80a2161c20f"
 	HttpServerAddressId        contracts.TypeId[uri]          = "467be880-a887-42dd-b6f8-49591a47c5da"
@@ -36,11 +36,8 @@ func uriConfig(uriTypeId contracts.TypeId[uri], protocol *string, host *string, 
 func init() {
 
 	protocol := "http"
-	host := "localhost"
-	port := 3000
-	path := "unknown"
 
-	uriConfig(HttpServerAddressId, &protocol, &host, &port, &path)
+	uriConfig(HttpServerAddressId, &protocol, nil, nil, nil)
 
 	containers.RegisterType(HttpServerId)
 	containers.RegisterTypeDependency(HttpServerId, HttpServerAddressId, "address", nil)
@@ -51,17 +48,44 @@ func init() {
 	containers.RegisterTypeDependency(HttpServerId, httpServerMaxHeaderBytesId, "maxHeaderBytes", &maxHeaderBytes)
 
 	containers.RegisterType(HttpRequestHandlerId)
-	containers.RegisterTypeDependency(HttpRequestHandlerId, httpRequestHandlerNvlpsId, "envelopes", nil)
+	httpResponseIds := sliceext.NewList[contracts.TypeId[contracts.HttpResponse]]()
+	containers.RegisterTypeDependency(HttpRequestHandlerId, httpRequestHandlerResponsesId, "httpResponseIds", httpResponseIds)
 
 	containers.RegisterTypeDependency(HttpServerId, HttpRequestHandlerId, "handler", nil)
 }
 
-func EnvelopeConfig(_url *url.URL) contracts.TypeId[contracts.Envelope] {
-	nvlpTypeId := contracts.TypeId[contracts.Envelope](uuid.NewString())
+func HttpResponseConfig(reqUrl *url.URL, successStatusCode int, successStatusMsg string) contracts.TypeId[contracts.HttpResponse] {
+
+	httpResponseIds := containers.Get[*sliceext.List[contracts.TypeId[contracts.HttpResponse]]](httpRequestHandlerResponsesId)
+	responseTypeId := contracts.TypeId[httpResponse](uuid.NewString())
+	httpResponseIds.Add(contracts.TypeId[contracts.HttpResponse](responseTypeId))
+
+	nvlpTypeId := contracts.TypeId[envelope](uuid.NewString())
 	urlTypeId := contracts.TypeId[url.URL](uuid.NewString())
-	envelopeMsgTypeId := contracts.TypeId[any](uuid.NewString())
+	envelopeMsgTypeId := contracts.TypeId[string](uuid.NewString())
 	containers.RegisterType(nvlpTypeId)
-	containers.RegisterTypeDependency(nvlpTypeId, urlTypeId, "url", _url)
+	_url := *reqUrl
+	containers.RegisterTypeDependency(nvlpTypeId, urlTypeId, "url", &_url)
 	containers.RegisterTypeDependency(nvlpTypeId, envelopeMsgTypeId, "msg", nil)
-	return nvlpTypeId
+
+	nvlpTypeIdNvlpId := contracts.TypeId[contracts.TypeId[contracts.Envelope]](uuid.NewString())
+	succStCoTypeId := contracts.TypeId[int](uuid.NewString())
+	succStMsgTypeId := contracts.TypeId[string](uuid.NewString())
+
+	nvlpIncTypId := contracts.TypeId[chan contracts.TypeId[contracts.Envelope]](uuid.NewString())
+	nvlpOutTypId := contracts.TypeId[chan contracts.TypeId[contracts.Envelope]](uuid.NewString())
+
+	containers.RegisterType(responseTypeId)
+	_nvlpTypeId := contracts.TypeId[contracts.Envelope](nvlpTypeId)
+	containers.RegisterTypeDependency(responseTypeId, nvlpTypeIdNvlpId, "nvlpId", &_nvlpTypeId)
+	containers.RegisterTypeDependency(responseTypeId, succStCoTypeId, "successStatusCode", &successStatusCode)
+	containers.RegisterTypeDependency(responseTypeId, succStMsgTypeId, "successStatusMsg", &successStatusMsg)
+
+	intCh := make(chan contracts.TypeId[contracts.Envelope])
+	outCh := make(chan contracts.TypeId[contracts.Envelope])
+
+	containers.RegisterTypeDependency(responseTypeId, nvlpIncTypId, "nvlpInc", &intCh)
+	containers.RegisterTypeDependency(responseTypeId, nvlpOutTypId, "nvlpOut", &outCh)
+
+	return contracts.TypeId[contracts.HttpResponse](responseTypeId)
 }

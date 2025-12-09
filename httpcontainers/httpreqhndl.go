@@ -9,37 +9,26 @@ import (
 )
 
 type httpRequestHandler struct {
-	envelopes *sliceext.List[contracts.Envelope]
-	rcvNvlp   chan contracts.Envelope
+	httpResponseIds *sliceext.List[contracts.TypeId[contracts.HttpResponse]]
 }
 
-func (rh *httpRequestHandler) GetEnvelopes() *sliceext.List[contracts.Envelope] {
-	return rh.envelopes
-}
-
-func (rh *httpRequestHandler) SetEnvelopes(envelopes *sliceext.List[contracts.Envelope]) {
-	rh.envelopes = envelopes
-}
-
-func (rh *httpRequestHandler) Receive(nvlpTypeId contracts.TypeId[contracts.Envelope]) contracts.Envelope {
-	path := containers.Get[contracts.Envelope](nvlpTypeId).GetUrl().Path
-	for nvlp := range rh.rcvNvlp {
-		if nvlp.GetUrl().Path == path {
-			return nvlp
-		}
-	}
-	return nil
-}
-
-func (rh *httpRequestHandler) Send(nvlpTypeId contracts.TypeId[contracts.Envelope]) {
+func (rh *httpRequestHandler) SetHttpResponseIds(httpResponseIds *sliceext.List[contracts.TypeId[contracts.HttpResponse]]) {
+	rh.httpResponseIds = httpResponseIds
 }
 
 func (rh *httpRequestHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	for _, nvlp := range rh.GetEnvelopes().All() {
-		if request.URL.Path == nvlp.GetUrl().Path {
-			nvlp.SetMsg(util.StringFromReader(request.Body))
-			rh.rcvNvlp <- nvlp
+	reqBody := util.StringFromReader(request.Body)
+	var reason string
+	var statusCode int
+	var resBody string
+	for _, httpResId := range rh.httpResponseIds.All() {
+		httpRes := containers.Get[contracts.HttpResponse](httpResId)
+		reason, statusCode, resBody = httpRes.Handle(request.Header, reqBody)
+		if statusCode == *httpRes.GetSuccessStatusCode() {
+			response.WriteHeader(statusCode)
+			response.Write([]byte(resBody))
+			return
 		}
 	}
-	response.WriteHeader(http.StatusOK)
+	http.Error(response, reason, statusCode)
 }

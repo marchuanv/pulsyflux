@@ -25,16 +25,35 @@ func (u *uri) GetPort() *int {
 }
 
 func (u *uri) SetProtocol(protocol *string) {
-	u.protocol = protocol
+	if u.protocol == nil {
+		u.protocol = protocol // use the pointer passed in
+		return
+	}
+	*(u.protocol) = *protocol
 }
+
 func (u *uri) SetHost(host *string) {
-	u.host = host
+	if u.host == nil {
+		u.host = host // use the pointer passed in
+		return
+	}
+	*(u.host) = *host
 }
-func (u *uri) SetPath(path *string) {
-	u.path = path
-}
+
 func (u *uri) SetPort(port *int) {
-	u.port = port
+	if u.port == nil {
+		u.port = port // use the pointer passed in
+		return
+	}
+	*(u.port) = *port
+}
+
+func (u *uri) SetPath(path *string) {
+	if u.path == nil {
+		u.path = path // use the pointer passed in
+		return
+	}
+	*(u.path) = *path
 }
 
 func (u *uri) GetPortStr() string {

@@ -26,16 +26,26 @@ type URI interface {
 type Envelope interface {
 	GetUrl() *url.URL
 	SetUrl(url *url.URL)
-	SetMsg(msg any)
-	GetMsg() any
+	SetMsg(msg *string)
+	GetMsg() *string
 }
 
 type HttpRequestHandler interface {
-	Receive(nvlpTypeId TypeId[Envelope]) Envelope
-	Send(nvlpTypeId TypeId[Envelope])
-	GetEnvelopes() *sliceext.List[Envelope]
-	SetEnvelopes(handlers *sliceext.List[Envelope])
-	ServeHTTP(http.ResponseWriter, *http.Request)
+	SetHttpResponseIds(httpResponseIds *sliceext.List[TypeId[HttpResponse]])
+	ServeHTTP(response http.ResponseWriter, request *http.Request)
+}
+
+type HttpResponse interface {
+	SetNvlpId(nvlpId *TypeId[Envelope])
+	SetNvlpInc(nvlpInc *chan TypeId[Envelope])
+	SetNvlpOut(nvlpOut *chan TypeId[Envelope])
+	GetSuccessStatusCode() *int
+	GetSuccessStatusMsg() *string
+	SetSuccessStatusCode(code *int)
+	SetSuccessStatusMsg(msg *string)
+	GetMsg() any
+	SetMsg(msg any)
+	Handle(reqHeader http.Header, reqBody string) (reason string, statusCode int, resBody string)
 }
 
 type TimeDuration interface {

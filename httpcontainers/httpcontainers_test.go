@@ -1,6 +1,8 @@
 package httpcontainers
 
 import (
+	"net/http"
+	"net/url"
 	"pulsyflux/containers"
 	"pulsyflux/contracts"
 	"testing"
@@ -11,11 +13,19 @@ func TestHttpServer(test *testing.T) {
 	newHost := "test"
 
 	uri := containers.Get[contracts.URI](HttpServerAddressId)
-	test.Log(uri)
+	host := "localhost"
+	port := 3000
+	path := "publish"
+
+	uri.SetHost(&host)
+	uri.SetPort(&port)
+	uri.SetPath(&path)
+
 	server := containers.Get[contracts.HttpServer](HttpServerId)
 
 	if *server.GetAddress().GetHost() != "localhost" {
 		test.Fail()
+		return
 	}
 
 	server.GetAddress().SetHost(&newHost)
@@ -26,5 +36,17 @@ func TestHttpServer(test *testing.T) {
 		test.Fail()
 	}
 
-	server2.Start()
+	newHost = "localhost"
+	server2.GetAddress().SetHost(&newHost)
+
+	url, _ := url.Parse(uri.String())
+	responseTypeId := HttpResponseConfig(url, http.StatusOK, "success")
+	res := containers.Get[contracts.HttpResponse](responseTypeId)
+	if *res.GetSuccessStatusCode() != http.StatusOK {
+		test.Fail()
+	}
+
+	server3 := containers.Get[contracts.HttpServer](HttpServerId)
+
+	server3.Start()
 }

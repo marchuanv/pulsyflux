@@ -47,7 +47,11 @@ func (s *httpServer) GetMaxHeaderBytes() int {
 }
 
 func (s *httpServer) SetMaxHeaderBytes(size *int) {
-	s.maxHeaderBytes = size
+	if s.maxHeaderBytes == nil {
+		s.maxHeaderBytes = size // use the pointer passed in
+		return
+	}
+	*(s.maxHeaderBytes) = *size
 }
 
 func (s *httpServer) GetHandler() contracts.HttpRequestHandler {

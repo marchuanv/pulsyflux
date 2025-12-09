@@ -18,10 +18,11 @@ type metadata struct {
 }
 
 type depEdge struct {
-	dep      *metadata
-	field    reflect.Value
-	setter   reflect.Value
-	useField bool
+	dep         *metadata
+	field       reflect.Value
+	setter      reflect.Value
+	setterValue reflect.Value
+	useField    bool
 }
 
 var (
@@ -37,29 +38,37 @@ func pascalCase(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// find setter "Set" + PascalCase(argName) on inst
-func findSetterFor(depName string, inst any, depValue any) (reflect.Value, error) {
+// find setter "Set<DepName>" on inst, prepare reflect.Value for injection
+func findSetterFor(depName string, inst any, depValue any) (reflect.Value, reflect.Value, error) {
 	methodName := "Set" + pascalCase(depName)
 	mv := reflect.ValueOf(inst).MethodByName(methodName)
 	if !mv.IsValid() {
-		return reflect.Value{}, fmt.Errorf("DI Error: method %s not found on %T", methodName, inst)
+		return reflect.Value{}, reflect.Value{}, fmt.Errorf(
+			"DI Error: method %s not found on %T", methodName, inst,
+		)
 	}
+
 	mt := mv.Type()
 	if mt.NumIn() != 1 {
-		return reflect.Value{}, fmt.Errorf("DI Error: method %s on %T must accept exactly 1 argument", methodName, inst)
+		return reflect.Value{}, reflect.Value{}, fmt.Errorf(
+			"DI Error: method %s on %T must accept exactly 1 argument", methodName, inst,
+		)
 	}
 
 	paramType := mt.In(0)
-	valType := reflect.TypeOf(depValue)
+	val := reflect.ValueOf(depValue)
+	valType := val.Type()
 
-	if !valType.AssignableTo(paramType) && !valType.ConvertibleTo(paramType) {
-		return reflect.Value{}, fmt.Errorf(
+	if valType.AssignableTo(paramType) {
+		return mv, val, nil
+	} else if valType.ConvertibleTo(paramType) {
+		return mv, val.Convert(paramType), nil
+	} else {
+		return reflect.Value{}, reflect.Value{}, fmt.Errorf(
 			"DI Error: method %s expects %v but dependency has %v",
 			methodName, paramType, valType,
 		)
 	}
-
-	return mv, nil
 }
 
 // Register a type
@@ -76,7 +85,6 @@ func addType[T comparable](typeId contracts.TypeId[T], value *T) {
 	}
 
 	var metaValue reflect.Value
-
 	if value == nil {
 		metaValue = reflect.New(reflect.TypeOf(*new(T))) // always pointer
 	} else {
@@ -98,13 +106,14 @@ func addType[T comparable](typeId contracts.TypeId[T], value *T) {
 	types.Add(string(typeId), meta)
 }
 
-// Register a field dependency
+// Register a dependency field or setter
 func addArgType[T comparable, ArgT comparable](
 	typeId contracts.TypeId[T],
 	argTypeId contracts.TypeId[ArgT],
 	argName string,
 	argValue *ArgT,
 ) {
+	// Ensure dependency type exists
 	typesMu.RLock()
 	exists := types.Has(string(argTypeId))
 	typesMu.RUnlock()
@@ -122,12 +131,11 @@ func addArgType[T comparable, ArgT comparable](
 		panic("Type or dependency not registered")
 	}
 
-	// Find the field in the parent struct
+	// Find field in parent struct
+	elem := meta.typeValue.Elem()
 	var field reflect.Value
 	var structField reflect.StructField
 	found := false
-
-	elem := meta.typeValue.Elem()
 	for i := 0; i < elem.NumField(); i++ {
 		f := elem.Field(i)
 		sf := elem.Type().Field(i)
@@ -138,7 +146,6 @@ func addArgType[T comparable, ArgT comparable](
 			break
 		}
 	}
-
 	if !found {
 		panic(fmt.Sprintf("Field %s not found on %s", argName, elem.Type()))
 	}
@@ -152,28 +159,31 @@ func addArgType[T comparable, ArgT comparable](
 
 	useField := field.CanSet()
 	var setter reflect.Value
+	var setterVal reflect.Value
 
 	if !useField {
 		parentInst := meta.typeValue.Interface()
 		childInst := depMeta.typeValue.Interface()
-		s, err := findSetterFor(argName, parentInst, childInst)
+		s, val, err := findSetterFor(argName, parentInst, childInst)
 		if err != nil {
 			panic(err)
 		}
 		setter = s
+		setterVal = val
 	}
 
 	edge := &depEdge{
-		dep:      depMeta,
-		field:    field,
-		setter:   setter,
-		useField: useField,
+		dep:         depMeta,
+		field:       field,
+		setter:      setter,
+		setterValue: setterVal,
+		useField:    useField,
 	}
 
 	meta.dependencies.Add(edge)
 }
 
-// Recursively inject dependencies with cycle detection
+// Recursively inject dependencies
 func resolveDependencies(meta *metadata, visited map[*metadata]bool, stack map[*metadata]bool) {
 	if visited[meta] {
 		return
@@ -187,11 +197,10 @@ func resolveDependencies(meta *metadata, visited map[*metadata]bool, stack map[*
 		dep := edge.dep
 		resolveDependencies(dep, visited, stack)
 
-		// Inject pointer directly, preserving singleton semantics
 		if edge.useField {
 			edge.field.Set(dep.typeValue)
 		} else {
-			edge.setter.Call([]reflect.Value{dep.typeValue})
+			edge.setter.Call([]reflect.Value{edge.setterValue})
 		}
 	}
 
@@ -209,13 +218,11 @@ func Get[T interface{}, T2 any](typeId contracts.TypeId[T2]) T {
 		panic(fmt.Sprintf("Type %s is not registered", typeId))
 	}
 
-	// Resolve dependencies once
 	meta.once.Do(func() {
 		resolveDependencies(meta, make(map[*metadata]bool), make(map[*metadata]bool))
 	})
 
 	val := meta.typeValue.Interface()
-
 	tInterface, ok := val.(T)
 	if !ok {
 		panic(fmt.Sprintf("Type %s does not implement requested interface", typeId))
