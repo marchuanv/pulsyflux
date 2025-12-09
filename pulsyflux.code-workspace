@@ -31,13 +31,13 @@
 			"path": "contracts"
 		},
 		{
-			"path": "factory"
-		},
-		{
 			"path": "containers"
 		},
 		{
-			"path": "httpcontainers"
+			"path": "httpcontainer"
+		},
+		{
+			"path": "msgbuscontainer"				
 		}
 
 	]

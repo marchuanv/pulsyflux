@@ -24,8 +24,6 @@ require events v1.0.0
 
 require contracts v1.0.0
 
-require factory v1.0.0
-
 replace pulse v1.0.0 => /pulse
 
 replace msgbus v1.0.0 => /msgbus
@@ -48,4 +46,6 @@ replace factory v1.0.0 => /factory
 
 replace containers v1.0.0 => /containers
 
-replace httpcontainers v1.0.0 => /httpcontainers
+replace httpcontainer v1.0.0 => /httpcontainer
+
+replace msgbuscontainer v1.0.0 => /msgbuscontainer

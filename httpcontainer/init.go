@@ -1,7 +1,6 @@
-package httpcontainers
+package httpcontainer
 
 import (
-	"net/url"
 	"pulsyflux/containers"
 	"pulsyflux/contracts"
 	"pulsyflux/sliceext"
@@ -11,7 +10,7 @@ import (
 )
 
 const (
-	HttpRequestHandlerId          contracts.TypeId[httpRequestHandler]                                      = "02c88068-3a66-4856-b2bf-e2dce244761b"
+	httpRequestHandlerId          contracts.TypeId[httpRequestHandler]                                      = "02c88068-3a66-4856-b2bf-e2dce244761b"
 	httpRequestHandlerResponsesId contracts.TypeId[sliceext.List[contracts.TypeId[contracts.HttpResponse]]] = "172c2cd8-4869-43a7-aa1a-af341e0b439f"
 
 	HttpServerId               contracts.TypeId[httpServer]   = "fccaca3e-54a4-400d-a9d3-b80a2161c20f"
@@ -47,45 +46,35 @@ func init() {
 	maxHeaderBytes := 16 * 1024 //16KB (16 * 1024 bytes)
 	containers.RegisterTypeDependency(HttpServerId, httpServerMaxHeaderBytesId, "maxHeaderBytes", &maxHeaderBytes)
 
-	containers.RegisterType(HttpRequestHandlerId)
+	containers.RegisterType(httpRequestHandlerId)
 	httpResponseIds := sliceext.NewList[contracts.TypeId[contracts.HttpResponse]]()
-	containers.RegisterTypeDependency(HttpRequestHandlerId, httpRequestHandlerResponsesId, "httpResponseIds", httpResponseIds)
+	containers.RegisterTypeDependency(httpRequestHandlerId, httpRequestHandlerResponsesId, "httpResponseIds", httpResponseIds)
 
-	containers.RegisterTypeDependency(HttpServerId, HttpRequestHandlerId, "handler", nil)
+	containers.RegisterTypeDependency(HttpServerId, httpRequestHandlerId, "handler", nil)
 }
 
-func HttpResponseConfig(reqUrl *url.URL, successStatusCode int, successStatusMsg string) contracts.TypeId[contracts.HttpResponse] {
+func HttpResponseConfig(httpResTypeId contracts.TypeId[contracts.HttpResponse], successStatusCode int, successStatusMsg string) {
 
+	responseTypeId := contracts.TypeId[httpResponse](httpResTypeId)
 	httpResponseIds := containers.Get[*sliceext.List[contracts.TypeId[contracts.HttpResponse]]](httpRequestHandlerResponsesId)
-	responseTypeId := contracts.TypeId[httpResponse](uuid.NewString())
-	httpResponseIds.Add(contracts.TypeId[contracts.HttpResponse](responseTypeId))
+	httpResponseIds.Add(httpResTypeId)
 
-	nvlpTypeId := contracts.TypeId[envelope](uuid.NewString())
-	urlTypeId := contracts.TypeId[url.URL](uuid.NewString())
-	envelopeMsgTypeId := contracts.TypeId[string](uuid.NewString())
-	containers.RegisterType(nvlpTypeId)
-	_url := *reqUrl
-	containers.RegisterTypeDependency(nvlpTypeId, urlTypeId, "url", &_url)
-	containers.RegisterTypeDependency(nvlpTypeId, envelopeMsgTypeId, "msg", nil)
-
-	nvlpTypeIdNvlpId := contracts.TypeId[contracts.TypeId[contracts.Envelope]](uuid.NewString())
+	msgTypeMsgTypeId := contracts.TypeId[contracts.TypeId[contracts.Msg]](uuid.NewString())
 	succStCoTypeId := contracts.TypeId[int](uuid.NewString())
 	succStMsgTypeId := contracts.TypeId[string](uuid.NewString())
 
-	nvlpIncTypId := contracts.TypeId[chan contracts.TypeId[contracts.Envelope]](uuid.NewString())
-	nvlpOutTypId := contracts.TypeId[chan contracts.TypeId[contracts.Envelope]](uuid.NewString())
+	incMsgTypId := contracts.TypeId[chan contracts.Msg](uuid.NewString())
+	outMsgTypId := contracts.TypeId[chan contracts.Msg](uuid.NewString())
 
 	containers.RegisterType(responseTypeId)
-	_nvlpTypeId := contracts.TypeId[contracts.Envelope](nvlpTypeId)
-	containers.RegisterTypeDependency(responseTypeId, nvlpTypeIdNvlpId, "nvlpId", &_nvlpTypeId)
+	msgTypeId := contracts.TypeId[contracts.Msg](msgTypeMsgTypeId)
+	containers.RegisterTypeDependency(responseTypeId, msgTypeMsgTypeId, "msgTypeId", &msgTypeId)
 	containers.RegisterTypeDependency(responseTypeId, succStCoTypeId, "successStatusCode", &successStatusCode)
 	containers.RegisterTypeDependency(responseTypeId, succStMsgTypeId, "successStatusMsg", &successStatusMsg)
 
-	intCh := make(chan contracts.TypeId[contracts.Envelope])
-	outCh := make(chan contracts.TypeId[contracts.Envelope])
+	intCh := make(chan contracts.Msg)
+	outCh := make(chan contracts.Msg)
 
-	containers.RegisterTypeDependency(responseTypeId, nvlpIncTypId, "nvlpInc", &intCh)
-	containers.RegisterTypeDependency(responseTypeId, nvlpOutTypId, "nvlpOut", &outCh)
-
-	return contracts.TypeId[contracts.HttpResponse](responseTypeId)
+	containers.RegisterTypeDependency(responseTypeId, incMsgTypId, "incMsg", &intCh)
+	containers.RegisterTypeDependency(responseTypeId, outMsgTypId, "outMsg", &outCh)
 }

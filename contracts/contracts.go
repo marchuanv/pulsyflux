@@ -2,7 +2,6 @@ package contracts
 
 import (
 	"net/http"
-	"net/url"
 	"pulsyflux/sliceext"
 	"time"
 )
@@ -23,28 +22,21 @@ type URI interface {
 	String() string
 }
 
-type Envelope interface {
-	GetUrl() *url.URL
-	SetUrl(url *url.URL)
-	SetMsg(msg *string)
-	GetMsg() *string
-}
-
 type HttpRequestHandler interface {
 	SetHttpResponseIds(httpResponseIds *sliceext.List[TypeId[HttpResponse]])
 	ServeHTTP(response http.ResponseWriter, request *http.Request)
 }
 
 type HttpResponse interface {
-	SetNvlpId(nvlpId *TypeId[Envelope])
-	SetNvlpInc(nvlpInc *chan TypeId[Envelope])
-	SetNvlpOut(nvlpOut *chan TypeId[Envelope])
+	SetMsgTypeId(msgTypeId *TypeId[Msg])
+	SetIncMsg(incMsg *chan Msg)
+	SetOutMsg(outMsg *chan Msg)
 	GetSuccessStatusCode() *int
 	GetSuccessStatusMsg() *string
 	SetSuccessStatusCode(code *int)
 	SetSuccessStatusMsg(msg *string)
-	GetMsg() any
-	SetMsg(msg any)
+	GetMsg() Msg
+	SetMsg(Msg)
 	Handle(reqHeader http.Header, reqBody string) (reason string, statusCode int, resBody string)
 }
 
@@ -74,3 +66,11 @@ type ConnectionState interface {
 }
 
 type TypeId[T any] string
+
+type ChannelId[T any] string
+
+type MsgBus[MsgType string] interface {
+	SetChl(chl *ChannelId[MsgType])
+	Publish(msg MsgType)
+	Subscribe() MsgType
+}

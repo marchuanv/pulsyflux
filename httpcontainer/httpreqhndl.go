@@ -1,4 +1,4 @@
-package httpcontainers
+package httpcontainer
 
 import (
 	"net/http"
@@ -17,6 +17,10 @@ func (rh *httpRequestHandler) SetHttpResponseIds(httpResponseIds *sliceext.List[
 }
 
 func (rh *httpRequestHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	if rh.httpResponseIds.Len() == 0 {
+		http.Error(response, "no http responses configured", http.StatusInternalServerError)
+		return
+	}
 	reqBody := util.StringFromReader(request.Body)
 	var reason string
 	var statusCode int

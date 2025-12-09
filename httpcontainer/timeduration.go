@@ -1,4 +1,4 @@
-package httpcontainers
+package httpcontainer
 
 import (
 	"time"

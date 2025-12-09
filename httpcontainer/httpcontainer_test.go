@@ -1,11 +1,12 @@
-package httpcontainers
+package httpcontainer
 
 import (
 	"net/http"
-	"net/url"
 	"pulsyflux/containers"
 	"pulsyflux/contracts"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestHttpServer(test *testing.T) {
@@ -39,8 +40,8 @@ func TestHttpServer(test *testing.T) {
 	newHost = "localhost"
 	server2.GetAddress().SetHost(&newHost)
 
-	url, _ := url.Parse(uri.String())
-	responseTypeId := HttpResponseConfig(url, http.StatusOK, "success")
+	responseTypeId := contracts.TypeId[contracts.HttpResponse](uuid.NewString())
+	HttpResponseConfig(responseTypeId, http.StatusOK, "success")
 	res := containers.Get[contracts.HttpResponse](responseTypeId)
 	if *res.GetSuccessStatusCode() != http.StatusOK {
 		test.Fail()
