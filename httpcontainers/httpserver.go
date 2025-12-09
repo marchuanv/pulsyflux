@@ -81,4 +81,5 @@ func (s *httpServer) Stop() {
 		log.Fatalf("Server shutdown failed: %v", err)
 	}
 	log.Println("Server gracefully stopped.")
+	server = &http.Server{}
 }

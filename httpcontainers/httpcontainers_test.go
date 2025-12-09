@@ -8,10 +8,23 @@ import (
 
 func TestHttpServer(test *testing.T) {
 
+	newHost := "test"
+
 	uri := containers.Get[contracts.URI](HttpServerAddressId)
 	test.Log(uri)
 	server := containers.Get[contracts.HttpServer](HttpServerId)
-	server.Start()
-	test.Log(server)
-	test.Fail()
+
+	if *server.GetAddress().GetHost() != "localhost" {
+		test.Fail()
+	}
+
+	server.GetAddress().SetHost(&newHost)
+
+	server2 := containers.Get[contracts.HttpServer](HttpServerId)
+
+	if *server2.GetAddress().GetHost() != newHost {
+		test.Fail()
+	}
+
+	server2.Start()
 }

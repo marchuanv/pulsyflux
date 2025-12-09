@@ -12,12 +12,16 @@ import (
 type metadata struct {
 	name         string
 	Id           string
-	typeValue    reflect.Value // now always a pointer
-	field        reflect.Value
-	dependencies *sliceext.List[*metadata]
+	typeValue    reflect.Value // always a pointer
+	dependencies *sliceext.List[*depEdge]
 	once         *sync.Once
-	useField     bool
-	setter       reflect.Value
+}
+
+type depEdge struct {
+	dep      *metadata
+	field    reflect.Value
+	setter   reflect.Value
+	useField bool
 }
 
 var (
@@ -33,7 +37,7 @@ func pascalCase(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// find setter "Set" + PascalCase(argName) on inst, validate it accepts the dependency's type
+// find setter "Set" + PascalCase(argName) on inst
 func findSetterFor(depName string, inst any, depValue any) (reflect.Value, error) {
 	methodName := "Set" + pascalCase(depName)
 	mv := reflect.ValueOf(inst).MethodByName(methodName)
@@ -48,12 +52,11 @@ func findSetterFor(depName string, inst any, depValue any) (reflect.Value, error
 	paramType := mt.In(0)
 	valType := reflect.TypeOf(depValue)
 
-	// Check assignability: a value of valType must be assignable to paramType
-	if !valType.AssignableTo(paramType) {
-		// also allow convertible case when the value is assignable via interface (rare edge)
-		if !(valType.ConvertibleTo(paramType)) {
-			return reflect.Value{}, fmt.Errorf("DI Error: method %s expects %v but dependency has %v", methodName, paramType, valType)
-		}
+	if !valType.AssignableTo(paramType) && !valType.ConvertibleTo(paramType) {
+		return reflect.Value{}, fmt.Errorf(
+			"DI Error: method %s expects %v but dependency has %v",
+			methodName, paramType, valType,
+		)
 	}
 
 	return mv, nil
@@ -75,22 +78,20 @@ func addType[T comparable](typeId contracts.TypeId[T], value *T) {
 	var metaValue reflect.Value
 
 	if value == nil {
-		// create pointer to zero value
-		metaValue = reflect.New(reflect.TypeOf(*new(T))) // *T
+		metaValue = reflect.New(reflect.TypeOf(*new(T))) // always pointer
 	} else {
 		v := reflect.ValueOf(value)
-		if v.Kind() == reflect.Ptr {
-			metaValue = v
-		} else {
+		if v.Kind() != reflect.Ptr {
 			panic(fmt.Sprintf("Type %s must be a pointer", typeId))
 		}
+		metaValue = v
 	}
 
 	meta := &metadata{
 		Id:           string(typeId),
 		name:         metaValue.Elem().Type().Name(),
-		typeValue:    metaValue, // pointer stored
-		dependencies: sliceext.NewList[*metadata](),
+		typeValue:    metaValue,
+		dependencies: sliceext.NewList[*depEdge](),
 		once:         &sync.Once{},
 	}
 
@@ -104,7 +105,6 @@ func addArgType[T comparable, ArgT comparable](
 	argName string,
 	argValue *ArgT,
 ) {
-	// Ensure arg type exists
 	typesMu.RLock()
 	exists := types.Has(string(argTypeId))
 	typesMu.RUnlock()
@@ -124,41 +124,53 @@ func addArgType[T comparable, ArgT comparable](
 
 	// Find the field in the parent struct
 	var field reflect.Value
+	var structField reflect.StructField
 	found := false
-	for i := 0; i < meta.typeValue.Elem().NumField(); i++ {
-		f := meta.typeValue.Elem().Field(i)
-		if meta.typeValue.Elem().Type().Field(i).Name == argName {
+
+	elem := meta.typeValue.Elem()
+	for i := 0; i < elem.NumField(); i++ {
+		f := elem.Field(i)
+		sf := elem.Type().Field(i)
+		if sf.Name == argName {
 			field = f
+			structField = sf
 			found = true
 			break
 		}
 	}
+
 	if !found {
-		panic(fmt.Sprintf("Field %s not found on %s", argName, meta.typeValue.Elem().Type()))
+		panic(fmt.Sprintf("Field %s not found on %s", argName, elem.Type()))
 	}
 
-	// Ensure field is a pointer for injection
-	fieldKind := field.Kind()
-	if fieldKind != reflect.String && fieldKind != reflect.Int {
-		if fieldKind != reflect.Ptr {
-			panic(fmt.Sprintf("Field %s on type %s must be a pointer", argName, meta.Id))
-		}
+	// Enforce pointer fields for all injected dependencies (except int/string)
+	if structField.Type.Kind() != reflect.Ptr &&
+		structField.Type.Kind() != reflect.Int &&
+		structField.Type.Kind() != reflect.String {
+		panic(fmt.Sprintf("Field %s on type %s must be a pointer", argName, meta.Id))
 	}
 
-	depMeta.useField = field.CanSet()
-	if !depMeta.useField {
-		parentInst := meta.typeValue.Interface()   // concrete pointer (e.g., *car)
-		childInst := depMeta.typeValue.Interface() // concrete pointer (e.g., *wheel)
+	useField := field.CanSet()
+	var setter reflect.Value
+
+	if !useField {
+		parentInst := meta.typeValue.Interface()
+		childInst := depMeta.typeValue.Interface()
 		s, err := findSetterFor(argName, parentInst, childInst)
 		if err != nil {
 			panic(err)
 		}
-		depMeta.setter = s
+		setter = s
 	}
-	depMeta.name = argName
-	depMeta.field = field
-	meta.dependencies.Add(depMeta)
 
+	edge := &depEdge{
+		dep:      depMeta,
+		field:    field,
+		setter:   setter,
+		useField: useField,
+	}
+
+	meta.dependencies.Add(edge)
 }
 
 // Recursively inject dependencies with cycle detection
@@ -171,23 +183,23 @@ func resolveDependencies(meta *metadata, visited map[*metadata]bool, stack map[*
 	}
 	stack[meta] = true
 
-	for _, dep := range meta.dependencies.All() {
-		// Resolve dependencies of the child first
+	for _, edge := range meta.dependencies.All() {
+		dep := edge.dep
 		resolveDependencies(dep, visited, stack)
 
-		if !dep.useField {
-			dep.setter.Call([]reflect.Value{dep.typeValue})
+		// Inject pointer directly, preserving singleton semantics
+		if edge.useField {
+			edge.field.Set(dep.typeValue)
 		} else {
-			// inject pointer
-			dep.field.Set(dep.typeValue)
+			edge.setter.Call([]reflect.Value{dep.typeValue})
 		}
-
 	}
 
 	stack[meta] = false
 	visited[meta] = true
 }
 
+// Get returns the singleton instance
 func Get[T interface{}, T2 any](typeId contracts.TypeId[T2]) T {
 	typesMu.RLock()
 	meta := types.Get(string(typeId))
@@ -197,13 +209,12 @@ func Get[T interface{}, T2 any](typeId contracts.TypeId[T2]) T {
 		panic(fmt.Sprintf("Type %s is not registered", typeId))
 	}
 
-	// Ensure dependencies are resolved
+	// Resolve dependencies once
 	meta.once.Do(func() {
 		resolveDependencies(meta, make(map[*metadata]bool), make(map[*metadata]bool))
 	})
 
-	// Return as interface
-	val := meta.typeValue.Interface() // concrete pointer
+	val := meta.typeValue.Interface()
 
 	tInterface, ok := val.(T)
 	if !ok {
