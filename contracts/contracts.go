@@ -28,7 +28,8 @@ type HttpRequestHandler interface {
 }
 
 type HttpResponse interface {
-	SetMsgTypeId(msgTypeId *TypeId[Msg])
+	SetMsgId(msgId *MsgId[Msg])
+	GetMsgId() MsgId[Msg]
 	SetIncMsg(incMsg *chan Msg)
 	SetOutMsg(outMsg *chan Msg)
 	GetSuccessStatusCode() *int
@@ -69,8 +70,8 @@ type TypeId[T any] string
 
 type ChannelId[T any] string
 
-type MsgBus[MsgType string] interface {
-	SetChl(chl *ChannelId[MsgType])
-	Publish(msg MsgType)
-	Subscribe() MsgType
+type MsgBus[T ~string] interface {
+	SetChl(chl *ChannelId[T])
+	Publish(msg T)
+	Subscribe() T
 }

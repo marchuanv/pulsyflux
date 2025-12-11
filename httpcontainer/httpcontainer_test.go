@@ -41,7 +41,8 @@ func TestHttpServer(test *testing.T) {
 	server2.GetAddress().SetHost(&newHost)
 
 	responseTypeId := contracts.TypeId[contracts.HttpResponse](uuid.NewString())
-	HttpResponseConfig(responseTypeId, http.StatusOK, "success")
+	msgId := contracts.MsgId[contracts.Msg](uuid.NewString())
+	HttpResponseConfig(responseTypeId, msgId, http.StatusOK, "success")
 	res := containers.Get[contracts.HttpResponse](responseTypeId)
 	if *res.GetSuccessStatusCode() != http.StatusOK {
 		test.Fail()

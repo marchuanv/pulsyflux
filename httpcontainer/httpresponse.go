@@ -6,19 +6,23 @@ import (
 )
 
 type httpResponse struct {
-	msgTypeId         *contracts.TypeId[contracts.Msg]
 	incMsg            *chan contracts.Msg
 	outMsg            *chan contracts.Msg
+	msgId             *contracts.MsgId[contracts.Msg]
 	successStatusCode *int
 	successStatusMsg  *string
 }
 
-func (r *httpResponse) SetMsgTypeId(msgTypeId *contracts.TypeId[contracts.Msg]) {
-	if r.msgTypeId == nil {
-		r.msgTypeId = msgTypeId // use the pointer passed in
+func (r *httpResponse) SetMsgId(msgId *contracts.MsgId[contracts.Msg]) {
+	if r.msgId == nil {
+		r.msgId = msgId // use the pointer passed in
 		return
 	}
-	*(r.msgTypeId) = *msgTypeId
+	*(r.msgId) = *msgId
+}
+
+func (r *httpResponse) GetMsgId() contracts.MsgId[contracts.Msg] {
+	return *r.msgId
 }
 
 func (r *httpResponse) SetIncMsg(incMsg *chan contracts.Msg) {
@@ -73,12 +77,12 @@ func (r *httpResponse) Handle(reqHeader http.Header, reqBody string) (reason str
 	message_id := reqHeader.Get("message_id")
 	resBody = ""
 	if message_id == "" {
-		reason = "missing envelope_id header"
+		reason = "missing message_id in the header"
 		statusCode = http.StatusBadRequest
 		return
 	}
 
-	if message_id != string(*r.msgTypeId) {
+	if message_id != string(*r.msgId) {
 		reason = "no handler for message_id " + message_id
 		statusCode = http.StatusBadRequest
 		return

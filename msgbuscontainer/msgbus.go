@@ -1,32 +1,28 @@
 package msgbuscontainers
 
 import (
-	"net/http"
 	"pulsyflux/containers"
 	"pulsyflux/contracts"
-	"pulsyflux/httpcontainer"
 )
 
-type msgBus[MsgType string] struct {
-	chl *contracts.ChannelId[MsgType]
+type msgBus[T ~string] struct {
+	chl *contracts.ChannelId[T]
 }
 
-func (mb *msgBus[MsgType]) SetChl(chl *contracts.ChannelId[MsgType]) {
+func (mb *msgBus[T]) SetChl(chl *contracts.ChannelId[T]) {
 	if mb.chl == nil {
-		mb.chl = chl // use the pointer passed in
-		return
+		mb.chl = chl
+	} else {
+		*(mb.chl) = *chl
 	}
-	*(mb.chl) = *chl
-	httpResTypeId := contracts.TypeId[contracts.HttpResponse](*chl)
-	httpcontainer.HttpResponseConfig(httpResTypeId, http.StatusCreated, "subscribed to channel")
 }
 
-func (mb *msgBus[MsgType]) Publish(msg MsgType) {
+func (mb *msgBus[T]) Publish(msg T) {
 }
 
-func (mb *msgBus[MsgType]) Subscribe() MsgType {
+func (mb *msgBus[T]) Subscribe() T {
 	httpResTypeId := contracts.TypeId[contracts.HttpResponse](*mb.chl)
 	sub := containers.Get[contracts.HttpResponse](httpResTypeId)
 	msg := sub.GetMsg()
-	return MsgType(msg)
+	return T(msg)
 }

@@ -1,8 +1,11 @@
 package msgbuscontainers
 
 import (
+	"log"
+	"net/http"
 	"pulsyflux/containers"
 	"pulsyflux/contracts"
+	"pulsyflux/httpcontainer"
 
 	"github.com/google/uuid"
 )
@@ -15,5 +18,14 @@ const (
 func init() {
 	containers.RegisterType(HttpMsgBusId)
 	msgBusGlobalChl := contracts.ChannelId[contracts.Msg](uuid.NewString())
-	containers.RegisterTypeDependency(HttpMsgBusId, httpMsgBusChlId, "chl", &msgBusGlobalChl)
+	containers.RegisterTypeDependency(
+		HttpMsgBusId,
+		httpMsgBusChlId,
+		"chl",
+		&msgBusGlobalChl,
+	)
+	msgId := contracts.MsgId[contracts.Msg](msgBusGlobalChl)
+	httpResTypeId := contracts.TypeId[contracts.HttpResponse](msgBusGlobalChl)
+	httpcontainer.HttpResponseConfig(httpResTypeId, msgId, http.StatusCreated, "subscribed to channel")
+	log.Printf("global msgbus channnel(%s)", msgBusGlobalChl)
 }

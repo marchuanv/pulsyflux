@@ -53,13 +53,13 @@ func init() {
 	containers.RegisterTypeDependency(HttpServerId, httpRequestHandlerId, "handler", nil)
 }
 
-func HttpResponseConfig(httpResTypeId contracts.TypeId[contracts.HttpResponse], successStatusCode int, successStatusMsg string) {
+func HttpResponseConfig(httpResTypeId contracts.TypeId[contracts.HttpResponse], msgId contracts.MsgId[contracts.Msg], successStatusCode int, successStatusMsg string) {
 
 	responseTypeId := contracts.TypeId[httpResponse](httpResTypeId)
 	httpResponseIds := containers.Get[*sliceext.List[contracts.TypeId[contracts.HttpResponse]]](httpRequestHandlerResponsesId)
 	httpResponseIds.Add(httpResTypeId)
 
-	msgTypeMsgTypeId := contracts.TypeId[contracts.TypeId[contracts.Msg]](uuid.NewString())
+	msgTypeMsgTypeId := contracts.TypeId[contracts.MsgId[contracts.Msg]](uuid.NewString())
 	succStCoTypeId := contracts.TypeId[int](uuid.NewString())
 	succStMsgTypeId := contracts.TypeId[string](uuid.NewString())
 
@@ -67,8 +67,7 @@ func HttpResponseConfig(httpResTypeId contracts.TypeId[contracts.HttpResponse], 
 	outMsgTypId := contracts.TypeId[chan contracts.Msg](uuid.NewString())
 
 	containers.RegisterType(responseTypeId)
-	msgTypeId := contracts.TypeId[contracts.Msg](msgTypeMsgTypeId)
-	containers.RegisterTypeDependency(responseTypeId, msgTypeMsgTypeId, "msgTypeId", &msgTypeId)
+	containers.RegisterTypeDependency(responseTypeId, msgTypeMsgTypeId, "msgId", &msgId)
 	containers.RegisterTypeDependency(responseTypeId, succStCoTypeId, "successStatusCode", &successStatusCode)
 	containers.RegisterTypeDependency(responseTypeId, succStMsgTypeId, "successStatusMsg", &successStatusMsg)
 
