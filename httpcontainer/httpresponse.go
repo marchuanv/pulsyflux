@@ -2,6 +2,7 @@ package httpcontainer
 
 import (
 	"net/http"
+	"pulsyflux/containers"
 	"pulsyflux/contracts"
 )
 
@@ -11,6 +12,10 @@ type httpResponse struct {
 	msgId             *contracts.MsgId[contracts.Msg]
 	successStatusCode *int
 	successStatusMsg  *string
+}
+
+func (rh *httpRequestHandler) Init() {
+
 }
 
 func (r *httpResponse) SetMsgId(msgId *contracts.MsgId[contracts.Msg]) {
@@ -23,22 +28,6 @@ func (r *httpResponse) SetMsgId(msgId *contracts.MsgId[contracts.Msg]) {
 
 func (r *httpResponse) GetMsgId() contracts.MsgId[contracts.Msg] {
 	return *r.msgId
-}
-
-func (r *httpResponse) SetIncMsg(incMsg *chan contracts.Msg) {
-	if r.incMsg == nil {
-		r.incMsg = incMsg // use the pointer passed in
-		return
-	}
-	*(r.incMsg) = *incMsg
-}
-
-func (r *httpResponse) SetOutMsg(outMsg *chan contracts.Msg) {
-	if r.outMsg == nil {
-		r.outMsg = outMsg // use the pointer passed in
-		return
-	}
-	*(r.outMsg) = *outMsg
 }
 
 func (r *httpResponse) GetSuccessStatusCode() *int {
@@ -93,4 +82,8 @@ func (r *httpResponse) Handle(reqHeader http.Header, reqBody string) (reason str
 	statusCode = http.StatusOK
 	resBody = string(outMsg)
 	return
+}
+
+func NewHttpResponseContainer() contracts.Container1[httpResponse, *httpResponse] {
+	return containers.NewContainer1[httpResponse, *httpResponse]()
 }
