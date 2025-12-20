@@ -7,9 +7,6 @@
 			"path": "pulse"
 		},
 		{
-			"path": "msgbus"
-		},
-		{
 			"path": "util"
 		},
 		{
