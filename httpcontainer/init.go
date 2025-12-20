@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	httpRequestHandlerId          contracts.TypeId[httpRequestHandler]                                      = "02c88068-3a66-4856-b2bf-e2dce244761b"
+	httpRequestHandlerId          contracts.TypeId[httpReqHandler]                                          = "02c88068-3a66-4856-b2bf-e2dce244761b"
 	httpRequestHandlerResponsesId contracts.TypeId[sliceext.List[contracts.TypeId[contracts.HttpResponse]]] = "172c2cd8-4869-43a7-aa1a-af341e0b439f"
 
 	HttpServerId               contracts.TypeId[httpServer]   = "fccaca3e-54a4-400d-a9d3-b80a2161c20f"
@@ -55,7 +55,7 @@ func init() {
 
 func HttpResponseConfig(httpResTypeId contracts.TypeId[contracts.HttpResponse], msgId contracts.MsgId[contracts.Msg], successStatusCode int, successStatusMsg string) {
 
-	responseTypeId := contracts.TypeId[httpResponse](httpResTypeId)
+	responseTypeId := contracts.TypeId[httpResHandler](httpResTypeId)
 	httpResponseIds := containers.Get[*sliceext.List[contracts.TypeId[contracts.HttpResponse]]](httpRequestHandlerResponsesId)
 	httpResponseIds.Add(httpResTypeId)
 

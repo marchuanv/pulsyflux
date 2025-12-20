@@ -15,7 +15,7 @@ type httpServer struct {
 	readTimeout    *timeDuration
 	writeTimeout   *timeDuration
 	maxHeaderBytes *int
-	handler        *httpRequestHandler
+	handler        *httpReqHandler
 }
 
 func (s *httpServer) GetAddress() contracts.URI {
@@ -59,7 +59,7 @@ func (s *httpServer) GetHandler() contracts.HttpRequestHandler {
 }
 
 func (s *httpServer) SetHandler(handler contracts.HttpRequestHandler) {
-	s.handler = handler.(*httpRequestHandler)
+	s.handler = handler.(*httpReqHandler)
 }
 
 func (s *httpServer) Start() {

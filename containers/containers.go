@@ -2,6 +2,26 @@ package containers
 
 import "pulsyflux/contracts"
 
+// 1. How your Container1-4 system works
+
+// Each container (c1, c2, c3, c4) stores a pointer to a single instance (instance *T).
+
+// When you call Get():
+
+// If instance is nil, the container:
+
+// Allocates a zero-value
+
+// Casts it to the pointer interface PT(&val)
+
+// Calls Init(...) automatically
+
+// Stores it in instance
+
+// After this, Get() always returns a fully initialized object.
+
+// Implication: You cannot get an uninitialized handler through the container. That defensive nil check in Handle() is now largely redundant if you always use the container to resolve your handler.
+
 // container1 implementation
 type c1[T any, PT interface {
 	*T

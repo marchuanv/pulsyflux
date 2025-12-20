@@ -1,8 +1,8 @@
 package contracts
 
 import (
+	"context"
 	"net/http"
-	"pulsyflux/sliceext"
 	"time"
 )
 
@@ -23,22 +23,12 @@ type URI interface {
 }
 
 type HttpRequestHandler interface {
-	SetHttpResponseIds(httpResponseIds *sliceext.List[TypeId[HttpResponse]])
 	ServeHTTP(response http.ResponseWriter, request *http.Request)
 }
 
-type HttpResponse interface {
-	SetMsgId(msgId *MsgId[Msg])
-	GetMsgId() MsgId[Msg]
-	SetIncMsg(incMsg *chan Msg)
-	SetOutMsg(outMsg *chan Msg)
-	GetSuccessStatusCode() *int
-	GetSuccessStatusMsg() *string
-	SetSuccessStatusCode(code *int)
-	SetSuccessStatusMsg(msg *string)
-	GetMsg() Msg
-	SetMsg(Msg)
-	Handle(reqHeader http.Header, reqBody string) (reason string, statusCode int, resBody string)
+type HttpResponseHandler interface {
+	ReceiveRequestMsg(ctx context.Context) (Msg, bool)
+	SendResponseMsg(ctx context.Context, msg Msg) bool
 }
 
 type TimeDuration interface {

@@ -7,11 +7,11 @@ import (
 )
 
 type registeredResponses struct {
-	list *sliceext.List[contracts.HttpResponse]
+	list *sliceext.List[*httpResHandler]
 }
 
 func (ids *registeredResponses) Init() {
-	ids.list = sliceext.NewList[contracts.HttpResponse]()
+	ids.list = sliceext.NewList[*httpResHandler]()
 }
 
 func NewRegResContainer() contracts.Container1[registeredResponses, *registeredResponses] {
