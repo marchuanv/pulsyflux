@@ -3,6 +3,8 @@ package httpcontainer
 import (
 	"pulsyflux/containers"
 	"pulsyflux/contracts"
+
+	"github.com/google/wire"
 )
 
 type httpStatusCode int
