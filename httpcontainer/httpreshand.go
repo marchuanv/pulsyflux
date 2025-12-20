@@ -19,12 +19,16 @@ type httpResHandler struct {
 	msgId             uuid.UUID
 }
 
-func (res *httpResHandler) Init(successStatusCode int, successStatusMsg string, msgId uuid.UUID) {
+func (res *httpResHandler) Init(
+	con01 contracts.Container1[httpStatusCode, *httpStatusCode],
+	con02 contracts.Container1[httpStatusMsg, *httpStatusMsg],
+	con03 contracts.Container1[httpMsgId, *httpMsgId],
+) {
 	res.incMsg = make(chan contracts.Msg, 1)
 	res.outMsg = make(chan contracts.Msg, 1)
-	res.successStatusCode = successStatusCode
-	res.successStatusMsg = successStatusMsg
-	res.msgId = msgId
+	res.successStatusCode = int(con01.Get())
+	res.successStatusMsg = string(con02.Get())
+	res.msgId = uuid.UUID(con03.Get())
 }
 
 func (res *httpResHandler) ReceiveRequestMsg(
@@ -82,6 +86,31 @@ func (h *httpResHandler) containsMsgID(body string) bool {
 	return strings.Contains(body, h.msgId.String())
 }
 
-func NewHttpResponseContainer(successStatusCode int, successStatusMsg string, msgId uuid.UUID) contracts.Container4[httpResHandler, int, *int, string, *string, uuid.UUID, *uuid.UUID, *httpResHandler] {
-	return containers.NewContainer4[httpResHandler, int, *int, string, *string, uuid.UUID, *uuid.UUID, *httpResHandler](successStatusCode, successStatusMsg, msgId)
+func NewHttpResponseContainer() contracts.Container4[
+	httpResHandler,
+	httpStatusCode,
+	httpStatusMsg,
+	httpMsgId,
+	*httpStatusCode,
+	*httpStatusMsg,
+	*httpMsgId,
+	*httpResHandler,
+] {
+	statusCode := NewHttpStatusContainer()
+	statusMsg := NewHttpStatusMsgContainer()
+	msgId := NewHttpMsgIdContainer()
+	return containers.NewContainer4[
+		httpResHandler,
+		httpStatusCode,
+		httpStatusMsg,
+		httpMsgId,
+		*httpStatusCode,
+		*httpStatusMsg,
+		*httpMsgId,
+		*httpResHandler,
+	](
+		statusCode,
+		statusMsg,
+		msgId,
+	)
 }

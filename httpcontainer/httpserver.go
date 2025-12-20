@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"pulsyflux/containers"
 	"pulsyflux/contracts"
 	"time"
 )
@@ -15,7 +16,11 @@ type httpServer struct {
 	readTimeout    *timeDuration
 	writeTimeout   *timeDuration
 	maxHeaderBytes *int
-	handler        *httpReqHandler
+	httpReqHCon    contracts.Container1[httpReqHandler, *httpReqHandler]
+}
+
+func (res *httpServer) Init(httpReqHCon contracts.Container1[httpReqHandler, *httpReqHandler]) {
+	res.httpReqHCon = httpReqHCon
 }
 
 func (s *httpServer) GetAddress() contracts.URI {
@@ -86,4 +91,9 @@ func (s *httpServer) Stop() {
 	}
 	log.Println("Server gracefully stopped.")
 	server = &http.Server{}
+}
+
+func NewHttpServerContainer() contracts.Container2[httpServer, httpReqHandler, *httpReqHandler, *httpServer] {
+	httpReq := NewHttpRequestContainer()
+	return containers.NewContainer2[httpServer, httpReqHandler, *httpReqHandler, *httpServer](httpReq)
 }

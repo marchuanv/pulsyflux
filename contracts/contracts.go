@@ -57,52 +57,62 @@ type ConnectionState interface {
 }
 
 // Container1: No dependencies
-type Container1[T any, PT interface {
-	*T
-	Init()
-}] interface {
+type Container1[T any,
+	PT interface {
+		*T
+		Init()
+	}] interface {
 	Get() T
 }
 
 // Container2: Depends on one other container (A1)
-type Container2[T any, A1 any, PA1 interface {
-	*A1
-	Init()
-}, PT interface {
-	*T
-	Init(Container1[A1, PA1])
-}] interface {
+type Container2[T any, A1 any,
+	PA1 interface {
+		*A1
+		Init()
+	},
+	PT interface {
+		*T
+		Init(Container1[A1, PA1])
+	}] interface {
 	Get() T
 }
 
 // Container3: Depends on two other containers (A1, A2)
-type Container3[T any, A1, A2 any, PA1 interface {
-	*A1
-	Init()
-}, PA2 interface {
-	*A2
-	Init()
-}, PT interface {
-	*T
-	Init(Container1[A1, PA1], Container1[A2, PA2])
-}] interface {
+type Container3[T any, A1 any, A2 any,
+	PA1 interface {
+		*A1
+		Init()
+	},
+	PA2 interface {
+		*A2
+		Init()
+	},
+	PT interface {
+		*T
+		Init(Container1[A1, PA1], Container1[A2, PA2])
+	}] interface {
 	Get() T
 }
 
 // Container4: Depends on two other containers (A1, A2, A3)
-type Container4[T any, A1, A2, A3 any, PA1 interface {
-	*A1
-	Init()
-}, PA2 interface {
-	*A2
-	Init()
-}, PA3 interface {
-	*A3
-	Init()
-}, PT interface {
-	*T
-	Init(Container1[A1, PA1], Container1[A2, PA2], Container1[A3, PA3])
-}] interface {
+type Container4[T any, A1 any, A2 any, A3 any,
+	PA1 interface {
+		*A1
+		Init()
+	},
+	PA2 interface {
+		*A2
+		Init()
+	},
+	PA3 interface {
+		*A3
+		Init()
+	},
+	PT interface {
+		*T
+		Init(Container1[A1, PA1], Container1[A2, PA2], Container1[A3, PA3])
+	}] interface {
 	Get() T
 }
 

@@ -135,19 +135,20 @@ type c4[T any, A1, A2, A3 any, PA1 interface {
 	dep3     contracts.Container1[A3, PA3]
 }
 
-func NewContainer4[T any, A1, A2, A3 any, PA1 interface {
-	*A1
-	Init()
-}, PA2 interface {
-	*A2
-	Init()
-}, PA3 interface {
-	*A3
-	Init()
-}, PT interface {
-	*T
-	Init(contracts.Container1[A1, PA1], contracts.Container1[A2, PA2], contracts.Container1[A3, PA3])
-}](arg1 contracts.Container1[A1, PA1], arg2 contracts.Container1[A2, PA2], arg3 contracts.Container1[A3, PA3]) contracts.Container4[T, A1, A2, A3, PA1, PA2, PA3, PT] {
+func NewContainer4[T any, A1, A2, A3 any,
+	PA1 interface {
+		*A1
+		Init()
+	}, PA2 interface {
+		*A2
+		Init()
+	}, PA3 interface {
+		*A3
+		Init()
+	}, PT interface {
+		*T
+		Init(contracts.Container1[A1, PA1], contracts.Container1[A2, PA2], contracts.Container1[A3, PA3])
+	}](arg1 contracts.Container1[A1, PA1], arg2 contracts.Container1[A2, PA2], arg3 contracts.Container1[A3, PA3]) contracts.Container4[T, A1, A2, A3, PA1, PA2, PA3, PT] {
 	return &c4[T, A1, A2, A3, PA1, PA2, PA3, PT]{dep1: arg1, dep2: arg2, dep3: arg3}
 }
 

@@ -13,19 +13,7 @@
 			"path": "util"
 		},
 		{
-			"path": "connect"
-		},
-		{
-			"path": "subscriptions"
-		},
-		{
 			"path": "sliceext"
-		},
-		{
-			"path": "channel"
-		},
-		{
-			"path": "events"
 		},
 		{
 			"path": "contracts"
