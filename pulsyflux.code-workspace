@@ -16,15 +16,20 @@
 			"path": "contracts"
 		},
 		{
-			"path": "containers"
-		},
-		{
 			"path": "httpcontainer"
 		},
 		{
-			"path": "msgbuscontainer"				
+			"path": "msgbuscontainer"
+		},
+	],
+	"settings": {
+		"emeraldwalk.runonsave": {
+			"commands": [
+				{
+					"match": ".*\\.go$",
+					"cmd": "wire .\\"
+				}
+			]
 		}
-
-	]
+	}
 }
-

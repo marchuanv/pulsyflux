@@ -1,7 +1,6 @@
 package httpcontainer
 
 import (
-	"pulsyflux/containers"
 	"pulsyflux/contracts"
 
 	"github.com/google/uuid"
@@ -9,9 +8,16 @@ import (
 
 type httpMsgId uuid.UUID
 
-func (res httpMsgId) Init() {
+func (msgId httpMsgId) String() string {
+	return uuid.UUID(msgId).String()
+}
+func (msgId httpMsgId) UUID() uuid.UUID {
+	return uuid.UUID(msgId)
+}
+func (msgId httpMsgId) IsNil() bool {
+	return uuid.UUID(msgId) == uuid.Nil
 }
 
-func NewHttpMsgIdContainer() contracts.Container1[httpMsgId, *httpMsgId] {
-	return containers.NewContainer1[httpMsgId, *httpMsgId]()
+func newHttpMsgId(msgUd uuid.UUID) contracts.MsgId {
+	return httpMsgId(msgUd)
 }

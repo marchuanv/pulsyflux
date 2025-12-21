@@ -7,54 +7,49 @@ import (
 )
 
 type URI interface {
-	GetProtocol() *string
-	GetHost() *string
-	GetPath() *string
-	GetPort() *int
-
-	SetProtocol(protocol *string)
-	SetHost(host *string)
-	SetPath(path *string)
-	SetPort(port *int)
-
 	GetPortStr() string
 	GetHostAddress() string
 	String() string
 }
 
-type HttpRequestHandler interface {
-	ServeHTTP(response http.ResponseWriter, request *http.Request)
+type HttpReqHandler interface {
+	ServeHTTP(w http.ResponseWriter, r *http.Request)
 }
 
-type HttpResponseHandler interface {
+type HttpResHandler interface {
 	ReceiveRequestMsg(ctx context.Context) (Msg, bool)
 	SendResponseMsg(ctx context.Context, msg Msg) bool
+	MsgId() MsgId
 }
 
 type TimeDuration interface {
 	GetDuration() time.Duration
-	SetDuration(duration time.Duration)
+}
+
+type HttpStatus interface {
+	Code() int
+	String() string
 }
 
 type HttpServer interface {
 	GetAddress() URI
-	SetAddress(addr URI)
-	GetReadTimeout() TimeDuration
-	SetReadTimeout(duration TimeDuration)
-	GetWriteTimeout() TimeDuration
-	SetWriteTimeout(duration TimeDuration)
-	GetMaxHeaderBytes() int
-	SetMaxHeaderBytes(size *int)
-	GetHandler() HttpRequestHandler
-	SetHandler(handler HttpRequestHandler)
+	Response(msgId MsgId) HttpResHandler
 	Start()
 	Stop()
+}
+
+type HttpResCollection interface {
+	Add(handler HttpResHandler)
 }
 
 type ConnectionState interface {
 	IsOpen() bool
 	IsClosed() bool
 }
+
+type ReadTimeDuration TimeDuration
+
+type WriteTimeDuration TimeDuration
 
 // Container1: No dependencies
 type Container1[T any,

@@ -4,83 +4,46 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"pulsyflux/containers"
 	"pulsyflux/contracts"
+	"sync"
 	"time"
 )
 
-var server = &http.Server{}
+var (
+	server     http.Server
+	serverOnce sync.Once
+)
 
 type httpServer struct {
 	address        *uri
 	readTimeout    *timeDuration
 	writeTimeout   *timeDuration
-	maxHeaderBytes *int
-	httpReqHCon    contracts.Container1[httpReqHandler, *httpReqHandler]
-}
-
-func (res *httpServer) Init(httpReqHCon contracts.Container1[httpReqHandler, *httpReqHandler]) {
-	res.httpReqHCon = httpReqHCon
+	maxHeaderBytes maxHeaderBytes
+	httpReqHCon    *httpReqHandler
 }
 
 func (s *httpServer) GetAddress() contracts.URI {
 	return s.address
 }
 
-func (s *httpServer) SetAddress(addr contracts.URI) {
-	s.address = addr.(*uri)
-}
-
-func (s *httpServer) GetReadTimeout() contracts.TimeDuration {
-	return s.readTimeout
-}
-
-func (s *httpServer) SetReadTimeout(duration contracts.TimeDuration) {
-	s.readTimeout = duration.(*timeDuration)
-}
-
-func (s *httpServer) GetWriteTimeout() contracts.TimeDuration {
-	return s.writeTimeout
-}
-
-func (s *httpServer) SetWriteTimeout(duration contracts.TimeDuration) {
-	s.writeTimeout = duration.(*timeDuration)
-}
-
-func (s *httpServer) GetMaxHeaderBytes() int {
-	return *s.maxHeaderBytes
-}
-
-func (s *httpServer) SetMaxHeaderBytes(size *int) {
-	if s.maxHeaderBytes == nil {
-		s.maxHeaderBytes = size // use the pointer passed in
-		return
-	}
-	*(s.maxHeaderBytes) = *size
-}
-
-func (s *httpServer) GetHandler() contracts.HttpRequestHandler {
-	return s.handler
-}
-
-func (s *httpServer) SetHandler(handler contracts.HttpRequestHandler) {
-	s.handler = handler.(*httpReqHandler)
-}
-
 func (s *httpServer) Start() {
-	if server.Addr == "" {
-		server = &http.Server{
-			Addr:           s.GetAddress().GetHostAddress(),
-			ReadTimeout:    s.GetReadTimeout().GetDuration(),
-			WriteTimeout:   s.GetWriteTimeout().GetDuration(),
-			MaxHeaderBytes: s.GetMaxHeaderBytes(),
-			Handler:        s.GetHandler(),
+	serverOnce.Do(func() {
+		server = http.Server{
+			Addr:           s.address.GetHostAddress(),
+			ReadTimeout:    s.readTimeout.GetDuration(),
+			WriteTimeout:   s.writeTimeout.GetDuration(),
+			MaxHeaderBytes: int(s.maxHeaderBytes),
+			Handler:        s.httpReqHCon,
 		}
-	}
+	})
 	err := server.ListenAndServe()
 	if err != nil {
 		panic(err)
 	}
+}
+
+func (s *httpServer) Response(msgId contracts.MsgId) contracts.HttpResHandler {
+	return s.httpReqHCon.getResHandler(msgId)
 }
 
 func (s *httpServer) Stop() {
@@ -90,10 +53,20 @@ func (s *httpServer) Stop() {
 		log.Fatalf("Server shutdown failed: %v", err)
 	}
 	log.Println("Server gracefully stopped.")
-	server = &http.Server{}
 }
 
-func NewHttpServerContainer() contracts.Container2[httpServer, httpReqHandler, *httpReqHandler, *httpServer] {
-	httpReq := NewHttpRequestContainer()
-	return containers.NewContainer2[httpServer, httpReqHandler, *httpReqHandler, *httpServer](httpReq)
+func newHttpServer(
+	addr contracts.URI,
+	readTimeout contracts.ReadTimeDuration,
+	writeTimeout contracts.WriteTimeDuration,
+	maxHeaderBytes maxHeaderBytes,
+	httpReqHCon contracts.HttpReqHandler,
+) contracts.HttpServer {
+	return &httpServer{
+		address:        addr.(*uri),
+		readTimeout:    readTimeout.(*timeDuration),
+		writeTimeout:   writeTimeout.(*timeDuration),
+		maxHeaderBytes: maxHeaderBytes,
+		httpReqHCon:    httpReqHCon.(*httpReqHandler),
+	}
 }

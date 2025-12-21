@@ -1,6 +1,6 @@
 module pulsyflux
 
-go 1.23.1
+go 1.25
 
 require github.com/google/uuid v1.6.0
 
@@ -13,8 +13,6 @@ replace util v1.0.0 => /util
 replace sliceext v1.0.0 => /sliceext
 
 replace contracts v1.0.0 => /contracts
-
-replace containers v1.0.0 => /containers
 
 replace httpcontainer v1.0.0 => /httpcontainer
 

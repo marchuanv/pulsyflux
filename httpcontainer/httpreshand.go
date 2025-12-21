@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"pulsyflux/containers"
 	"pulsyflux/contracts"
+	"pulsyflux/sliceext"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 type httpResHandler struct {
@@ -16,19 +14,7 @@ type httpResHandler struct {
 	outMsg            chan contracts.Msg
 	successStatusCode int
 	successStatusMsg  string
-	msgId             uuid.UUID
-}
-
-func (res *httpResHandler) Init(
-	con01 contracts.Container1[httpStatusCode, *httpStatusCode],
-	con02 contracts.Container1[httpStatusMsg, *httpStatusMsg],
-	con03 contracts.Container1[httpMsgId, *httpMsgId],
-) {
-	res.incMsg = make(chan contracts.Msg, 1)
-	res.outMsg = make(chan contracts.Msg, 1)
-	res.successStatusCode = int(con01.Get())
-	res.successStatusMsg = string(con02.Get())
-	res.msgId = uuid.UUID(con03.Get())
+	msgId             contracts.MsgId
 }
 
 func (res *httpResHandler) ReceiveRequestMsg(
@@ -54,9 +40,12 @@ func (res *httpResHandler) SendResponseMsg(
 	}
 }
 
+func (res *httpResHandler) MsgId() contracts.MsgId {
+	return res.msgId
+}
+
 func (res *httpResHandler) handle(
 	ctx context.Context,
-	reqHeader http.Header,
 	reqBody string,
 ) (reason string, statusCode int, resBody string) {
 
@@ -86,31 +75,17 @@ func (h *httpResHandler) containsMsgID(body string) bool {
 	return strings.Contains(body, h.msgId.String())
 }
 
-func NewHttpResponseContainer() contracts.Container4[
-	httpResHandler,
-	httpStatusCode,
-	httpStatusMsg,
-	httpMsgId,
-	*httpStatusCode,
-	*httpStatusMsg,
-	*httpMsgId,
-	*httpResHandler,
-] {
-	statusCode := NewHttpStatusContainer()
-	statusMsg := NewHttpStatusMsgContainer()
-	msgId := NewHttpMsgIdContainer()
-	return containers.NewContainer4[
-		httpResHandler,
-		httpStatusCode,
-		httpStatusMsg,
-		httpMsgId,
-		*httpStatusCode,
-		*httpStatusMsg,
-		*httpMsgId,
-		*httpResHandler,
-	](
-		statusCode,
-		statusMsg,
+func newHttpResHandler(httpStatus contracts.HttpStatus, msgId contracts.MsgId) contracts.HttpResHandler {
+	response := &httpResHandler{
+		make(chan contracts.Msg, 1),
+		make(chan contracts.Msg, 1),
+		httpStatus.Code(),
+		httpStatus.String(),
 		msgId,
-	)
+	}
+	resOnce.Do(func() {
+		responses = sliceext.NewList[*httpResHandler]()
+	})
+	responses.Add(response)
+	return response
 }
