@@ -59,6 +59,12 @@ type WriteTimeDuration TimeDuration
 
 type IdleConnTimeoutDuration TimeDuration
 
+type RequestTimeoutDuration TimeDuration
+
+type ResponseTimeoutDuration TimeDuration
+
+type RequestHeadersTimeoutDuration TimeDuration
+
 type TypeId[T any] string
 
 type ChannelId[T any] string

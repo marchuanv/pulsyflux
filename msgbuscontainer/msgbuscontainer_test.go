@@ -20,7 +20,7 @@ func TestMsgBus(test *testing.T) {
 
 	server := containers.Get[contracts.HttpServer](httpcontainer.HttpServerId)
 
-	go server.Start()
+	server.Start()
 
 	msgBus := containers.Get[contracts.MsgBus[contracts.Msg]](HttpMsgBusId)
 	msg := msgBus.Subscribe()

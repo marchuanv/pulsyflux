@@ -3,6 +3,7 @@ package httpcontainer
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"pulsyflux/contracts"
 	"sync"
@@ -15,12 +16,13 @@ var (
 )
 
 type httpServer struct {
-	address        *uri
-	readTimeout    *timeDuration
-	writeTimeout   *timeDuration
-	idleTimeout    *timeDuration
-	maxHeaderBytes maxHeaderBytes
-	httpReqHCon    *httpReqHandler
+	address         *uri
+	readTimeout     *timeDuration
+	writeTimeout    *timeDuration
+	idleTimeout     *timeDuration
+	responseTimeout *timeDuration
+	maxHeaderBytes  maxHeaderBytes
+	httpReqHCon     *httpReqHandler
 }
 
 func (s *httpServer) GetAddress() contracts.URI {
@@ -28,23 +30,31 @@ func (s *httpServer) GetAddress() contracts.URI {
 }
 
 func (s *httpServer) Start() {
+	hostAddr := s.address.GetHostAddress()
 	serverOnce.Do(func() {
 		server = http.Server{
-			Addr:           s.address.GetHostAddress(),
+			Addr:           hostAddr,
 			ReadTimeout:    s.readTimeout.GetDuration(),
 			WriteTimeout:   s.writeTimeout.GetDuration(),
 			IdleTimeout:    s.idleTimeout.GetDuration(),
 			MaxHeaderBytes: int(s.maxHeaderBytes),
-			Handler:        s.httpReqHCon,
+			Handler:        http.TimeoutHandler(s.httpReqHCon, s.responseTimeout.GetDuration(), "server timeout"),
 		}
 	})
-	err := server.ListenAndServe()
+	conn, err := net.DialTimeout("tcp", hostAddr, 5*time.Second)
 	if err != nil {
-		if err == http.ErrServerClosed {
-			log.Println("Server closed under request")
-		} else {
-			panic(err)
-		}
+		go func() {
+			err := server.ListenAndServe()
+			if err != nil {
+				if err == http.ErrServerClosed {
+					log.Println("Server closed under request")
+				} else {
+					panic(err)
+				}
+			}
+		}()
+	} else {
+		conn.Close()
 	}
 }
 
@@ -72,15 +82,17 @@ func newHttpServer(
 	readTimeout contracts.ReadTimeDuration,
 	writeTimeout contracts.WriteTimeDuration,
 	idleTimeout contracts.IdleConnTimeoutDuration,
+	responseTimeout contracts.ResponseTimeoutDuration,
 	maxHeaderBytes maxHeaderBytes,
 	httpReqHCon contracts.HttpReqHandler,
 ) contracts.HttpServer {
 	return &httpServer{
-		address:        addr.(*uri),
-		readTimeout:    readTimeout.(*timeDuration),
-		writeTimeout:   writeTimeout.(*timeDuration),
-		idleTimeout:    idleTimeout.(*timeDuration),
-		maxHeaderBytes: maxHeaderBytes,
-		httpReqHCon:    httpReqHCon.(*httpReqHandler),
+		address:         addr.(*uri),
+		readTimeout:     readTimeout.(*timeDuration),
+		writeTimeout:    writeTimeout.(*timeDuration),
+		idleTimeout:     idleTimeout.(*timeDuration),
+		responseTimeout: responseTimeout.(*timeDuration),
+		maxHeaderBytes:  maxHeaderBytes,
+		httpReqHCon:     httpReqHCon.(*httpReqHandler),
 	}
 }

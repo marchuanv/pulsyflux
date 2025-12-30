@@ -9,7 +9,6 @@ package httpcontainer
 import (
 	"github.com/google/uuid"
 	"pulsyflux/contracts"
-	"time"
 )
 
 // Injectors from wire.go:
@@ -23,10 +22,11 @@ func InitialiseHttpServer(protocol2 protocol, host2 host, port2 port, path2 path
 	}
 	readTimeDuration := newDefaultReadTimeoutDuration()
 	writeTimeDuration := newDefaultWriteTimeoutDuration()
-	idleConnTimeoutDuration := newDefaultIdleConnTimeoutDuration()
+	idleConnTimeoutDuration := newDefaultServerIdleConnTimeoutDuration()
+	responseTimeoutDuration := newDefaultServerResponseTimeoutDuration()
 	httpcontainerMaxHeaderBytes := newDefaultHttpMaxHeaderBytes()
 	contractsHttpReqHandler := newHttpReqHandler()
-	contractsHttpServer := newHttpServer(httpcontainerUri, readTimeDuration, writeTimeDuration, idleConnTimeoutDuration, httpcontainerMaxHeaderBytes, contractsHttpReqHandler)
+	contractsHttpServer := newHttpServer(httpcontainerUri, readTimeDuration, writeTimeDuration, idleConnTimeoutDuration, responseTimeoutDuration, httpcontainerMaxHeaderBytes, contractsHttpReqHandler)
 	return contractsHttpServer
 }
 
@@ -37,8 +37,10 @@ func InitialiseHttpResHandler(msgUd uuid.UUID, successStatusCode int) contracts.
 	return contractsHttpResHandler
 }
 
-func InitialiseHttpReq(idleConTimeout time.Duration) contracts.HttpReq {
-	idleConnTimeoutDuration := newDefaultIdleConnTimeoutDuration()
-	contractsHttpReq := newHttpReq(idleConnTimeoutDuration)
+func InitialiseHttpReq() contracts.HttpReq {
+	requestTimeoutDuration := newDefaultClientRequestTimeoutDuration()
+	requestHeadersTimeoutDuration := newDefaultClientRequestHeadersTimeoutDuration()
+	idleConnTimeoutDuration := newDefaultClientIdleConnTimeoutDuration()
+	contractsHttpReq := newHttpReq(requestTimeoutDuration, requestHeadersTimeoutDuration, idleConnTimeoutDuration)
 	return contractsHttpReq
 }

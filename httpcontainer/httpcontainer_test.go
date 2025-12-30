@@ -14,7 +14,7 @@ func SetupTest(test *testing.T, uuidStr string) (contracts.HttpResHandler, contr
 	if err != nil {
 		test.Fatal(err)
 	}
-	httpReq := InitialiseHttpReq(10 * time.Second)
+	httpReq := InitialiseHttpReq()
 	resHdl := InitialiseHttpResHandler(msgId, 200)
 	server := InitialiseHttpServer("http", "localhost", 3000, "")
 	resHdlMatch := server.GetResponseHandler(resHdl.MsgId())
@@ -29,7 +29,7 @@ func TestHttpServerSuccess(test *testing.T) {
 	handler, server, req, msgId := SetupTest(test, uuidStr)
 	defer server.Stop()
 	expectedMsg := `{"message":"success-test","msg_id":"` + uuidStr + `"}`
-	go server.Start()
+	server.Start()
 	go req.Send(server.GetAddress(), msgId, expectedMsg)
 	rcvMsg, received := handler.ReceiveRequest(context.Background())
 	if !received {
@@ -41,29 +41,56 @@ func TestHttpServerSuccess(test *testing.T) {
 	handler.RespondToRequest(context.Background(), contracts.Msg(expectedMsg))
 }
 
+func TestHttpClientTimeout(test *testing.T) {
+
+	uuidStr := uuid.NewString()
+	handler, server, req, msgId := SetupTest(test, uuidStr)
+
+	defer func() {
+		server.Stop()
+		err := recover()
+		if err == nil || err != "client request timed out" {
+			test.Log(err)
+			test.Fail()
+		}
+	}()
+
+	expectedMsg := `{"message":"timeout-test","msg_id":"` + uuidStr + `"}`
+
+	server.Start()
+
+	go func() {
+		handler.ReceiveRequest(context.Background())
+		time.Sleep(3 * time.Second) //similate processing delay
+		handler.RespondToRequest(context.Background(), contracts.Msg(expectedMsg))
+	}()
+
+	req.Send(server.GetAddress(), msgId, expectedMsg)
+}
+
 func TestHttpServerTimeout(test *testing.T) {
 
 	uuidStr := uuid.NewString()
 	handler, server, req, msgId := SetupTest(test, uuidStr)
-	expectedMsg := `{"message":"timeout-test","msg_id":"` + uuidStr + `"}`
-
-	go server.Start()
 
 	defer func() {
-		time.Sleep(15 * time.Second)
 		server.Stop()
-	}()
-
-	go func() {
-		handler.ReceiveRequest(context.Background())
-		time.Sleep(10 * time.Second)
-		handler.RespondToRequest(context.Background(), contracts.Msg(expectedMsg))
-	}()
-
-	go func() {
-		responseStr := req.Send(server.GetAddress(), msgId, expectedMsg)
-		if responseStr != expectedMsg {
+		err := recover()
+		if err != nil && err != "server closed the connection unexpectedly (EOF)" {
+			test.Log(err)
 			test.Fail()
 		}
 	}()
+
+	expectedMsg := `{"message":"timeout-test","msg_id":"` + uuidStr + `"}`
+
+	server.Start()
+
+	go func() {
+		handler.ReceiveRequest(context.Background())
+		time.Sleep(26 * time.Second) //similate processing delay
+		handler.RespondToRequest(context.Background(), contracts.Msg(expectedMsg))
+	}()
+
+	req.Send(server.GetAddress(), msgId, expectedMsg)
 }
