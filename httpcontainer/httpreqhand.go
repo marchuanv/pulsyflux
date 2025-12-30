@@ -13,7 +13,8 @@ var (
 	resOnce   sync.Once
 )
 
-type httpReqHandler struct{}
+type httpReqHandler struct {
+}
 
 func (rh *httpReqHandler) getResHandler(msgId contracts.MsgId) contracts.HttpResHandler {
 	for _, res := range responses.All() {
@@ -25,6 +26,7 @@ func (rh *httpReqHandler) getResHandler(msgId contracts.MsgId) contracts.HttpRes
 }
 
 func (rh *httpReqHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context() // Use the request context
 	if responses.Len() == 0 {
 		http.Error(w, "no http responses configured", http.StatusInternalServerError)
 		return
@@ -34,7 +36,15 @@ func (rh *httpReqHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var statusCode int
 	var resBody string
 	for _, res := range responses.All() {
-		reason, statusCode, resBody = res.handle(r.Context(), reqBody)
+
+		// CRITICAL: Check if the server is shutting down BEFORE the next iteration
+		select {
+		case <-ctx.Done():
+			return // Exit immediately so the server knows this request is done
+		default:
+		}
+
+		reason, statusCode, resBody = res.handle(ctx, reqBody)
 		if statusCode == res.successStatusCode {
 			w.WriteHeader(statusCode)
 			w.Write([]byte(resBody))

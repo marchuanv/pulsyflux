@@ -30,3 +30,9 @@ func newDefaultReadTimeoutDuration() contracts.ReadTimeDuration {
 		duration: 10 * time.Second,
 	}
 }
+
+func newDefaultIdleConnTimeoutDuration() contracts.IdleConnTimeoutDuration {
+	return &timeDuration{
+		duration: 15 * time.Second,
+	}
+}

@@ -9,6 +9,7 @@ package httpcontainer
 import (
 	"github.com/google/uuid"
 	"pulsyflux/contracts"
+	"time"
 )
 
 // Injectors from wire.go:
@@ -22,9 +23,10 @@ func InitialiseHttpServer(protocol2 protocol, host2 host, port2 port, path2 path
 	}
 	readTimeDuration := newDefaultReadTimeoutDuration()
 	writeTimeDuration := newDefaultWriteTimeoutDuration()
+	idleConnTimeoutDuration := newDefaultIdleConnTimeoutDuration()
 	httpcontainerMaxHeaderBytes := newDefaultHttpMaxHeaderBytes()
 	contractsHttpReqHandler := newHttpReqHandler()
-	contractsHttpServer := newHttpServer(httpcontainerUri, readTimeDuration, writeTimeDuration, httpcontainerMaxHeaderBytes, contractsHttpReqHandler)
+	contractsHttpServer := newHttpServer(httpcontainerUri, readTimeDuration, writeTimeDuration, idleConnTimeoutDuration, httpcontainerMaxHeaderBytes, contractsHttpReqHandler)
 	return contractsHttpServer
 }
 
@@ -33,4 +35,10 @@ func InitialiseHttpResHandler(msgUd uuid.UUID, successStatusCode int) contracts.
 	msgId := newHttpMsgId(msgUd)
 	contractsHttpResHandler := newHttpResHandler(contractsHttpStatus, msgId)
 	return contractsHttpResHandler
+}
+
+func InitialiseHttpReq(idleConTimeout time.Duration) contracts.HttpReq {
+	idleConnTimeoutDuration := newDefaultIdleConnTimeoutDuration()
+	contractsHttpReq := newHttpReq(idleConnTimeoutDuration)
+	return contractsHttpReq
 }

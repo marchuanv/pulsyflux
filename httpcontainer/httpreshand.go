@@ -17,7 +17,7 @@ type httpResHandler struct {
 	msgId             contracts.MsgId
 }
 
-func (res *httpResHandler) ReceiveRequestMsg(
+func (res *httpResHandler) ReceiveRequest(
 	ctx context.Context,
 ) (contracts.Msg, bool) {
 	select {
@@ -28,7 +28,7 @@ func (res *httpResHandler) ReceiveRequestMsg(
 	}
 }
 
-func (res *httpResHandler) SendResponseMsg(
+func (res *httpResHandler) RespondToRequest(
 	ctx context.Context,
 	msg contracts.Msg,
 ) bool {

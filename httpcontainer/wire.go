@@ -6,6 +6,8 @@ package httpcontainer
 import (
 	"pulsyflux/contracts"
 
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/google/wire"
 )
@@ -21,6 +23,7 @@ func InitialiseHttpServer(
 		wire.Bind(new(contracts.URI), new(*uri)),
 		newDefaultReadTimeoutDuration,
 		newDefaultWriteTimeoutDuration,
+		newDefaultIdleConnTimeoutDuration,
 		newDefaultHttpMaxHeaderBytes,
 		newHttpReqHandler,
 		newHttpServer,
@@ -33,6 +36,14 @@ func InitialiseHttpResHandler(msgUd uuid.UUID, successStatusCode int) contracts.
 		newHttpMsgId,
 		newHttpStatus,
 		newHttpResHandler,
+	)
+	return nil
+}
+
+func InitialiseHttpReq(idleConTimeout time.Duration) contracts.HttpReq {
+	wire.Build(
+		newDefaultIdleConnTimeoutDuration,
+		newHttpReq,
 	)
 	return nil
 }
