@@ -5,16 +5,16 @@ import (
 	"strconv"
 )
 
-type protocol string
-type host string
-type path string
-type port int
+type uriProto string
+type uriHost string
+type uriPath string
+type uriPort int
 
 type uri struct {
-	protocol protocol
-	host     host
-	path     path
-	port     port
+	protocol uriProto
+	host     uriHost
+	path     uriPath
+	port     uriPort
 }
 
 func (u *uri) GetPortStr() string {
@@ -34,10 +34,10 @@ func (u *uri) String() string {
 }
 
 func newUri(
-	protocol protocol,
-	host host,
-	port port,
-	path path,
+	protocol uriProto,
+	host uriHost,
+	port uriPort,
+	path uriPath,
 ) contracts.URI {
 	return &uri{
 		protocol: protocol,

@@ -31,16 +31,16 @@ func TestMultipleHttpServerAsyncStart(test *testing.T) {
 		server1.Stop()
 		server2.Stop()
 	}()
-	go server1.Start()
-	go server2.Start()
+	server1.Start()
+	server2.Start()
 	time.Sleep(10 * time.Second)
 }
 
 func TestSameServerMultipleStart(test *testing.T) {
 	_, server, _, _ := SetupTest(test, uuid.NewString())
 	defer server.Stop()
-	go server.Start()
-	go server.Start()
+	server.Start()
+	server.Start()
 	time.Sleep(10 * time.Second)
 }
 
@@ -83,7 +83,7 @@ func TestHttpClientTimeout(test *testing.T) {
 
 	go func() {
 		handler.ReceiveRequest(context.Background())
-		time.Sleep(3 * time.Second) //similate processing delay
+		time.Sleep(26 * time.Second) //similate processing delay
 		handler.RespondToRequest(context.Background(), contracts.Msg(expectedMsg))
 	}()
 
@@ -93,7 +93,13 @@ func TestHttpClientTimeout(test *testing.T) {
 func TestHttpServerTimeout(test *testing.T) {
 
 	uuidStr := uuid.NewString()
-	handler, server, req, msgId := SetupTest(test, uuidStr)
+	handler, server, _, msgId := SetupTest(test, uuidStr)
+
+	req := newHttpReq(
+		&timeDuration{60 * time.Second},
+		&timeDuration{0},
+		&timeDuration{60 * time.Second},
+	)
 
 	defer func() {
 		server.Stop()
@@ -103,6 +109,7 @@ func TestHttpServerTimeout(test *testing.T) {
 			test.Fail()
 		}
 	}()
+
 	server.Start()
 
 	expectedMsg := `{"message":"timeout-test","msg_id":"` + uuidStr + `"}`

@@ -39,13 +39,13 @@ func newDefaultServerIdleConnTimeoutDuration() contracts.IdleConnTimeoutDuration
 
 func newDefaultClientRequestTimeoutDuration() contracts.RequestTimeoutDuration {
 	return &timeDuration{
-		duration: 20 * time.Second,
+		duration: 25 * time.Second,
 	}
 }
 
 func newDefaultServerResponseTimeoutDuration() contracts.ResponseTimeoutDuration {
 	return &timeDuration{
-		duration: 15 * time.Second,
+		duration: 25 * time.Second,
 	}
 }
 

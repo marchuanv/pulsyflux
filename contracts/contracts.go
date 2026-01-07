@@ -19,7 +19,7 @@ type HttpReqHandler interface {
 }
 
 type HttpReq interface {
-	Send(addr URI, msgId uuid.UUID, content string) string
+	Send(addr URI, msgId uuid.UUID, content string) (status HttpStatus, resBody string)
 }
 
 type HttpResHandler interface {

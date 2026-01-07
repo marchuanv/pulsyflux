@@ -13,12 +13,12 @@ import (
 
 // Injectors from wire.go:
 
-func InitialiseHttpServer(protocol2 protocol, host2 host, port2 port, path2 path) contracts.HttpServer {
+func InitialiseHttpServer(protocol uriProto, host uriHost, port uriPort, path uriPath) contracts.HttpServer {
 	httpcontainerUri := &uri{
-		protocol: protocol2,
-		host:     host2,
-		path:     path2,
-		port:     port2,
+		protocol: protocol,
+		host:     host,
+		path:     path,
+		port:     port,
 	}
 	readTimeDuration := newDefaultReadTimeoutDuration()
 	writeTimeDuration := newDefaultWriteTimeoutDuration()

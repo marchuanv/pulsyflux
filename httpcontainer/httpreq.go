@@ -18,7 +18,7 @@ type httpReq struct {
 	client *http.Client
 }
 
-func (r *httpReq) Send(addr contracts.URI, msgId uuid.UUID, content string) string {
+func (r *httpReq) Send(addr contracts.URI, msgId uuid.UUID, content string) (status *httpStatus, resBody string) {
 	_content := util.ReaderFromString(content)
 	resp, err := r.client.Post(addr.String(), "application/json", _content)
 	if err != nil {
@@ -40,7 +40,9 @@ func (r *httpReq) Send(addr contracts.URI, msgId uuid.UUID, content string) stri
 			panic(err)
 		}
 	}
-	return util.StringFromReader(resp.Body)
+	resBody = util.StringFromReader(resp.Body)
+	status = httpStatus(resp.StatusCode).(contracts.HttpStatus)
+	return status, resBody
 }
 
 func newHttpReq(

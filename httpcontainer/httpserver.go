@@ -2,7 +2,6 @@ package httpcontainer
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -11,7 +10,7 @@ import (
 	"time"
 )
 
-type serverState int
+type serverState int32
 
 const (
 	stateStopped serverState = iota
@@ -21,15 +20,12 @@ const (
 )
 
 var (
-	server            http.Server
-	serverOnce        sync.Once
-	connMu            sync.Mutex
-	listener          net.Listener
-	serverStateGlobal serverState
-	serveDoneGlobal   chan struct{}
+	singletonMu     sync.Mutex
+	singletonServer *httpServer
 )
 
 type httpServer struct {
+	// immutable config (set once)
 	address         *uri
 	readTimeout     *timeDuration
 	writeTimeout    *timeDuration
@@ -37,6 +33,13 @@ type httpServer struct {
 	responseTimeout *timeDuration
 	maxHeaderBytes  maxHeaderBytes
 	httpReqHCon     *httpReqHandler
+
+	// runtime state
+	mu       sync.Mutex
+	state    serverState
+	server   *http.Server
+	listener net.Listener
+	done     chan struct{}
 }
 
 func (s *httpServer) GetAddress() contracts.URI {
@@ -48,86 +51,92 @@ func (s *httpServer) GetResponseHandler(msgId contracts.MsgId) contracts.HttpRes
 }
 
 func (s *httpServer) Start() {
-	connMu.Lock()
-	defer connMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	// If already running or starting, return
-	if serverStateGlobal == stateRunning || serverStateGlobal == stateStarting {
+	if s.state == stateRunning || s.state == stateStarting {
 		return
 	}
 
-	// If stopping, wait until shutdown completes
-	if serverStateGlobal == stateStopping && serveDoneGlobal != nil {
-		done := serveDoneGlobal
-		connMu.Unlock()
-		<-done
-		connMu.Lock()
+	if s.state == stateStopping {
+		done := s.done
+		s.mu.Unlock()
+		if done != nil {
+			<-done
+		}
+		s.mu.Lock()
 	}
 
-	serverStateGlobal = stateStarting
 	hostAddr := s.address.GetHostAddress()
 
-	// Initialize global server only once
-	serverOnce.Do(func() {
-		server = http.Server{
-			Addr:           hostAddr,
-			Handler:        http.TimeoutHandler(s.httpReqHCon, s.responseTimeout.GetDuration(), "server timeout"),
-			ReadTimeout:    s.readTimeout.GetDuration(),
-			WriteTimeout:   s.writeTimeout.GetDuration(),
-			IdleTimeout:    s.idleTimeout.GetDuration(),
-			MaxHeaderBytes: int(s.maxHeaderBytes),
-		}
-	})
-
-	// Bind listener
 	ln, err := net.Listen("tcp", hostAddr)
 	if err != nil {
-		serverStateGlobal = stateStopped
-		panic(fmt.Sprintf("failed to listen on %s: %v", hostAddr, err))
+		log.Printf("http server listen failed on %s: %v", hostAddr, err)
+		return
 	}
-	listener = ln
 
-	serveDoneGlobal = make(chan struct{})
+	handler := http.TimeoutHandler(
+		s.httpReqHCon,
+		s.responseTimeout.GetDuration(),
+		"server timeout",
+	)
 
-	// Start Serve in a goroutine
-	go func() {
-		serverStateGlobal = stateRunning
-		err := server.Serve(listener)
-		if err != nil && err != http.ErrServerClosed {
-			panic(err)
-		}
+	s.server = &http.Server{
+		Addr:           hostAddr,
+		Handler:        handler,
+		ReadTimeout:    s.readTimeout.GetDuration(),
+		WriteTimeout:   s.writeTimeout.GetDuration(),
+		IdleTimeout:    s.idleTimeout.GetDuration(),
+		MaxHeaderBytes: int(s.maxHeaderBytes),
+	}
 
-		// signal completion
-		close(serveDoneGlobal)
-		serverStateGlobal = stateStopped
-		listener = nil
-		serveDoneGlobal = nil
-		log.Println("Server gracefully stopped.")
-	}()
+	s.listener = ln
+	s.done = make(chan struct{})
+	s.state = stateRunning
+
+	go s.serve()
+}
+
+func (s *httpServer) serve() {
+	err := s.server.Serve(s.listener)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err != nil && err != http.ErrServerClosed {
+		log.Printf("http server error: %v", err)
+	}
+
+	close(s.done)
+	s.server = nil
+	s.listener = nil
+	s.state = stateStopped
 }
 
 func (s *httpServer) Stop() {
-	connMu.Lock()
-	defer connMu.Unlock()
+	s.mu.Lock()
 
-	if serverStateGlobal != stateRunning {
+	if s.state != stateRunning {
+		s.mu.Unlock()
 		return
 	}
 
-	serverStateGlobal = stateStopping
-	done := serveDoneGlobal
+	s.state = stateStopping
+	server := s.server
+	done := s.done
 
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+	s.mu.Unlock()
 
-		_ = server.Shutdown(ctx)
-		if done != nil {
-			<-done // wait for Serve() to exit
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-		log.Println("Server stop completed (async).")
-	}()
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("http server shutdown error: %v", err)
+	}
+
+	if done != nil {
+		<-done
+	}
 }
 
 func newHttpServer(
@@ -139,7 +148,15 @@ func newHttpServer(
 	maxHeaderBytes maxHeaderBytes,
 	httpReqHCon contracts.HttpReqHandler,
 ) contracts.HttpServer {
-	return &httpServer{
+
+	singletonMu.Lock()
+	defer singletonMu.Unlock()
+
+	if singletonServer != nil {
+		return singletonServer
+	}
+
+	singletonServer = &httpServer{
 		address:         addr.(*uri),
 		readTimeout:     readTimeout.(*timeDuration),
 		writeTimeout:    writeTimeout.(*timeDuration),
@@ -147,5 +164,8 @@ func newHttpServer(
 		responseTimeout: responseTimeout.(*timeDuration),
 		maxHeaderBytes:  maxHeaderBytes,
 		httpReqHCon:     httpReqHCon.(*httpReqHandler),
+		state:           stateStopped,
 	}
+
+	return singletonServer
 }

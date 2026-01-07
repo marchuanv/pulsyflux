@@ -11,10 +11,10 @@ import (
 )
 
 func InitialiseHttpServer(
-	protocol protocol,
-	host host,
-	port port,
-	path path,
+	protocol uriProto,
+	host uriHost,
+	port uriPort,
+	path uriPath,
 ) contracts.HttpServer {
 	wire.Build(
 		wire.Struct(new(uri), "*"),
