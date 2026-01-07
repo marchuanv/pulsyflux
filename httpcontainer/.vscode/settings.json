@@ -4,5 +4,6 @@
     },
     "match": ".*\\.go$",
     "cmd": "wire ..\\",
-    "autoShowOutputPanel": "error"
+    "autoShowOutputPanel": "error",
+    "go.testTimeout": "300s"
 }

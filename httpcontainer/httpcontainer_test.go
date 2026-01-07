@@ -87,7 +87,10 @@ func TestHttpClientTimeout(test *testing.T) {
 		handler.RespondToRequest(context.Background(), contracts.Msg(expectedMsg))
 	}()
 
-	req.Send(server.GetAddress(), msgId, expectedMsg)
+	status, _ := req.Send(server.GetAddress(), msgId, expectedMsg)
+	if status.Code() != 200 {
+		test.Fail()
+	}
 }
 
 func TestHttpServerTimeout(test *testing.T) {
