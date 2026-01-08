@@ -11,14 +11,13 @@ import (
 )
 
 func InitialiseHttpServer(
-	protocol uriProto,
-	host uriHost,
-	port uriPort,
-	path uriPath,
+	protocol shared.URIProtocol,
+	host shared.URIHost,
+	port shared.URIPort,
+	path shared.URIPath,
 ) shared.HttpServer {
 	wire.Build(
-		wire.Struct(new(uri), "*"),
-		wire.Bind(new(shared.URI), new(*uri)),
+		shared.NewUri,
 		newDefaultReadTimeoutDuration,
 		newDefaultWriteTimeoutDuration,
 		newDefaultServerIdleConnTimeoutDuration,
@@ -30,7 +29,7 @@ func InitialiseHttpServer(
 	return nil
 }
 
-func InitialiseHttpResHandler(msgUd uuid.UUID, successStatusCode int) shared.HttpResHandler {
+func InitialiseHttpResHandler(msgId uuid.UUID, successStatusCode int) shared.HttpResHandler {
 	wire.Build(
 		newHttpMsgId,
 		newHttpStatus,
@@ -40,16 +39,6 @@ func InitialiseHttpResHandler(msgUd uuid.UUID, successStatusCode int) shared.Htt
 }
 
 func InitialiseHttpReq() shared.HttpReq {
-	wire.Build(
-		newDefaultClientRequestTimeoutDuration,
-		newDefaultClientRequestHeadersTimeoutDuration,
-		newDefaultClientIdleConnTimeoutDuration,
-		newHttpReq,
-	)
-	return nil
-}
-
-func InitialiseHttpReq2() shared.HttpReq {
 	wire.Build(
 		newDefaultClientRequestTimeoutDuration,
 		newDefaultClientRequestHeadersTimeoutDuration,

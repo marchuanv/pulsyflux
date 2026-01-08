@@ -1,29 +1,23 @@
 package msgbuscontainer
 
 import (
-	"pulsyflux/containers"
-	"pulsyflux/contracts"
-	"pulsyflux/httpcontainer"
+	"pulsyflux/shared"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestMsgBus(test *testing.T) {
-
-	uri := containers.Get[contracts.URI](httpcontainer.HttpServerAddressId)
+	protocol := "http"
 	host := "localhost"
 	port := 3000
-	path := "publish"
-
-	uri.SetHost(&host)
-	uri.SetPort(&port)
-	uri.SetPath(&path)
-
-	server := containers.Get[contracts.HttpServer](httpcontainer.HttpServerId)
-
-	server.Start()
-
-	msgBus := containers.Get[contracts.MsgBus[contracts.Msg]](HttpMsgBusId)
-	msg := msgBus.Subscribe()
-	msg = "Hello from "
-	msgBus.Publish(msg)
+	path := "/"
+	InitialiseMsgBus(
+		shared.URIProtocol(protocol),
+		shared.URIHost(host),
+		shared.URIPort(port),
+		shared.URIPath(path),
+		uuid.New(),
+		200,
+	)
 }

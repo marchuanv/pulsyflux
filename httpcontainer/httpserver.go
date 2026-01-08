@@ -25,8 +25,7 @@ var (
 )
 
 type httpServer struct {
-	// immutable config (set once)
-	address         *uri
+	address         shared.URI
 	readTimeout     *timeDuration
 	writeTimeout    *timeDuration
 	idleTimeout     *timeDuration
@@ -157,7 +156,7 @@ func newHttpServer(
 	}
 
 	singletonServer = &httpServer{
-		address:         addr.(*uri),
+		address:         addr,
 		readTimeout:     readTimeout.(*timeDuration),
 		writeTimeout:    writeTimeout.(*timeDuration),
 		idleTimeout:     idleTimeout.(*timeDuration),

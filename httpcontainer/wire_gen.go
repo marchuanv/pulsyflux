@@ -13,39 +13,26 @@ import (
 
 // Injectors from wire.go:
 
-func InitialiseHttpServer(protocol uriProto, host uriHost, port uriPort, path uriPath) shared.HttpServer {
-	httpcontainerUri := &uri{
-		protocol: protocol,
-		host:     host,
-		path:     path,
-		port:     port,
-	}
+func InitialiseHttpServer(protocol shared.URIProtocol, host shared.URIHost, port shared.URIPort, path shared.URIPath) shared.HttpServer {
+	uri := shared.NewUri(protocol, host, port, path)
 	readTimeDuration := newDefaultReadTimeoutDuration()
 	writeTimeDuration := newDefaultWriteTimeoutDuration()
 	idleConnTimeoutDuration := newDefaultServerIdleConnTimeoutDuration()
 	responseTimeoutDuration := newDefaultServerResponseTimeoutDuration()
 	httpcontainerMaxHeaderBytes := newDefaultHttpMaxHeaderBytes()
 	sharedHttpReqHandler := newHttpReqHandler()
-	sharedHttpServer := newHttpServer(httpcontainerUri, readTimeDuration, writeTimeDuration, idleConnTimeoutDuration, responseTimeoutDuration, httpcontainerMaxHeaderBytes, sharedHttpReqHandler)
+	sharedHttpServer := newHttpServer(uri, readTimeDuration, writeTimeDuration, idleConnTimeoutDuration, responseTimeoutDuration, httpcontainerMaxHeaderBytes, sharedHttpReqHandler)
 	return sharedHttpServer
 }
 
-func InitialiseHttpResHandler(msgUd uuid.UUID, successStatusCode int) shared.HttpResHandler {
+func InitialiseHttpResHandler(msgId uuid.UUID, successStatusCode int) shared.HttpResHandler {
 	sharedHttpStatus := newHttpStatus(successStatusCode)
-	msgId := newHttpMsgId(msgUd)
-	sharedHttpResHandler := newHttpResHandler(sharedHttpStatus, msgId)
+	sharedMsgId := newHttpMsgId(msgId)
+	sharedHttpResHandler := newHttpResHandler(sharedHttpStatus, sharedMsgId)
 	return sharedHttpResHandler
 }
 
 func InitialiseHttpReq() shared.HttpReq {
-	requestTimeoutDuration := newDefaultClientRequestTimeoutDuration()
-	requestHeadersTimeoutDuration := newDefaultClientRequestHeadersTimeoutDuration()
-	idleConnTimeoutDuration := newDefaultClientIdleConnTimeoutDuration()
-	sharedHttpReq := newHttpReq(requestTimeoutDuration, requestHeadersTimeoutDuration, idleConnTimeoutDuration)
-	return sharedHttpReq
-}
-
-func InitialiseHttpReq2() shared.HttpReq {
 	requestTimeoutDuration := newDefaultClientRequestTimeoutDuration()
 	requestHeadersTimeoutDuration := newDefaultClientRequestHeadersTimeoutDuration()
 	idleConnTimeoutDuration := newDefaultClientIdleConnTimeoutDuration()

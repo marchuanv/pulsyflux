@@ -2,21 +2,21 @@ package msgbuscontainer
 
 import (
 	"context"
-	"pulsyflux/contracts"
+	"pulsyflux/shared"
 )
 
 type msgBus struct {
-	sendAddr   contracts.URI
-	chl        contracts.Channel
-	httpResHdl contracts.HttpResHandler
-	httpReq    contracts.HttpReq
+	sendAddr   shared.URI
+	chlId      shared.Channel
+	httpResHdl shared.HttpResHandler
+	httpReq    shared.HttpReq
 }
 
-func (mb *msgBus) Publish(msg contracts.Msg) {
-	mb.httpReq.Send(mb.sendAddr, mb.chl.UUID(), msg)
+func (mb *msgBus) Publish(msg shared.Msg) {
+	mb.httpReq.Send(mb.sendAddr, mb.chlId.UUID(), msg)
 }
 
-func (mb *msgBus) Subscribe() contracts.Msg {
+func (mb *msgBus) Subscribe() shared.Msg {
 	msg, rcvd := mb.httpResHdl.ReceiveRequest(context.Background())
 	if rcvd {
 		return msg
@@ -25,10 +25,10 @@ func (mb *msgBus) Subscribe() contracts.Msg {
 }
 
 func newMsgBus(
-	sendAddr contracts.URI,
-	chl contracts.Channel,
-	httpResHdl contracts.HttpResHandler,
-	httpReq contracts.HttpReq,
-) contracts.MsgBus {
-	return &msgBus{sendAddr, chl, httpResHdl, httpReq}
+	sendAddr shared.URI,
+	chlId shared.Channel,
+	httpResHdl shared.HttpResHandler,
+	httpReq shared.HttpReq,
+) shared.MsgBus {
+	return &msgBus{sendAddr, chlId, httpResHdl, httpReq}
 }

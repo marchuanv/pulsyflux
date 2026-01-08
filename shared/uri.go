@@ -1,20 +1,19 @@
-package httpcontainer
+package shared
 
 import (
-	"pulsyflux/shared"
 	"strconv"
 )
 
-type uriProto string
-type uriHost string
-type uriPath string
-type uriPort int
+type URIProtocol string
+type URIHost string
+type URIPath string
+type URIPort int
 
 type uri struct {
-	protocol uriProto
-	host     uriHost
-	path     uriPath
-	port     uriPort
+	protocol URIProtocol
+	host     URIHost
+	path     URIPath
+	port     URIPort
 }
 
 func (u *uri) GetPortStr() string {
@@ -33,16 +32,11 @@ func (u *uri) String() string {
 	return string(u.protocol) + "://" + string(u.host) + portStr + "/" + string(u.path)
 }
 
-func newUri(
-	protocol uriProto,
-	host uriHost,
-	port uriPort,
-	path uriPath,
-) shared.URI {
-	return &uri{
-		protocol: protocol,
-		host:     host,
-		port:     port,
-		path:     path,
-	}
+func NewUri(
+	protocol URIProtocol,
+	host URIHost,
+	port URIPort,
+	path URIPath,
+) URI {
+	return &uri{protocol, host, path, port}
 }

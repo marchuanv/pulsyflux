@@ -4,21 +4,26 @@
 package msgbuscontainer
 
 import (
-	"pulsyflux/contracts"
+	"pulsyflux/httpcontainer"
+	"pulsyflux/shared"
 
+	"github.com/google/uuid"
 	"github.com/google/wire"
 )
 
 func InitialiseMsgBus(
-	protocol uriProto,
-	host uriHost,
-	port uriPort,
-	path uriPath,
-) contracts.MsgBus {
+	protocol shared.URIProtocol,
+	host shared.URIHost,
+	port shared.URIPort,
+	path shared.URIPath,
+	channelId uuid.UUID,
+	successStatusCode int,
+) shared.MsgBus {
 	wire.Build(
-		wire.Struct(new(uri), "*"),
-		wire.Bind(new(contracts.URI), new(*uri)),
+		shared.NewUri,
 		newChannel,
+		httpcontainer.InitialiseHttpResHandler,
+		httpcontainer.InitialiseHttpReq,
 		newMsgBus,
 	)
 	return nil

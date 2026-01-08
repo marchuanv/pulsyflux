@@ -1,15 +1,18 @@
 package msgbuscontainer
 
 import (
-	"pulsyflux/contracts"
+	"pulsyflux/shared"
 
 	"github.com/google/uuid"
 )
 
-type channel struct{}
+type channel struct {
+	id       uuid.UUID
+	sendAddr shared.URI
+}
 
 func (c *channel) UUID() uuid.UUID {
-	return uuid.MustParse("default-channel-uuid")
+	return c.id
 }
 
 func (c *channel) String() string {
@@ -21,7 +24,8 @@ func (c *channel) IsNil() bool {
 }
 
 func newChannel(
-	sendAddr contracts.URI,
-) contracts.Channel {
-	return &channel{}
+	channnelId uuid.UUID,
+	sendAddr shared.URI,
+) shared.Channel {
+	return &channel{channnelId, sendAddr}
 }
