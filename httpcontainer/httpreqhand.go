@@ -3,60 +3,67 @@ package httpcontainer
 import (
 	"net/http"
 	"pulsyflux/contracts"
-	"pulsyflux/sliceext"
 	"pulsyflux/util"
 	"sync"
 )
 
 var (
-	responses *sliceext.List[*httpResHandler]
-	resOnce   sync.Once
+	responsesMap map[contracts.MsgId]*httpResHandler
+	resOnce      sync.Once
+	mu           sync.RWMutex // protects responsesMap
 )
 
-type httpReqHandler struct {
-}
+type httpReqHandler struct{}
 
 func (rh *httpReqHandler) getResHandler(msgId contracts.MsgId) contracts.HttpResHandler {
-	for _, res := range responses.All() {
-		if res.msgId == msgId {
-			return res
-		}
+	mu.RLock()
+	defer mu.RUnlock()
+	if res, exists := responsesMap[msgId]; exists {
+		return res
 	}
 	return nil
 }
 
 func (rh *httpReqHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context() // Use the request context
-	if responses.Len() == 0 {
-		http.Error(w, "no http responses configured", http.StatusInternalServerError)
+	ctx := r.Context()
+	reqBody, err := util.StringFromReader(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusInternalServerError)
 		return
 	}
-	reqBody := util.StringFromReader(r.Body)
-	var reason string
-	var statusCode int
-	var resBody string
-	for _, res := range responses.All() {
 
-		// CRITICAL: Check if the server is shutting down BEFORE the next iteration
-		select {
-		case <-ctx.Done():
-			return // Exit immediately so the server knows this request is done
-		default:
-		}
-
-		reason, statusCode, resBody = res.handle(ctx, reqBody)
-		if statusCode == res.successStatusCode {
-			w.WriteHeader(statusCode)
-			w.Write([]byte(resBody))
-			return
+	// Find matching handler
+	var targetRes *httpResHandler
+	mu.RLock()
+	for _, res := range responsesMap {
+		if res.containsMsgID(reqBody) {
+			targetRes = res
+			break
 		}
 	}
+	mu.RUnlock()
+
+	if targetRes == nil {
+		http.Error(w, "no matching handler found", http.StatusBadRequest)
+		return
+	}
+
+	// Handle the request using the internal handle() method
+	reason, statusCode, resBody := targetRes.handle(ctx, reqBody)
+
+	if statusCode == targetRes.successStatusCode {
+		w.WriteHeader(statusCode)
+		w.Write([]byte(resBody))
+		return
+	}
+
 	http.Error(w, reason, statusCode)
 }
 
+// Factory function
 func newHttpReqHandler() contracts.HttpReqHandler {
 	resOnce.Do(func() {
-		responses = sliceext.NewList[*httpResHandler]()
+		responsesMap = make(map[contracts.MsgId]*httpResHandler)
 	})
 	return &httpReqHandler{}
 }

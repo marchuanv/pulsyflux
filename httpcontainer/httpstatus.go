@@ -7,7 +7,10 @@ type httpStatus int
 var httpStatusText = map[httpStatus]string{
 	200: "Success",
 	201: "Created",
+	400: "Bad Request",
+	404: "Not Found",
 	500: "Internal Server Error",
+	504: "Gateway Timeout",
 }
 
 func (h httpStatus) Code() int {
@@ -15,7 +18,10 @@ func (h httpStatus) Code() int {
 }
 
 func (h httpStatus) String() string {
-	return httpStatusText[h]
+	if text, ok := httpStatusText[h]; ok {
+		return text
+	}
+	return "Unknown Status"
 }
 
 func newHttpStatus(code int) contracts.HttpStatus {

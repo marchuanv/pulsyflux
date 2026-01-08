@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 )
 
-func SetupTest(test *testing.T, uuidStr string) (contracts.HttpResHandler, contracts.HttpServer, contracts.HttpReq, uuid.UUID) {
-	msgId, err := uuid.Parse(uuidStr)
+func SetupTest(test *testing.T) (contracts.HttpResHandler, contracts.HttpServer, contracts.HttpReq, uuid.UUID) {
+	msgId, err := uuid.NewUUID()
 	if err != nil {
 		test.Fatal(err)
 	}
@@ -25,8 +25,8 @@ func SetupTest(test *testing.T, uuidStr string) (contracts.HttpResHandler, contr
 }
 
 func TestMultipleHttpServerAsyncStart(test *testing.T) {
-	_, server1, _, _ := SetupTest(test, uuid.NewString())
-	_, server2, _, _ := SetupTest(test, uuid.NewString())
+	_, server1, _, _ := SetupTest(test)
+	_, server2, _, _ := SetupTest(test)
 	defer func() {
 		server1.Stop()
 		server2.Stop()
@@ -37,7 +37,7 @@ func TestMultipleHttpServerAsyncStart(test *testing.T) {
 }
 
 func TestSameServerMultipleStart(test *testing.T) {
-	_, server, _, _ := SetupTest(test, uuid.NewString())
+	_, server, _, _ := SetupTest(test)
 	defer server.Stop()
 	server.Start()
 	server.Start()
@@ -46,13 +46,12 @@ func TestSameServerMultipleStart(test *testing.T) {
 
 func TestHttpServerSuccess(test *testing.T) {
 
-	uuidStr := uuid.NewString()
-	handler, server, req, msgId := SetupTest(test, uuidStr)
+	handler, server, req, msgId := SetupTest(test)
 
 	defer server.Stop()
 	server.Start()
 
-	expectedMsg := `{"message":"success-test","msg_id":"` + uuidStr + `"}`
+	expectedMsg := `{ "message": "success-test" }`
 	go req.Send(server.GetAddress(), msgId, expectedMsg)
 	rcvMsg, received := handler.ReceiveRequest(context.Background())
 	if !received {
@@ -66,20 +65,13 @@ func TestHttpServerSuccess(test *testing.T) {
 
 func TestHttpClientTimeout(test *testing.T) {
 
-	uuidStr := uuid.NewString()
-	handler, server, req, msgId := SetupTest(test, uuidStr)
+	handler, server, req, msgId := SetupTest(test)
 
-	defer func() {
-		server.Stop()
-		err := recover()
-		if err == nil || err != "client request timed out" {
-			test.Log(err)
-			test.Fail()
-		}
-	}()
+	defer server.Stop()
+
 	server.Start()
 
-	expectedMsg := `{"message":"timeout-test","msg_id":"` + uuidStr + `"}`
+	expectedMsg := `{ "message": "timeout-test" }`
 
 	go func() {
 		handler.ReceiveRequest(context.Background())
@@ -87,16 +79,23 @@ func TestHttpClientTimeout(test *testing.T) {
 		handler.RespondToRequest(context.Background(), contracts.Msg(expectedMsg))
 	}()
 
-	status, _ := req.Send(server.GetAddress(), msgId, expectedMsg)
-	if status.Code() != 200 {
+	status, _, err := req.Send(server.GetAddress(), msgId, expectedMsg)
+	if err == nil {
+		test.Fail()
+	} else {
+		if err.Error() != "Post \"http://localhost:3000/\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)" {
+			test.Log(err)
+			test.Fail()
+		}
+	}
+	if status.Code() != 504 {
 		test.Fail()
 	}
 }
 
 func TestHttpServerTimeout(test *testing.T) {
 
-	uuidStr := uuid.NewString()
-	handler, server, _, msgId := SetupTest(test, uuidStr)
+	handler, server, _, msgId := SetupTest(test)
 
 	req := newHttpReq(
 		&timeDuration{60 * time.Second},
@@ -115,7 +114,7 @@ func TestHttpServerTimeout(test *testing.T) {
 
 	server.Start()
 
-	expectedMsg := `{"message":"timeout-test","msg_id":"` + uuidStr + `"}`
+	expectedMsg := `{ "message": "timeout-test" }`
 
 	go func() {
 		handler.ReceiveRequest(context.Background())

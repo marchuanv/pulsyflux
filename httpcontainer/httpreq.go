@@ -3,8 +3,6 @@ package httpcontainer
 import (
 	"context"
 	"errors"
-	"io"
-	"log"
 	"net"
 	"net/http"
 	"pulsyflux/contracts"
@@ -18,31 +16,49 @@ type httpReq struct {
 	client *http.Client
 }
 
-func (r *httpReq) Send(addr contracts.URI, msgId uuid.UUID, content string) (status contracts.HttpStatus, resBody string) {
-	_content := util.ReaderFromString(content)
-	resp, err := r.client.Post(addr.String(), "application/json", _content)
+func (r *httpReq) Send(
+	addr contracts.URI,
+	msgId uuid.UUID,
+	content string,
+) (contracts.HttpStatus, string, error) {
+
+	_content := msgId.String() + content
+
+	// Create POST request with request body
+	// util.ReaderFromString returns a plain *bytes.Reader (does not close itself)
+	req, err := http.NewRequest(http.MethodPost, addr.String(), util.ReaderFromString(_content))
 	if err != nil {
-
-		if errors.Is(err, context.DeadlineExceeded) {
-			panic("client request timed out")
-		}
-
-		if errors.Is(err, io.EOF) {
-			panic("server closed the connection unexpectedly (EOF)")
-		}
-
-		var netErr net.Error
-		errors.As(err, &netErr)
-		if netErr.Timeout() {
-			log.Println(netErr)
-			panic(netErr)
-		} else {
-			panic(err)
-		}
+		// Request could not be constructed (e.g., invalid URL)
+		return newHttpStatus(http.StatusBadRequest), "", err
 	}
-	resBody = util.StringFromReader(resp.Body)
-	status = httpStatus(resp.StatusCode)
-	return status, resBody
+
+	// Execute the request
+	resp, err := r.client.Do(req)
+	if err != nil {
+		// Timeout due to context deadline
+		if errors.Is(err, context.DeadlineExceeded) {
+			return newHttpStatus(http.StatusGatewayTimeout), "", err
+		}
+
+		// Network timeout (TCP, TLS handshake, etc.)
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			return newHttpStatus(http.StatusGatewayTimeout), "", err
+		}
+
+		// Other transport or I/O errors
+		return newHttpStatus(http.StatusInternalServerError), "", err
+	}
+
+	// Consume and close the response body using utility
+	// util.StringFromReader(resp.Body) is responsible for closing resp.Body
+	body, err := util.StringFromReader(resp.Body)
+	if err != nil {
+		return newHttpStatus(http.StatusInternalServerError), "", err
+	}
+
+	// Return server status code and body
+	return newHttpStatus(resp.StatusCode), body, nil
 }
 
 func newHttpReq(
@@ -50,16 +66,26 @@ func newHttpReq(
 	reqHeadersTimeout contracts.RequestHeadersTimeoutDuration,
 	idleConTimeout contracts.IdleConnTimeoutDuration,
 ) contracts.HttpReq {
+
 	tr := &http.Transport{
-		DialContext: (&net.Dialer{ //DNS resolution and connection establishment
-			Timeout:   reqTimeout.GetDuration(), // DialContext.Timeout → only limits how long it takes to connect.
+		DialContext: (&net.Dialer{
+			Timeout:   reqTimeout.GetDuration(),
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		TLSHandshakeTimeout:   3 * time.Second,                 // TLS handshake timeout
-		ResponseHeaderTimeout: reqHeadersTimeout.GetDuration(), // Wait for response headers
-		ExpectContinueTimeout: 1 * time.Second,                 // Wait for 100 Continue
-		IdleConnTimeout:       idleConTimeout.GetDuration(),    // Idle connection timeout
+
+		TLSHandshakeTimeout:   3 * time.Second,
+		ResponseHeaderTimeout: reqHeadersTimeout.GetDuration(),
+		ExpectContinueTimeout: 1 * time.Second,
+		IdleConnTimeout:       idleConTimeout.GetDuration(),
+
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
 	}
-	client := &http.Client{Transport: tr, Timeout: reqTimeout.GetDuration()}
-	return &httpReq{client}
+
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   reqTimeout.GetDuration(),
+	}
+
+	return &httpReq{client: client}
 }

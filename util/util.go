@@ -24,17 +24,17 @@ func IsEmptyString(str string) bool {
 	return str == ""
 }
 
-func StringFromReader(reader io.ReadCloser) string {
+func StringFromReader(reader io.ReadCloser) (string, error) {
 	output, err := io.ReadAll(reader)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 	outputStr := string(output)
 	err = reader.Close()
 	if err != nil {
 		panic(err)
 	}
-	return outputStr
+	return outputStr, nil
 }
 
 func ReaderFromString(str string) io.Reader {
