@@ -1,4 +1,4 @@
-package msgbuscontainers
+package msgbuscontainer
 
 import (
 	"pulsyflux/containers"

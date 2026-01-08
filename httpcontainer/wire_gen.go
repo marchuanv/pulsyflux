@@ -8,12 +8,12 @@ package httpcontainer
 
 import (
 	"github.com/google/uuid"
-	"pulsyflux/contracts"
+	"pulsyflux/shared"
 )
 
 // Injectors from wire.go:
 
-func InitialiseHttpServer(protocol uriProto, host uriHost, port uriPort, path uriPath) contracts.HttpServer {
+func InitialiseHttpServer(protocol uriProto, host uriHost, port uriPort, path uriPath) shared.HttpServer {
 	httpcontainerUri := &uri{
 		protocol: protocol,
 		host:     host,
@@ -25,22 +25,30 @@ func InitialiseHttpServer(protocol uriProto, host uriHost, port uriPort, path ur
 	idleConnTimeoutDuration := newDefaultServerIdleConnTimeoutDuration()
 	responseTimeoutDuration := newDefaultServerResponseTimeoutDuration()
 	httpcontainerMaxHeaderBytes := newDefaultHttpMaxHeaderBytes()
-	contractsHttpReqHandler := newHttpReqHandler()
-	contractsHttpServer := newHttpServer(httpcontainerUri, readTimeDuration, writeTimeDuration, idleConnTimeoutDuration, responseTimeoutDuration, httpcontainerMaxHeaderBytes, contractsHttpReqHandler)
-	return contractsHttpServer
+	sharedHttpReqHandler := newHttpReqHandler()
+	sharedHttpServer := newHttpServer(httpcontainerUri, readTimeDuration, writeTimeDuration, idleConnTimeoutDuration, responseTimeoutDuration, httpcontainerMaxHeaderBytes, sharedHttpReqHandler)
+	return sharedHttpServer
 }
 
-func InitialiseHttpResHandler(msgUd uuid.UUID, successStatusCode int) contracts.HttpResHandler {
-	contractsHttpStatus := newHttpStatus(successStatusCode)
+func InitialiseHttpResHandler(msgUd uuid.UUID, successStatusCode int) shared.HttpResHandler {
+	sharedHttpStatus := newHttpStatus(successStatusCode)
 	msgId := newHttpMsgId(msgUd)
-	contractsHttpResHandler := newHttpResHandler(contractsHttpStatus, msgId)
-	return contractsHttpResHandler
+	sharedHttpResHandler := newHttpResHandler(sharedHttpStatus, msgId)
+	return sharedHttpResHandler
 }
 
-func InitialiseHttpReq() contracts.HttpReq {
+func InitialiseHttpReq() shared.HttpReq {
 	requestTimeoutDuration := newDefaultClientRequestTimeoutDuration()
 	requestHeadersTimeoutDuration := newDefaultClientRequestHeadersTimeoutDuration()
 	idleConnTimeoutDuration := newDefaultClientIdleConnTimeoutDuration()
-	contractsHttpReq := newHttpReq(requestTimeoutDuration, requestHeadersTimeoutDuration, idleConnTimeoutDuration)
-	return contractsHttpReq
+	sharedHttpReq := newHttpReq(requestTimeoutDuration, requestHeadersTimeoutDuration, idleConnTimeoutDuration)
+	return sharedHttpReq
+}
+
+func InitialiseHttpReq2() shared.HttpReq {
+	requestTimeoutDuration := newDefaultClientRequestTimeoutDuration()
+	requestHeadersTimeoutDuration := newDefaultClientRequestHeadersTimeoutDuration()
+	idleConnTimeoutDuration := newDefaultClientIdleConnTimeoutDuration()
+	sharedHttpReq := newHttpReq(requestTimeoutDuration, requestHeadersTimeoutDuration, idleConnTimeoutDuration)
+	return sharedHttpReq
 }

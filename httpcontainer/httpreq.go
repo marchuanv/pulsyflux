@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"pulsyflux/contracts"
+	"pulsyflux/shared"
 	"pulsyflux/util"
 	"time"
 
@@ -17,12 +17,12 @@ type httpReq struct {
 }
 
 func (r *httpReq) Send(
-	addr contracts.URI,
+	addr shared.URI,
 	msgId uuid.UUID,
-	content string,
-) (contracts.HttpStatus, string, error) {
+	msgIn shared.Msg,
+) (shared.HttpStatus, shared.Msg, error) {
 
-	_content := msgId.String() + content
+	_content := msgId.String() + string(msgIn)
 
 	// Create POST request with request body
 	// util.ReaderFromString returns a plain *bytes.Reader (does not close itself)
@@ -58,14 +58,14 @@ func (r *httpReq) Send(
 	}
 
 	// Return server status code and body
-	return newHttpStatus(resp.StatusCode), body, nil
+	return newHttpStatus(resp.StatusCode), shared.Msg(body), nil
 }
 
 func newHttpReq(
-	reqTimeout contracts.RequestTimeoutDuration,
-	reqHeadersTimeout contracts.RequestHeadersTimeoutDuration,
-	idleConTimeout contracts.IdleConnTimeoutDuration,
-) contracts.HttpReq {
+	reqTimeout shared.RequestTimeoutDuration,
+	reqHeadersTimeout shared.RequestHeadersTimeoutDuration,
+	idleConTimeout shared.IdleConnTimeoutDuration,
+) shared.HttpReq {
 
 	tr := &http.Transport{
 		DialContext: (&net.Dialer{

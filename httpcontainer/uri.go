@@ -1,7 +1,7 @@
 package httpcontainer
 
 import (
-	"pulsyflux/contracts"
+	"pulsyflux/shared"
 	"strconv"
 )
 
@@ -38,7 +38,7 @@ func newUri(
 	host uriHost,
 	port uriPort,
 	path uriPath,
-) contracts.URI {
+) shared.URI {
 	return &uri{
 		protocol: protocol,
 		host:     host,

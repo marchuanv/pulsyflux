@@ -1,9 +1,5 @@
 {
     "go.delveConfig": {
         "debugAdapter": "legacy",
-    },
-    "match": ".*\\.go$",
-    "cmd": "wire ..\\",
-    "autoShowOutputPanel": "error",
-    "go.testTimeout": "300s"
+    }
 }

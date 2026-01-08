@@ -2,14 +2,14 @@ package httpcontainer
 
 import (
 	"context"
-	"pulsyflux/contracts"
+	"pulsyflux/shared"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-func SetupTest(test *testing.T) (contracts.HttpResHandler, contracts.HttpServer, contracts.HttpReq, uuid.UUID) {
+func SetupTest(test *testing.T) (shared.HttpResHandler, shared.HttpServer, shared.HttpReq, uuid.UUID) {
 	msgId, err := uuid.NewUUID()
 	if err != nil {
 		test.Fatal(err)
@@ -52,15 +52,15 @@ func TestHttpServerSuccess(test *testing.T) {
 	server.Start()
 
 	expectedMsg := `{ "message": "success-test" }`
-	go req.Send(server.GetAddress(), msgId, expectedMsg)
+	go req.Send(server.GetAddress(), msgId, shared.Msg(expectedMsg))
 	rcvMsg, received := handler.ReceiveRequest(context.Background())
 	if !received {
 		test.Fail()
 	}
-	if rcvMsg != contracts.Msg(expectedMsg) {
+	if rcvMsg != shared.Msg(expectedMsg) {
 		test.Fail()
 	}
-	handler.RespondToRequest(context.Background(), contracts.Msg(expectedMsg))
+	handler.RespondToRequest(context.Background(), shared.Msg(expectedMsg))
 }
 
 func TestHttpClientTimeout(test *testing.T) {
@@ -76,10 +76,10 @@ func TestHttpClientTimeout(test *testing.T) {
 	go func() {
 		handler.ReceiveRequest(context.Background())
 		time.Sleep(26 * time.Second) //similate processing delay
-		handler.RespondToRequest(context.Background(), contracts.Msg(expectedMsg))
+		handler.RespondToRequest(context.Background(), shared.Msg(expectedMsg))
 	}()
 
-	status, _, err := req.Send(server.GetAddress(), msgId, expectedMsg)
+	status, _, err := req.Send(server.GetAddress(), msgId, shared.Msg(expectedMsg))
 	if err == nil {
 		test.Fail()
 	} else {
@@ -119,8 +119,8 @@ func TestHttpServerTimeout(test *testing.T) {
 	go func() {
 		handler.ReceiveRequest(context.Background())
 		time.Sleep(26 * time.Second) //similate processing delay
-		handler.RespondToRequest(context.Background(), contracts.Msg(expectedMsg))
+		handler.RespondToRequest(context.Background(), shared.Msg(expectedMsg))
 	}()
 
-	req.Send(server.GetAddress(), msgId, expectedMsg)
+	req.Send(server.GetAddress(), msgId, shared.Msg(expectedMsg))
 }

@@ -2,20 +2,20 @@ package httpcontainer
 
 import (
 	"net/http"
-	"pulsyflux/contracts"
+	"pulsyflux/shared"
 	"pulsyflux/util"
 	"sync"
 )
 
 var (
-	responsesMap map[contracts.MsgId]*httpResHandler
+	responsesMap map[shared.MsgId]*httpResHandler
 	resOnce      sync.Once
 	mu           sync.RWMutex // protects responsesMap
 )
 
 type httpReqHandler struct{}
 
-func (rh *httpReqHandler) getResHandler(msgId contracts.MsgId) contracts.HttpResHandler {
+func (rh *httpReqHandler) getResHandler(msgId shared.MsgId) shared.HttpResHandler {
 	mu.RLock()
 	defer mu.RUnlock()
 	if res, exists := responsesMap[msgId]; exists {
@@ -61,9 +61,9 @@ func (rh *httpReqHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // Factory function
-func newHttpReqHandler() contracts.HttpReqHandler {
+func newHttpReqHandler() shared.HttpReqHandler {
 	resOnce.Do(func() {
-		responsesMap = make(map[contracts.MsgId]*httpResHandler)
+		responsesMap = make(map[shared.MsgId]*httpResHandler)
 	})
 	return &httpReqHandler{}
 }

@@ -4,19 +4,19 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"pulsyflux/contracts"
+	"pulsyflux/shared"
 )
 
 type httpResHandler struct {
-	incMsg            chan contracts.Msg
-	outMsg            chan contracts.Msg
+	incMsg            chan shared.Msg
+	outMsg            chan shared.Msg
 	successStatusCode int
 	successStatusMsg  string
-	msgId             contracts.MsgId
+	msgId             shared.MsgId
 }
 
 // Receive request message (non-blocking)
-func (res *httpResHandler) ReceiveRequest(ctx context.Context) (contracts.Msg, bool) {
+func (res *httpResHandler) ReceiveRequest(ctx context.Context) (shared.Msg, bool) {
 	select {
 	case msg := <-res.incMsg:
 		return msg, true
@@ -26,7 +26,7 @@ func (res *httpResHandler) ReceiveRequest(ctx context.Context) (contracts.Msg, b
 }
 
 // Respond to request (non-blocking)
-func (res *httpResHandler) RespondToRequest(ctx context.Context, msg contracts.Msg) bool {
+func (res *httpResHandler) RespondToRequest(ctx context.Context, msg shared.Msg) bool {
 	select {
 	case res.outMsg <- msg:
 		return true
@@ -35,7 +35,7 @@ func (res *httpResHandler) RespondToRequest(ctx context.Context, msg contracts.M
 	}
 }
 
-func (res *httpResHandler) MsgId() contracts.MsgId {
+func (res *httpResHandler) MsgId() shared.MsgId {
 	return res.msgId
 }
 
@@ -51,7 +51,7 @@ func (res *httpResHandler) handle(ctx context.Context, reqBody string) (reason s
 
 	// Forward request
 	select {
-	case res.incMsg <- contracts.Msg(_reqBody):
+	case res.incMsg <- shared.Msg(_reqBody):
 	case <-ctx.Done():
 		return "request cancelled", http.StatusRequestTimeout, ""
 	}
@@ -70,10 +70,10 @@ func (res *httpResHandler) containsMsgID(body string) bool {
 }
 
 // Factory function
-func newHttpResHandler(httpStatus contracts.HttpStatus, msgId contracts.MsgId) contracts.HttpResHandler {
+func newHttpResHandler(httpStatus shared.HttpStatus, msgId shared.MsgId) shared.HttpResHandler {
 	response := &httpResHandler{
-		incMsg:            make(chan contracts.Msg, 1),
-		outMsg:            make(chan contracts.Msg, 1),
+		incMsg:            make(chan shared.Msg, 1),
+		outMsg:            make(chan shared.Msg, 1),
 		successStatusCode: httpStatus.Code(),
 		successStatusMsg:  httpStatus.String(),
 		msgId:             msgId,
@@ -81,7 +81,7 @@ func newHttpResHandler(httpStatus contracts.HttpStatus, msgId contracts.MsgId) c
 
 	// Register in global map
 	resOnce.Do(func() {
-		responsesMap = make(map[contracts.MsgId]*httpResHandler)
+		responsesMap = make(map[shared.MsgId]*httpResHandler)
 	})
 	mu.Lock()
 	responsesMap[msgId] = response

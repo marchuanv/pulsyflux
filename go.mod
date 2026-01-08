@@ -12,7 +12,7 @@ replace util v1.0.0 => /util
 
 replace sliceext v1.0.0 => /sliceext
 
-replace contracts v1.0.0 => /contracts
+replace shared v1.0.0 => /shared
 
 replace httpcontainer v1.0.0 => /httpcontainer
 

@@ -13,7 +13,7 @@
 			"path": "sliceext"
 		},
 		{
-			"path": "contracts"
+			"path": "shared"
 		},
 		{
 			"path": "httpcontainer"

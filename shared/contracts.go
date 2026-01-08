@@ -1,4 +1,4 @@
-package contracts
+package shared
 
 import (
 	"context"
@@ -19,7 +19,7 @@ type HttpReqHandler interface {
 }
 
 type HttpReq interface {
-	Send(addr URI, msgId uuid.UUID, content string) (status HttpStatus, resBody string, err error)
+	Send(addr URI, msgId uuid.UUID, msgIn Msg) (status HttpStatus, msgOut Msg, err error)
 }
 
 type HttpResHandler interface {
@@ -64,13 +64,3 @@ type RequestTimeoutDuration TimeDuration
 type ResponseTimeoutDuration TimeDuration
 
 type RequestHeadersTimeoutDuration TimeDuration
-
-type TypeId[T any] string
-
-type ChannelId[T any] string
-
-type MsgBus[T ~string] interface {
-	SetChl(chl *ChannelId[T])
-	Publish(msg T)
-	Subscribe() T
-}

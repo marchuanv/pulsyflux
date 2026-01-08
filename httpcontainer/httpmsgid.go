@@ -1,7 +1,7 @@
 package httpcontainer
 
 import (
-	"pulsyflux/contracts"
+	"pulsyflux/shared"
 
 	"github.com/google/uuid"
 )
@@ -18,6 +18,6 @@ func (msgId httpMsgId) IsNil() bool {
 	return uuid.UUID(msgId) == uuid.Nil
 }
 
-func newHttpMsgId(msgUd uuid.UUID) contracts.MsgId {
+func newHttpMsgId(msgUd uuid.UUID) shared.MsgId {
 	return httpMsgId(msgUd)
 }

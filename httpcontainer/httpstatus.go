@@ -1,6 +1,6 @@
 package httpcontainer
 
-import "pulsyflux/contracts"
+import "pulsyflux/shared"
 
 type httpStatus int
 
@@ -24,6 +24,6 @@ func (h httpStatus) String() string {
 	return "Unknown Status"
 }
 
-func newHttpStatus(code int) contracts.HttpStatus {
+func newHttpStatus(code int) shared.HttpStatus {
 	return httpStatus(code)
 }

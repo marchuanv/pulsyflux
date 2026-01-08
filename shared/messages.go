@@ -1,4 +1,4 @@
-package contracts
+package shared
 
 import "github.com/google/uuid"
 
@@ -8,9 +8,4 @@ type MsgId interface {
 	String() string
 	UUID() uuid.UUID
 	IsNil() bool
-}
-
-type Event struct {
-	Id   uuid.UUID
-	name string
 }

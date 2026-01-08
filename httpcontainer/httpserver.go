@@ -5,7 +5,7 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"pulsyflux/contracts"
+	"pulsyflux/shared"
 	"sync"
 	"time"
 )
@@ -42,11 +42,11 @@ type httpServer struct {
 	done     chan struct{}
 }
 
-func (s *httpServer) GetAddress() contracts.URI {
+func (s *httpServer) GetAddress() shared.URI {
 	return s.address
 }
 
-func (s *httpServer) GetResponseHandler(msgId contracts.MsgId) contracts.HttpResHandler {
+func (s *httpServer) GetResponseHandler(msgId shared.MsgId) shared.HttpResHandler {
 	return s.httpReqHCon.getResHandler(msgId)
 }
 
@@ -140,14 +140,14 @@ func (s *httpServer) Stop() {
 }
 
 func newHttpServer(
-	addr contracts.URI,
-	readTimeout contracts.ReadTimeDuration,
-	writeTimeout contracts.WriteTimeDuration,
-	idleTimeout contracts.IdleConnTimeoutDuration,
-	responseTimeout contracts.ResponseTimeoutDuration,
+	addr shared.URI,
+	readTimeout shared.ReadTimeDuration,
+	writeTimeout shared.WriteTimeDuration,
+	idleTimeout shared.IdleConnTimeoutDuration,
+	responseTimeout shared.ResponseTimeoutDuration,
 	maxHeaderBytes maxHeaderBytes,
-	httpReqHCon contracts.HttpReqHandler,
-) contracts.HttpServer {
+	httpReqHCon shared.HttpReqHandler,
+) shared.HttpServer {
 
 	singletonMu.Lock()
 	defer singletonMu.Unlock()
