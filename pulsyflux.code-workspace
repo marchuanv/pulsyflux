@@ -21,6 +21,10 @@
 		{
 			"path": "msgbuscontainer"
 		},
+		{
+			"path": "socket"
+		}
+
 	],
 	"settings": {
 		"emeraldwalk.runonsave": {

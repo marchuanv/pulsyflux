@@ -17,3 +17,6 @@ replace shared v1.0.0 => /shared
 replace httpcontainer v1.0.0 => /httpcontainer
 
 replace msgbuscontainer v1.0.0 => /msgbuscontainer
+
+replace socket v1.0.0 => /socket
+
