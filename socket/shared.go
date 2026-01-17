@@ -3,6 +3,7 @@ package socket
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -34,13 +35,29 @@ const (
 )
 
 func process(ctx context.Context, req *frame) (*frame, error) {
-	// Parse payload
-	var payload requestpayload
-	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+	var pl requestpayload
+	if err := json.Unmarshal(req.Payload, &pl); err != nil {
 		return nil, err
 	}
 
-	// Simulate work
+	// Sleep simulation for testing
+	if len(pl.Data) >= 5 && pl.Data[:5] == "sleep" {
+		var ms int
+		fmt.Sscanf(pl.Data, "sleep %d", &ms)
+		select {
+		case <-time.After(time.Duration(ms) * time.Millisecond):
+			return &frame{
+				Version:   Version1,
+				Type:      MsgResponse,
+				RequestID: req.RequestID,
+				Payload:   []byte("Slept successfully"),
+			}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	// Normal processing
 	select {
 	case <-time.After(200 * time.Millisecond):
 	case <-ctx.Done():
@@ -51,6 +68,7 @@ func process(ctx context.Context, req *frame) (*frame, error) {
 		Version:   Version1,
 		Type:      MsgResponse,
 		RequestID: req.RequestID,
-		Payload:   []byte("ACK: " + payload.Data),
+		Payload:   []byte("ACK: " + pl.Data),
 	}, nil
+
 }

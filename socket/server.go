@@ -110,8 +110,7 @@ func (s *server) handle(conn net.Conn) {
 				timeout = clientTimeout
 			}
 		}
-
-		reqCtx, cancel := context.WithTimeout(s.ctx, timeout)
+		reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
 
 		req := request{
 			ctx,

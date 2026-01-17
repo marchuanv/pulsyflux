@@ -57,7 +57,8 @@ func (c *client) SendRequest(data string, timeoutMs uint32) (*frame, error) {
 	}
 
 	// Read response
-	c.conn.SetReadDeadline(time.Now().Add(time.Duration(timeoutMs)*time.Millisecond + 1*time.Second))
+	c.conn.SetReadDeadline(time.Now().Add(time.Duration(timeoutMs)*time.Millisecond + 50*time.Millisecond))
+
 	resp, err := readFrame(c.conn)
 	if err != nil {
 		return nil, err

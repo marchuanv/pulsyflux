@@ -61,7 +61,6 @@ func (wp *workerpool) stop() {
 
 func (wp *workerpool) worker() {
 	defer wp.wg.Done()
-
 	for req := range wp.jobs {
 		select {
 		case <-req.ctx.Done():
@@ -74,10 +73,9 @@ func (wp *workerpool) worker() {
 		req.cancel()
 
 		if err != nil {
-			req.connctx.writes <- errorFrame(req.frame.RequestID, err.Error())
+			req.connctx.send(errorFrame(req.frame.RequestID, err.Error()))
 			continue
 		}
-
-		req.connctx.writes <- resp
+		req.connctx.send(resp)
 	}
 }
