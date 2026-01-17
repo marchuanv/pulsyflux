@@ -1,84 +1,128 @@
 package socket
 
 import (
-	"bufio"
-	"fmt"
-	"io"
+	"context"
+	"encoding/json"
 	"net"
-	"strings"
+	"sync"
 	"time"
 )
 
-type Server struct {
+type server struct {
 	port   string
-	closed bool
 	ln     net.Listener
+	ctx    context.Context
+	cancel context.CancelFunc
+	conns  sync.WaitGroup
+	pool   *workerpool
 }
 
-func NewServer(port string) *Server {
-	return &Server{port, false, nil}
-}
-
-func (s *Server) Start() {
-	ln, err := net.Listen("tcp", "localhost:"+s.port)
-	if err != nil {
-		fmt.Println("Error starting server:", err)
-		return
+func NewServer(port string) *server {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &server{
+		port:   port,
+		ctx:    ctx,
+		cancel: cancel,
 	}
+}
+
+func (s *server) Start() error {
+	ln, err := net.Listen("tcp", ":"+s.port)
+	if err != nil {
+		return err
+	}
+
 	s.ln = ln
-	s.closed = false
-	go func() {
-		for s.closed == false {
-			conn, err := s.ln.Accept()
-			if err != nil {
+	s.pool = newWorkerPool(8, 1024)
+
+	go s.acceptLoop()
+	return nil
+}
+
+func (s *server) Stop(ctx context.Context) error {
+	s.cancel()
+	s.ln.Close()
+	s.conns.Wait()
+	s.pool.stop()
+	return nil
+}
+
+func (s *server) acceptLoop() {
+	for {
+		conn, err := s.ln.Accept()
+		if err != nil {
+			select {
+			case <-s.ctx.Done():
+				return
+			default:
 				continue
 			}
-			handle(conn)
 		}
-	}()
-}
 
-func (s *Server) Stop() {
-	if !s.closed {
-		s.ln.Close()
-		s.ln = nil
-		s.closed = true
+		s.conns.Add(1)
+		go s.handle(conn)
 	}
 }
 
-func handle(conn net.Conn) {
-	fmt.Printf("New connection from %s\n", conn.RemoteAddr())
+func (s *server) handle(conn net.Conn) {
+	defer s.conns.Done()
 
-	reader := bufio.NewReader(conn)
+	ctx := &connctx{
+		conn:   conn,
+		writes: make(chan *frame, 64),
+		closed: make(chan struct{}),
+		wg:     &sync.WaitGroup{},
+	}
+
+	ctx.wg.Add(1)
+	startWriter(ctx)
+
+	defer func() {
+		close(ctx.writes)
+		ctx.wg.Wait()
+		conn.Close()
+	}()
 
 	for {
-		// 1. READ: Set a deadline to prevent hanging (e.g., 2 minutes)
-		conn.SetReadDeadline(time.Now().Add(2 * time.Minute))
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+		}
 
-		// Read message until newline
-		message, err := reader.ReadString('\n')
+		conn.SetReadDeadline(time.Now().Add(readTimeout))
+		frame, err := readFrame(conn)
 		if err != nil {
-			if err == io.EOF {
-				fmt.Println("client closed connection.")
-			} else {
-				fmt.Println("Read error:", err)
-			}
 			return
 		}
 
-		// Clean up the input (remove \r\n)
-		input := strings.TrimSpace(message)
-		fmt.Printf("Received: %s\n", input)
+		if frame.Type != MsgRequest {
+			ctx.send(errorFrame(frame.RequestID, "invalid message type"))
+			continue
+		}
 
-		// 2. PROCESS: Prepare a response
-		response := "ACK: " + input + "\n"
+		// Parse client-specified timeout
+		timeout := defaultReqTimeout
+		var payload requestpayload
+		if err := json.Unmarshal(frame.Payload, &payload); err == nil && payload.TimeoutMs > 0 {
+			clientTimeout := time.Duration(payload.TimeoutMs) * time.Millisecond
+			if clientTimeout < defaultReqTimeout {
+				timeout = clientTimeout
+			}
+		}
 
-		// 3. WRITE: Send the response back to the client
-		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		_, err = conn.Write([]byte(response))
-		if err != nil {
-			fmt.Println("Write error:", err)
-			return
+		reqCtx, cancel := context.WithTimeout(s.ctx, timeout)
+
+		req := request{
+			ctx,
+			frame,
+			reqCtx,
+			cancel,
+		}
+
+		if !s.pool.submit(req) {
+			cancel()
+			ctx.send(errorFrame(frame.RequestID, "server overloaded"))
 		}
 	}
 }
