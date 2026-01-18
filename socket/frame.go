@@ -15,9 +15,9 @@ type frame struct {
 	Payload   []byte
 }
 
+// readFrame reads a single frame from conn
 func readFrame(conn net.Conn) (*frame, error) {
 	var header [headerSize]byte
-
 	if _, err := io.ReadFull(conn, header[:]); err != nil {
 		return nil, err
 	}
@@ -27,10 +27,6 @@ func readFrame(conn net.Conn) (*frame, error) {
 	}
 
 	length := binary.BigEndian.Uint32(header[12:16])
-	if length > maxFrameSize {
-		return nil, errors.New("frame too large")
-	}
-
 	payload := make([]byte, length)
 	if _, err := io.ReadFull(conn, payload); err != nil {
 		return nil, err
@@ -45,9 +41,10 @@ func readFrame(conn net.Conn) (*frame, error) {
 	}, nil
 }
 
+// writeFrame writes a single frame to conn
 func writeFrame(conn net.Conn, f *frame) error {
-	if len(f.Payload) > maxFrameSize {
-		return errors.New("payload too large")
+	if f.Type == MsgRequest && len(f.Payload) > maxFrameSize {
+		return errors.New("inline payload too large; use streaming")
 	}
 
 	var header [headerSize]byte
@@ -60,7 +57,6 @@ func writeFrame(conn net.Conn, f *frame) error {
 	if _, err := conn.Write(header[:]); err != nil {
 		return err
 	}
-
 	_, err := conn.Write(f.Payload)
 	return err
 }

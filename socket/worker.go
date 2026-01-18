@@ -27,7 +27,7 @@ func newWorkerPool(workers, queue int) *workerpool {
 				default:
 				}
 
-				resp, err := process(req.ctx, req.frame)
+				resp, err := process(req.ctx, req)
 				req.cancel()
 
 				if err != nil {

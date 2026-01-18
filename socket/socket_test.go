@@ -2,6 +2,7 @@ package socket
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -9,26 +10,23 @@ import (
 func TestServerClient(t *testing.T) {
 	// Start server
 	server := NewServer("9090")
-	err := server.Start()
-	if err != nil {
+	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
 	defer server.Stop(context.Background())
 
-	// Give server a moment to start
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // allow server to start
 
-	// Create client
 	client, err := NewClient("9090")
 	if err != nil {
 		t.Fatalf("Failed to connect client: %v", err)
 	}
 	defer client.Close()
 
-	// Send multiple requests
+	// --- 1. Inline small payloads ---
 	requests := []string{"first", "second", "third"}
 	for i, msg := range requests {
-		resp, err := client.SendRequest(msg, 1000) // 1000ms client timeout
+		resp, err := client.SendRequest(msg, 1000)
 		if err != nil {
 			t.Errorf("Request %d error: %v", i, err)
 			continue
@@ -42,48 +40,67 @@ func TestServerClient(t *testing.T) {
 }
 
 func TestClientTimeout(t *testing.T) {
-	// Start server
 	server := NewServer("9091")
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
 	defer server.Stop(context.Background())
 
-	time.Sleep(100 * time.Millisecond) // give server time to start
+	time.Sleep(50 * time.Millisecond)
 
-	// Create client
 	client, err := NewClient("9091")
 	if err != nil {
 		t.Fatalf("Failed to connect client: %v", err)
 	}
 	defer client.Close()
 
-	// ---- 1. Request that should succeed ----
-	resp, err := client.SendRequest("fast request", 1000) // 1 second timeout
+	// --- 1. Fast request (should succeed) ---
+	resp, err := client.SendRequest("fast request", 1000)
 	if err != nil {
 		t.Fatalf("Fast request failed: %v", err)
 	}
-	expected := "ACK: fast request"
-	if string(resp.Payload) != expected {
-		t.Fatalf("Fast request: expected %q, got %q", expected, string(resp.Payload))
+	if string(resp.Payload) != "ACK: fast request" {
+		t.Fatalf("Expected ACK: fast request, got %q", string(resp.Payload))
 	}
 
-	// ---- 2. Request that exceeds the timeout ----
+	// --- 2. Request that exceeds timeout ---
 	resp, err = client.SendRequest("sleep 2000", 500) // 0.5s timeout, server sleeps 2s
-
 	if err != nil {
 		t.Fatalf("SendRequest failed unexpectedly: %v", err)
 	}
-
-	// The server should return an error frame
 	if resp.Type != MsgError {
-		t.Fatalf("Expected error frame for timeout, but got: %+v", resp)
+		t.Fatalf("Expected error frame for timeout, got %+v", resp)
+	}
+	if string(resp.Payload) != "context deadline exceeded" {
+		t.Fatalf("Expected 'context deadline exceeded', got %q", string(resp.Payload))
+	}
+}
+
+func TestLargePayloadStreaming(t *testing.T) {
+	server := NewServer("9092")
+	if err := server.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer server.Stop(context.Background())
+
+	time.Sleep(50 * time.Millisecond)
+
+	client, err := NewClient("9092")
+	if err != nil {
+		t.Fatalf("Failed to connect client: %v", err)
+	}
+	defer client.Close()
+
+	// --- 1. Large payload >2MB ---
+	largeData := strings.Repeat("X", 2*1024*1024+10) // 2 MB + 10 bytes
+	resp, err := client.SendRequest(largeData, 5000)
+	if err != nil {
+		t.Fatalf("Large payload request failed: %v", err)
 	}
 
-	payloadStr := string(resp.Payload)
-	if payloadStr != "context deadline exceeded" {
-		t.Fatalf("Expected payload 'context deadline exceeded', got: %q", payloadStr)
+	if string(resp.Payload[:10]) != "ACK: XXXXX" {
+		t.Fatalf("Large payload response seems wrong, got first bytes: %q", string(resp.Payload[:10]))
 	}
 
-	t.Logf("Timeout test passed: %s", payloadStr)
+	t.Logf("Large payload streaming test passed: %d bytes", len(largeData))
 }
