@@ -3,7 +3,6 @@ package socket
 import (
 	"net"
 	"sync"
-	"time"
 )
 
 type connctx struct {
@@ -31,7 +30,6 @@ func startWriter(ctx *connctx) {
 				if !ok {
 					return
 				}
-				ctx.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 				if err := writeFrame(ctx.conn, frame); err != nil {
 					return
 				}

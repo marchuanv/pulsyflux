@@ -26,7 +26,7 @@ func TestSmallPayloadStreaming(t *testing.T) {
 	// Small payloads
 	payloads := []string{"first", "second", "third"}
 	for i, msg := range payloads {
-		resp, err := client.SendStreamFromReader(strings.NewReader(msg), uint64(len(msg)), 1000)
+		resp, err := client.SendStreamFromReader(strings.NewReader(msg), 1000)
 		if err != nil {
 			t.Errorf("Request %d error: %v", i, err)
 			continue
@@ -56,7 +56,7 @@ func TestLargePayloadStreaming(t *testing.T) {
 
 	// Large payload >2MB
 	largeData := strings.Repeat("X", 2*1024*1024+10)
-	resp, err := client.SendStreamFromReader(strings.NewReader(largeData), uint64(len(largeData)), 5000)
+	resp, err := client.SendStreamFromReader(strings.NewReader(largeData), 5000)
 	if err != nil {
 		t.Fatalf("Large payload request failed: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestClientTimeout(t *testing.T) {
 	defer client.Close()
 
 	// Fast request (should succeed)
-	resp, err := client.SendStreamFromReader(strings.NewReader("fast request"), 12, 1000)
+	resp, err := client.SendStreamFromReader(strings.NewReader("fast request"), 1000)
 	if err != nil {
 		t.Fatalf("Fast request failed: %v", err)
 	}
@@ -94,12 +94,12 @@ func TestClientTimeout(t *testing.T) {
 
 	// Timeout request: server sleeps 2s but timeout is 0.5s
 	sleepPayload := "sleep 2000" // handled in server process()
-	resp, err = client.SendStreamFromReader(strings.NewReader(sleepPayload), uint64(len(sleepPayload)), 500)
+	resp, err = client.SendStreamFromReader(strings.NewReader(sleepPayload), 500)
 	if err != nil {
 		t.Fatalf("SendStreamFromReader failed unexpectedly: %v", err)
 	}
 
-	if resp.Type != MsgError {
+	if resp.Type != ErrorFrame {
 		t.Fatalf("Expected error frame for timeout, got %+v", resp)
 	}
 

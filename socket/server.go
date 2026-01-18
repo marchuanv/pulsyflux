@@ -1,8 +1,8 @@
 package socket
 
 import (
-	"bytes"
 	"context"
+	"encoding/binary"
 	"net"
 	"sync"
 	"time"
@@ -70,19 +70,16 @@ func (s *server) handle(conn net.Conn) {
 		closed: make(chan struct{}),
 		wg:     &sync.WaitGroup{},
 	}
-
 	ctx.wg.Add(1)
 	startWriter(ctx)
-
 	defer func() {
 		close(ctx.writes)
 		ctx.wg.Wait()
 		conn.Close()
 	}()
 
-	// Maps for streaming requests
-	streamBuffers := make(map[uint64][]byte)
-	streamMetas := make(map[uint64]requestmeta)
+	// Streamed requests in progress
+	streamReqs := make(map[uint64]*request)
 
 	for {
 		select {
@@ -91,63 +88,45 @@ func (s *server) handle(conn net.Conn) {
 		default:
 		}
 
-		conn.SetReadDeadline(time.Now().Add(readTimeout))
-		frame, err := readFrame(conn)
+		f, err := readFrame(conn)
 		if err != nil {
 			return
 		}
 
-		switch frame.Type {
-
-		case MsgRequestStart:
-			// Start streaming request
-			meta, err := decodeRequestMeta(bytes.NewReader(frame.Payload))
-			if err != nil {
-				ctx.send(errorFrame(frame.RequestID, "invalid meta"))
+		switch f.Type {
+		case StartFrame:
+			if len(f.Payload) != 8 {
+				ctx.send(errorFrame(f.RequestID, "invalid request start header"))
 				continue
 			}
-
-			streamBuffers[frame.RequestID] = make([]byte, 0, meta.DataSize)
-			streamMetas[frame.RequestID] = *meta
-
-		case MsgRequestChunk:
-			buf := streamBuffers[frame.RequestID]
-			buf = append(buf, frame.Payload...)
-			streamBuffers[frame.RequestID] = buf
-
-		case MsgRequestEnd:
-			payload := streamBuffers[frame.RequestID]
-			meta := streamMetas[frame.RequestID]
-
-			timeout := defaultReqTimeout
-			if meta.TimeoutMs > 0 {
-				clientTimeout := time.Duration(meta.TimeoutMs) * time.Millisecond
-				if clientTimeout < defaultReqTimeout {
-					timeout = clientTimeout
-				}
+			timeoutMs := binary.BigEndian.Uint64(f.Payload)
+			streamReqs[f.RequestID] = &request{
+				connctx:   ctx,
+				frame:     f,
+				payload:   []byte{},
+				timeout:   time.Duration(timeoutMs) * time.Millisecond,
+				requestID: f.RequestID,
 			}
 
-			reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
-			req := request{
-				connctx: ctx,
-				frame:   frame,
-				meta:    meta,
-				payload: payload,
-				ctx:     reqCtx,
-				cancel:  cancel,
-			}
+		case ChunkFrame:
+			req := streamReqs[f.RequestID]
+			req.payload = append(req.payload, f.Payload...)
 
-			// Clean up streaming maps
-			delete(streamBuffers, frame.RequestID)
-			delete(streamMetas, frame.RequestID)
+		case EndFrame:
+			req := streamReqs[f.RequestID]
+			delete(streamReqs, f.RequestID)
 
-			if !s.pool.submit(req) {
+			reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
+			req.ctx = reqCtx
+			req.cancel = cancel
+
+			if !s.pool.submit(*req) {
 				cancel()
-				ctx.send(errorFrame(frame.RequestID, "server overloaded"))
+				ctx.send(errorFrame(req.frame.RequestID, "server overloaded"))
 			}
 
 		default:
-			ctx.send(errorFrame(frame.RequestID, "invalid message type"))
+			ctx.send(errorFrame(f.RequestID, "invalid message type"))
 		}
 	}
 }

@@ -48,7 +48,7 @@ func (wp *workerpool) submit(req request) bool {
 	select {
 	case wp.jobs <- req:
 		return true
-	case <-time.After(queueTimeout):
+	case <-time.After(workerQueueTimeout):
 		return false
 	case <-req.ctx.Done():
 		return false

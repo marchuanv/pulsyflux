@@ -1,6 +1,8 @@
 package socket
 
 import (
+	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -31,50 +33,37 @@ func (c *client) Close() error {
 }
 
 // SendStreamFromReader streams a payload from an io.Reader to the server
-func (c *client) SendStreamFromReader(r io.Reader, dataSize uint64, timeoutMs uint32) (*frame, error) {
+func (c *client) SendStreamFromReader(r io.Reader, reqTimeout time.Duration) (*frame, error) {
 	reqID := atomic.AddUint64(&c.requestID, 1)
 
-	// Build requestmeta
-	meta := requestmeta{
-		TimeoutMs: timeoutMs,
-		DataSize:  dataSize,
-		Type:      "json",
-		Encoding:  "json",
-		Streaming: true,
-	}
+	// --- StartFrame: send timeout as header (8 bytes) ---
+	timeoutBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(timeoutBytes, uint64(reqTimeout.Milliseconds()))
 
-	// Encode meta using package-private helper
-	metaPayload, err := encodeRequestMeta(meta)
-	if err != nil {
-		return nil, err
-	}
-
-	// 1️⃣ Send MsgRequestStart
 	startFrame := frame{
 		Version:   Version1,
-		Type:      MsgRequestStart,
+		Type:      StartFrame,
 		Flags:     0,
 		RequestID: reqID,
-		Payload:   metaPayload,
+		Payload:   timeoutBytes,
 	}
-	c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+
 	if err := writeFrame(c.conn, &startFrame); err != nil {
 		return nil, err
 	}
 
-	// 2️⃣ Send chunks
+	// --- Stream chunks ---
 	chunkBuf := make([]byte, maxFrameSize)
 	for {
 		n, err := r.Read(chunkBuf)
 		if n > 0 {
 			chunk := frame{
 				Version:   Version1,
-				Type:      MsgRequestChunk,
+				Type:      ChunkFrame,
 				Flags:     0,
 				RequestID: reqID,
 				Payload:   chunkBuf[:n],
 			}
-			c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 			if err := writeFrame(c.conn, &chunk); err != nil {
 				return nil, err
 			}
@@ -87,30 +76,43 @@ func (c *client) SendStreamFromReader(r io.Reader, dataSize uint64, timeoutMs ui
 		}
 	}
 
-	// 3️⃣ Send MsgRequestEnd
+	// --- EndFrame ---
 	endFrame := frame{
 		Version:   Version1,
-		Type:      MsgRequestEnd,
+		Type:      EndFrame,
 		Flags:     0,
 		RequestID: reqID,
-		Payload:   nil,
 	}
-	c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+
 	if err := writeFrame(c.conn, &endFrame); err != nil {
 		return nil, err
 	}
 
-	// 4️⃣ Wait for server response
-	c.conn.SetReadDeadline(time.Now().Add(time.Duration(timeoutMs)*time.Millisecond + 1*time.Second))
-	resp, err := readFrame(c.conn)
-	if err != nil {
+	// --- Wait for server response (using client-side context) ---
+	ctx, cancel := context.WithTimeout(context.Background(), reqTimeout+time.Second)
+	defer cancel()
+
+	respCh := make(chan *frame, 1)
+	errCh := make(chan error, 1)
+
+	go func() {
+		resp, err := readFrame(c.conn)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- resp
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case err := <-errCh:
 		return nil, err
+	case resp := <-respCh:
+		if resp.RequestID != reqID {
+			return nil, ErrRequestIDMismatch
+		}
+		return resp, nil
 	}
-
-	// Validate request ID
-	if resp.RequestID != reqID {
-		return nil, ErrRequestIDMismatch
-	}
-
-	return resp, nil
 }

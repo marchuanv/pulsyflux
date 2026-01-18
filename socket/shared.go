@@ -12,47 +12,37 @@ import (
 
 // Protocol version
 const Version1 byte = 1
-
-// Message types
-const (
-	MsgRequest      byte = 0x01
-	MsgResponse     byte = 0x02
-	MsgError        byte = 0x03
-	MsgRequestStart byte = 0x04 // streaming start
-	MsgRequestChunk byte = 0x05 // streaming chunk
-	MsgRequestEnd   byte = 0x06 // streaming end
-)
+const workerQueueTimeout = 100 * time.Millisecond
 
 // Frame & payload limits
 const (
-	headerSize        = 16          // frame header size in bytes
-	maxFrameSize      = 1024 * 1024 // 1 MB chunk size
-	defaultReqTimeout = 500 * time.Millisecond
-	readTimeout       = 2 * time.Minute
-	writeTimeout      = 5 * time.Second
-	queueTimeout      = 100 * time.Millisecond
+	ResponseFrame            byte = 0x02
+	ErrorFrame               byte = 0x03
+	StartFrame               byte = 0x04        // streaming start
+	ChunkFrame               byte = 0x05        // streaming chunk
+	EndFrame                 byte = 0x06        // streaming end
+	frameHeaderSize               = 16          // frame header size in bytes
+	maxFrameSize                  = 1024 * 1024 // 1 MB chunk size
+	defaultFrameReadTimeout       = 2 * time.Minute
+	defaultFrameWriteTimeout      = 5 * time.Second
 )
 
 // --------------------- Types ---------------------
 
-// request represents a single server request (streaming)
 type request struct {
-	connctx *connctx
-	frame   *frame
-	meta    requestmeta
-	ctx     context.Context
-	cancel  context.CancelFunc
-	payload []byte
-}
-
-// Legacy small request payload (for backward compatibility, unused in streaming)
-type requestpayload struct {
-	TimeoutMs uint32 `json:"timeout_ms,omitempty"`
-	Data      string `json:"data"`
+	connctx   *connctx
+	frame     *frame        // start frame reference
+	requestID uint64        // unique per request
+	payload   []byte        // accumulated chunks
+	dataSize  uint64        // optional, for preallocation/logging
+	timeout   time.Duration // timeout for request
+	reqType   string        // e.g., "json"
+	encoding  string        // e.g., "json"
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
 
 // --------------------- Business Logic ---------------------
-
 func process(ctx context.Context, req request) (*frame, error) {
 	// Handle sleep commands for testing timeouts
 	if strings.HasPrefix(string(req.payload), "sleep") {
@@ -63,7 +53,7 @@ func process(ctx context.Context, req request) (*frame, error) {
 		case <-time.After(time.Duration(ms) * time.Millisecond):
 			return &frame{
 				Version:   Version1,
-				Type:      MsgResponse,
+				Type:      ResponseFrame,
 				RequestID: req.frame.RequestID,
 				Payload:   []byte("Processed " + strconv.Itoa(len(req.payload)) + " bytes"),
 			}, nil
@@ -82,7 +72,7 @@ func process(ctx context.Context, req request) (*frame, error) {
 	// Normal response for all payloads
 	return &frame{
 		Version:   Version1,
-		Type:      MsgResponse,
+		Type:      ResponseFrame,
 		RequestID: req.frame.RequestID,
 		Payload:   []byte("Processed " + strconv.Itoa(len(req.payload)) + " bytes"),
 	}, nil

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"time"
 )
 
 type frame struct {
@@ -16,7 +17,8 @@ type frame struct {
 }
 
 func readFrame(conn net.Conn) (*frame, error) {
-	var header [headerSize]byte
+	conn.SetReadDeadline(time.Now().Add(defaultFrameReadTimeout))
+	var header [frameHeaderSize]byte
 	if _, err := io.ReadFull(conn, header[:]); err != nil {
 		return nil, err
 	}
@@ -41,7 +43,8 @@ func readFrame(conn net.Conn) (*frame, error) {
 }
 
 func writeFrame(conn net.Conn, f *frame) error {
-	var header [headerSize]byte
+	conn.SetWriteDeadline(time.Now().Add(defaultFrameWriteTimeout))
+	var header [frameHeaderSize]byte
 	header[0] = f.Version
 	header[1] = f.Type
 	binary.BigEndian.PutUint16(header[2:4], f.Flags)
@@ -58,7 +61,7 @@ func writeFrame(conn net.Conn, f *frame) error {
 func errorFrame(reqID uint64, msg string) *frame {
 	return &frame{
 		Version:   Version1,
-		Type:      MsgError,
+		Type:      ErrorFrame,
 		RequestID: reqID,
 		Payload:   []byte(msg),
 	}

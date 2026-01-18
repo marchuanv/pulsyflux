@@ -25,13 +25,13 @@ var (
 )
 
 type httpServer struct {
-	address         shared.URI
-	readTimeout     *timeDuration
-	writeTimeout    *timeDuration
-	idleTimeout     *timeDuration
-	responseTimeout *timeDuration
-	maxHeaderBytes  maxHeaderBytes
-	httpReqHCon     *httpReqHandler
+	address                  shared.URI
+	defaultReadTimeout       *timeDuration
+	defaultFrameWriteTimeout *timeDuration
+	idleTimeout              *timeDuration
+	responseTimeout          *timeDuration
+	maxHeaderBytes           maxHeaderBytes
+	httpReqHCon              *httpReqHandler
 
 	// runtime state
 	mu       sync.Mutex
@@ -83,8 +83,8 @@ func (s *httpServer) Start() {
 	s.server = &http.Server{
 		Addr:           hostAddr,
 		Handler:        handler,
-		ReadTimeout:    s.readTimeout.GetDuration(),
-		WriteTimeout:   s.writeTimeout.GetDuration(),
+		ReadTimeout:    s.defaultReadTimeout.GetDuration(),
+		WriteTimeout:   s.defaultFrameWriteTimeout.GetDuration(),
 		IdleTimeout:    s.idleTimeout.GetDuration(),
 		MaxHeaderBytes: int(s.maxHeaderBytes),
 	}
@@ -140,8 +140,8 @@ func (s *httpServer) Stop() {
 
 func newHttpServer(
 	addr shared.URI,
-	readTimeout shared.ReadTimeDuration,
-	writeTimeout shared.WriteTimeDuration,
+	defaultReadTimeout shared.ReadTimeDuration,
+	defaultFrameWriteTimeout shared.WriteTimeDuration,
 	idleTimeout shared.IdleConnTimeoutDuration,
 	responseTimeout shared.ResponseTimeoutDuration,
 	maxHeaderBytes maxHeaderBytes,
@@ -156,14 +156,14 @@ func newHttpServer(
 	}
 
 	singletonServer = &httpServer{
-		address:         addr,
-		readTimeout:     readTimeout.(*timeDuration),
-		writeTimeout:    writeTimeout.(*timeDuration),
-		idleTimeout:     idleTimeout.(*timeDuration),
-		responseTimeout: responseTimeout.(*timeDuration),
-		maxHeaderBytes:  maxHeaderBytes,
-		httpReqHCon:     httpReqHCon.(*httpReqHandler),
-		state:           stateStopped,
+		address:                  addr,
+		defaultReadTimeout:       defaultReadTimeout.(*timeDuration),
+		defaultFrameWriteTimeout: defaultFrameWriteTimeout.(*timeDuration),
+		idleTimeout:              idleTimeout.(*timeDuration),
+		responseTimeout:          responseTimeout.(*timeDuration),
+		maxHeaderBytes:           maxHeaderBytes,
+		httpReqHCon:              httpReqHCon.(*httpReqHandler),
+		state:                    stateStopped,
 	}
 
 	return singletonServer
