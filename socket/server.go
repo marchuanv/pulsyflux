@@ -1,8 +1,8 @@
 package socket
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"net"
 	"sync"
 	"time"
@@ -17,7 +17,6 @@ type server struct {
 	pool   *workerpool
 }
 
-// NewServer creates a new TCP server
 func NewServer(port string) *server {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &server{
@@ -27,19 +26,17 @@ func NewServer(port string) *server {
 	}
 }
 
-// Start begins listening and processing clients
 func (s *server) Start() error {
 	ln, err := net.Listen("tcp", ":"+s.port)
 	if err != nil {
 		return err
 	}
 	s.ln = ln
-	s.pool = newWorkerPool(8, 1024) // optional worker pool
+	s.pool = newWorkerPool(8, 1024)
 	go s.acceptLoop()
 	return nil
 }
 
-// Stop shuts down the server
 func (s *server) Stop(ctx context.Context) error {
 	s.cancel()
 	s.ln.Close()
@@ -48,7 +45,6 @@ func (s *server) Stop(ctx context.Context) error {
 	return nil
 }
 
-// acceptLoop handles incoming connections
 func (s *server) acceptLoop() {
 	for {
 		conn, err := s.ln.Accept()
@@ -65,7 +61,6 @@ func (s *server) acceptLoop() {
 	}
 }
 
-// handle a single client connection
 func (s *server) handle(conn net.Conn) {
 	defer s.conns.Done()
 
@@ -85,19 +80,9 @@ func (s *server) handle(conn net.Conn) {
 		conn.Close()
 	}()
 
-	// Maps to store stream processors and their contexts per request
-	streamProcessors := make(map[uint64]*streamprocessor)
-	streamContexts := make(map[uint64]context.Context)
-	streamCancels := make(map[uint64]context.CancelFunc)
-
-	cleanupStream := func(reqID uint64) {
-		if c, ok := streamCancels[reqID]; ok {
-			c() // cancel context
-			delete(streamCancels, reqID)
-		}
-		delete(streamProcessors, reqID)
-		delete(streamContexts, reqID)
-	}
+	// Maps for streaming requests
+	streamBuffers := make(map[uint64][]byte)
+	streamMetas := make(map[uint64]requestmeta)
 
 	for {
 		select {
@@ -115,11 +100,25 @@ func (s *server) handle(conn net.Conn) {
 		switch frame.Type {
 
 		case MsgRequestStart:
-			// Start streaming request and parse optional meta
-			meta := requestmeta{}
-			_ = json.Unmarshal(frame.Payload, &meta)
+			// Start streaming request
+			meta, err := decodeRequestMeta(bytes.NewReader(frame.Payload))
+			if err != nil {
+				ctx.send(errorFrame(frame.RequestID, "invalid meta"))
+				continue
+			}
 
-			// Apply client timeout if specified
+			streamBuffers[frame.RequestID] = make([]byte, 0, meta.DataSize)
+			streamMetas[frame.RequestID] = *meta
+
+		case MsgRequestChunk:
+			buf := streamBuffers[frame.RequestID]
+			buf = append(buf, frame.Payload...)
+			streamBuffers[frame.RequestID] = buf
+
+		case MsgRequestEnd:
+			payload := streamBuffers[frame.RequestID]
+			meta := streamMetas[frame.RequestID]
+
 			timeout := defaultReqTimeout
 			if meta.TimeoutMs > 0 {
 				clientTimeout := time.Duration(meta.TimeoutMs) * time.Millisecond
@@ -128,41 +127,24 @@ func (s *server) handle(conn net.Conn) {
 				}
 			}
 
-			// Create a single request-scoped context
 			reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
-
-			sp := &streamprocessor{RequestID: frame.RequestID}
-			streamProcessors[frame.RequestID] = sp
-			streamContexts[frame.RequestID] = reqCtx
-			streamCancels[frame.RequestID] = cancel
-
-		case MsgRequestChunk:
-			sp, ok := streamProcessors[frame.RequestID]
-			if !ok {
-				ctx.send(errorFrame(frame.RequestID, "unknown request ID"))
-				continue
-			}
-			reqCtx := streamContexts[frame.RequestID] // use the original request context
-
-			if err := sp.ProcessChunk(reqCtx, frame.Payload); err != nil {
-				// Context done (timeout) or error during chunk processing
-				resp, _ := sp.Finish(reqCtx)
-				ctx.send(resp)
-				cleanupStream(frame.RequestID)
-				continue
+			req := request{
+				connctx: ctx,
+				frame:   frame,
+				meta:    meta,
+				payload: payload,
+				ctx:     reqCtx,
+				cancel:  cancel,
 			}
 
-		case MsgRequestEnd:
-			sp, ok := streamProcessors[frame.RequestID]
-			if !ok {
-				ctx.send(errorFrame(frame.RequestID, "unknown request ID"))
-				continue
-			}
-			reqCtx := streamContexts[frame.RequestID]
+			// Clean up streaming maps
+			delete(streamBuffers, frame.RequestID)
+			delete(streamMetas, frame.RequestID)
 
-			resp, _ := sp.Finish(reqCtx) // returns MsgError if timeout
-			ctx.send(resp)
-			cleanupStream(frame.RequestID)
+			if !s.pool.submit(req) {
+				cancel()
+				ctx.send(errorFrame(frame.RequestID, "server overloaded"))
+			}
 
 		default:
 			ctx.send(errorFrame(frame.RequestID, "invalid message type"))
