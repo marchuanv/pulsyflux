@@ -18,7 +18,7 @@ type client struct {
 var ErrRequestIDMismatch = errors.New("response ID mismatch")
 
 func NewClient(port string) (*client, error) {
-	conn, err := net.Dial("tcp", "localhost:"+port)
+	conn, err := net.Dial("tcp4", "127.0.0.1:"+port)
 	if err != nil {
 		return nil, err
 	}

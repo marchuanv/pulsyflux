@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -27,12 +28,24 @@ func NewServer(port string) *server {
 }
 
 func (s *server) Start() error {
-	ln, err := net.Listen("tcp", ":"+s.port)
+	lc := &net.ListenConfig{
+		Control: func(network, address string, conn syscall.RawConn) error {
+			return conn.Control(func(fd uintptr) {
+				// Set SO_REUSEADDR to allow quick rebinding
+				syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+				// Increase socket receive buffer
+				syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, 512*1024)
+				// Increase socket send buffer
+				syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_SNDBUF, 512*1024)
+			})
+		},
+	}
+	ln, err := lc.Listen(context.Background(), "tcp4", "127.0.0.1:"+s.port)
 	if err != nil {
 		return err
 	}
 	s.ln = ln
-	s.pool = newWorkerPool(16, 2048)
+	s.pool = newWorkerPool(64, 8192)
 	go s.acceptLoop()
 	return nil
 }
@@ -57,6 +70,8 @@ func (s *server) acceptLoop() {
 			}
 		}
 		s.conns.Add(1)
+		// Use a separate goroutine for each connection handler
+		// to ensure accepts don't block on handler processing
 		go s.handle(conn)
 	}
 }
@@ -66,8 +81,8 @@ func (s *server) handle(conn net.Conn) {
 
 	ctx := &connctx{
 		conn:   conn,
-		writes: make(chan *frame, 2048),
-		errors: make(chan *frame, 512), // Higher priority queue for errors
+		writes: make(chan *frame, 8192), // Increased from 2048 to handle more concurrent writes
+		errors: make(chan *frame, 2048), // Increased from 512 for better error delivery
 		closed: make(chan struct{}),
 		wg:     &sync.WaitGroup{},
 	}

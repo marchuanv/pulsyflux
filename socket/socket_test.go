@@ -227,30 +227,32 @@ func BenchmarkServerQueueOverloadThreshold(b *testing.B) {
 
 			time.Sleep(50 * time.Millisecond)
 
-			cli, err := NewClient("9096")
-			if err != nil {
-				b.Fatalf("Failed to connect client: %v", err)
-			}
-			defer cli.Close()
-
 			var failCount int32
 			var overloadCount int32
 			var connErrors int32
+			var timeoutCount int32
 			var wg sync.WaitGroup
 			wg.Add(load)
 
 			for i := 0; i < load; i++ {
 				go func(i int) {
 					defer wg.Done()
+					cli, err := NewClient("9096")
+					if err != nil {
+						atomic.AddInt32(&failCount, 1)
+						return
+					}
+					defer cli.Close()
 					msg := "msg " + strconv.Itoa(i)
 					resp, err := cli.SendStreamFromReader(strings.NewReader(msg), 5000*time.Millisecond)
 					if err != nil {
 						atomic.AddInt32(&failCount, 1)
 						if strings.Contains(err.Error(), "server overloaded") {
 							atomic.AddInt32(&overloadCount, 1)
-						}
-						if strings.Contains(err.Error(), "forcibly closed") || strings.Contains(err.Error(), "aborted") {
+						} else if strings.Contains(err.Error(), "forcibly closed") || strings.Contains(err.Error(), "aborted") {
 							atomic.AddInt32(&connErrors, 1)
+						} else if strings.Contains(err.Error(), "context deadline") {
+							atomic.AddInt32(&timeoutCount, 1)
 						}
 					}
 					_ = resp
@@ -259,7 +261,7 @@ func BenchmarkServerQueueOverloadThreshold(b *testing.B) {
 
 			wg.Wait()
 
-			b.Logf("Load: %d | Total Failures: %d | Overload Errors: %d | Connection Errors: %d", load, failCount, overloadCount, connErrors)
+			b.Logf("Load: %d | Successes: %d | Failures: %d | Overload: %d | ConnErrors: %d | Timeouts: %d", load, load-int(failCount), failCount, overloadCount, connErrors, timeoutCount)
 		})
 	}
 }
