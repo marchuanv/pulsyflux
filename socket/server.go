@@ -82,9 +82,8 @@ func (s *server) handle(conn net.Conn) {
 		conn.Close()
 	}()
 
-	// Maps for streaming requests
-	streamBuffers := make(map[uint64][]byte)
-	streamMetas := make(map[uint64]requestmeta)
+	// Map for streaming processors
+	streamProcessors := make(map[uint64]*streamprocessor)
 
 	for {
 		select {
@@ -101,10 +100,13 @@ func (s *server) handle(conn net.Conn) {
 
 		switch frame.Type {
 
+		// ---------------- Inline small requests ----------------
 		case MsgRequest:
-			// Inline request (small payload)
 			var payload requestpayload
-			_ = json.Unmarshal(frame.Payload, &payload)
+			if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+				ctx.send(errorFrame(frame.RequestID, "invalid payload"))
+				continue
+			}
 
 			timeout := defaultReqTimeout
 			if payload.TimeoutMs > 0 {
@@ -128,49 +130,46 @@ func (s *server) handle(conn net.Conn) {
 				ctx.send(errorFrame(frame.RequestID, "server overloaded"))
 			}
 
+		// ---------------- Streaming start ----------------
 		case MsgRequestStart:
-			// Start streaming request
 			var meta requestmeta
-			_ = json.Unmarshal(frame.Payload, &meta)
-			streamBuffers[frame.RequestID] = make([]byte, 0, meta.DataSize)
-			streamMetas[frame.RequestID] = meta
+			if err := json.Unmarshal(frame.Payload, &meta); err != nil {
+				ctx.send(errorFrame(frame.RequestID, "invalid meta"))
+				continue
+			}
+			processor := &streamprocessor{
+				RequestID: frame.RequestID,
+			}
+			streamProcessors[frame.RequestID] = processor
 
+		// ---------------- Streaming chunk ----------------
 		case MsgRequestChunk:
-			buf := streamBuffers[frame.RequestID]
-			buf = append(buf, frame.Payload...)
-			streamBuffers[frame.RequestID] = buf
+			processor, ok := streamProcessors[frame.RequestID]
+			if !ok {
+				ctx.send(errorFrame(frame.RequestID, "unknown stream ID"))
+				continue
+			}
+			if err := processor.ProcessChunk(frame.Payload); err != nil {
+				ctx.send(errorFrame(frame.RequestID, "failed to process chunk"))
+				delete(streamProcessors, frame.RequestID)
+			}
 
+		// ---------------- Streaming end ----------------
 		case MsgRequestEnd:
-			payload := streamBuffers[frame.RequestID]
-			meta := streamMetas[frame.RequestID]
-
-			timeout := defaultReqTimeout
-			if meta.TimeoutMs > 0 {
-				clientTimeout := time.Duration(meta.TimeoutMs) * time.Millisecond
-				if clientTimeout < defaultReqTimeout {
-					timeout = clientTimeout
-				}
+			processor, ok := streamProcessors[frame.RequestID]
+			if !ok {
+				ctx.send(errorFrame(frame.RequestID, "unknown stream ID"))
+				continue
 			}
-
-			reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
-			req := request{
-				connctx: ctx,
-				frame:   frame,
-				meta:    meta,
-				payload: payload,
-				ctx:     reqCtx,
-				cancel:  cancel,
+			resp, err := processor.Finish()
+			if err != nil {
+				ctx.send(errorFrame(frame.RequestID, err.Error()))
+			} else {
+				ctx.send(resp)
 			}
+			delete(streamProcessors, frame.RequestID)
 
-			// Clean up streaming maps
-			delete(streamBuffers, frame.RequestID)
-			delete(streamMetas, frame.RequestID)
-
-			if !s.pool.submit(req) {
-				cancel()
-				ctx.send(errorFrame(frame.RequestID, "server overloaded"))
-			}
-
+		// ---------------- Invalid message type ----------------
 		default:
 			ctx.send(errorFrame(frame.RequestID, "invalid message type"))
 		}
