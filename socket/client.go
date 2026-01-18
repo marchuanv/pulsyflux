@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-// client represents a streaming client
 type client struct {
 	conn      net.Conn
 	requestID uint64
@@ -88,20 +87,33 @@ func (c *client) SendStreamFromReader(r io.Reader, reqTimeout time.Duration) (*f
 		return nil, err
 	}
 
-	// --- Wait for server response (using client-side context) ---
-	ctx, cancel := context.WithTimeout(context.Background(), reqTimeout+time.Second)
+	// --- Use client-side context to enforce timeout ---
+	ctx, cancel := context.WithTimeout(context.Background(), reqTimeout+5*time.Second)
 	defer cancel()
 
 	respCh := make(chan *frame, 1)
 	errCh := make(chan error, 1)
 
 	go func() {
-		resp, err := readFrame(c.conn)
-		if err != nil {
-			errCh <- err
-			return
+		for {
+			resp, err := readFrame(c.conn)
+			if err != nil {
+				errCh <- err
+				return
+			}
+
+			if resp.RequestID != reqID {
+				errCh <- ErrRequestIDMismatch
+				return
+			}
+
+			// Return immediately if response or error frame
+			if resp.Type == ResponseFrame || resp.Type == ErrorFrame {
+				respCh <- resp
+				return
+			}
+			// Otherwise continue reading
 		}
-		respCh <- resp
 	}()
 
 	select {
@@ -110,8 +122,8 @@ func (c *client) SendStreamFromReader(r io.Reader, reqTimeout time.Duration) (*f
 	case err := <-errCh:
 		return nil, err
 	case resp := <-respCh:
-		if resp.RequestID != reqID {
-			return nil, ErrRequestIDMismatch
+		if resp.Type == ErrorFrame {
+			return resp, errors.New(string(resp.Payload))
 		}
 		return resp, nil
 	}

@@ -12,7 +12,8 @@ import (
 
 // Protocol version
 const Version1 byte = 1
-const workerQueueTimeout = 100 * time.Millisecond
+
+var workerQueueTimeout = 100 * time.Millisecond
 
 // Frame & payload limits
 const (
@@ -44,13 +45,19 @@ type request struct {
 
 // --------------------- Business Logic ---------------------
 func process(ctx context.Context, req request) (*frame, error) {
-	// Handle sleep commands for testing timeouts
-	if strings.HasPrefix(string(req.payload), "sleep") {
+	payloadStr := string(req.payload)
+
+	// Check for sleep command to simulate server-side delay
+	if strings.HasPrefix(payloadStr, "sleep") {
 		var ms int
-		fmt.Sscanf(string(req.payload), "sleep %d", &ms)
+		_, err := fmt.Sscanf(payloadStr, "sleep %d", &ms)
+		if err != nil {
+			return errorFrame(req.frame.RequestID, "invalid sleep command"), err
+		}
 
 		select {
 		case <-time.After(time.Duration(ms) * time.Millisecond):
+			// Return successful response after sleep
 			return &frame{
 				Version:   Version1,
 				Type:      ResponseFrame,
@@ -58,18 +65,19 @@ func process(ctx context.Context, req request) (*frame, error) {
 				Payload:   []byte("Processed " + strconv.Itoa(len(req.payload)) + " bytes"),
 			}, nil
 		case <-ctx.Done():
+			// Timeout or cancellation
 			return errorFrame(req.frame.RequestID, ctx.Err().Error()), ctx.Err()
 		}
 	}
 
-	// Simulate processing delay
+	// Normal processing: simulate slight delay
 	select {
 	case <-time.After(200 * time.Millisecond):
 	case <-ctx.Done():
 		return errorFrame(req.frame.RequestID, ctx.Err().Error()), ctx.Err()
 	}
 
-	// Normal response for all payloads
+	// Return processed response
 	return &frame{
 		Version:   Version1,
 		Type:      ResponseFrame,

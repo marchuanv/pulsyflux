@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// Worker pool for async processing (optional)
 type workerpool struct {
 	jobs chan request
 	wg   sync.WaitGroup
@@ -29,13 +28,12 @@ func newWorkerPool(workers, queue int) *workerpool {
 				}
 
 				resp, err := process(req.ctx, req)
-				req.cancel()
+				req.cancel() // always cancel after processing
 
 				if err != nil {
 					req.connctx.send(errorFrame(req.frame.RequestID, err.Error()))
 					continue
 				}
-
 				req.connctx.send(resp)
 			}
 		}()
@@ -49,8 +47,10 @@ func (wp *workerpool) submit(req request) bool {
 	case wp.jobs <- req:
 		return true
 	case <-time.After(workerQueueTimeout):
+		req.cancel() // cancel if submission fails
 		return false
 	case <-req.ctx.Done():
+		req.cancel()
 		return false
 	}
 }
