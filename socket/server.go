@@ -17,6 +17,7 @@ type server struct {
 	pool   *workerpool
 }
 
+// NewServer creates a new TCP server
 func NewServer(port string) *server {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &server{
@@ -26,18 +27,19 @@ func NewServer(port string) *server {
 	}
 }
 
+// Start begins listening and processing clients
 func (s *server) Start() error {
 	ln, err := net.Listen("tcp", ":"+s.port)
 	if err != nil {
 		return err
 	}
-
 	s.ln = ln
-	s.pool = newWorkerPool(8, 1024)
+	s.pool = newWorkerPool(8, 1024) // optional worker pool
 	go s.acceptLoop()
 	return nil
 }
 
+// Stop shuts down the server
 func (s *server) Stop(ctx context.Context) error {
 	s.cancel()
 	s.ln.Close()
@@ -46,6 +48,7 @@ func (s *server) Stop(ctx context.Context) error {
 	return nil
 }
 
+// acceptLoop handles incoming connections
 func (s *server) acceptLoop() {
 	for {
 		conn, err := s.ln.Accept()
@@ -62,7 +65,7 @@ func (s *server) acceptLoop() {
 	}
 }
 
-// ---------------- Handle a single client connection ----------------
+// handle a single client connection
 func (s *server) handle(conn net.Conn) {
 	defer s.conns.Done()
 
@@ -82,8 +85,19 @@ func (s *server) handle(conn net.Conn) {
 		conn.Close()
 	}()
 
-	// Map for streaming processors
+	// Maps to store stream processors and their contexts per request
 	streamProcessors := make(map[uint64]*streamprocessor)
+	streamContexts := make(map[uint64]context.Context)
+	streamCancels := make(map[uint64]context.CancelFunc)
+
+	cleanupStream := func(reqID uint64) {
+		if c, ok := streamCancels[reqID]; ok {
+			c() // cancel context
+			delete(streamCancels, reqID)
+		}
+		delete(streamProcessors, reqID)
+		delete(streamContexts, reqID)
+	}
 
 	for {
 		select {
@@ -100,76 +114,56 @@ func (s *server) handle(conn net.Conn) {
 
 		switch frame.Type {
 
-		// ---------------- Inline small requests ----------------
-		case MsgRequest:
-			var payload requestpayload
-			if err := json.Unmarshal(frame.Payload, &payload); err != nil {
-				ctx.send(errorFrame(frame.RequestID, "invalid payload"))
-				continue
-			}
+		case MsgRequestStart:
+			// Start streaming request and parse optional meta
+			meta := requestmeta{}
+			_ = json.Unmarshal(frame.Payload, &meta)
 
+			// Apply client timeout if specified
 			timeout := defaultReqTimeout
-			if payload.TimeoutMs > 0 {
-				clientTimeout := time.Duration(payload.TimeoutMs) * time.Millisecond
+			if meta.TimeoutMs > 0 {
+				clientTimeout := time.Duration(meta.TimeoutMs) * time.Millisecond
 				if clientTimeout < defaultReqTimeout {
 					timeout = clientTimeout
 				}
 			}
 
+			// Create a single request-scoped context
 			reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
-			req := request{
-				connctx: ctx,
-				frame:   frame,
-				payload: []byte(payload.Data),
-				ctx:     reqCtx,
-				cancel:  cancel,
-			}
 
-			if !s.pool.submit(req) {
-				cancel()
-				ctx.send(errorFrame(frame.RequestID, "server overloaded"))
-			}
+			sp := &streamprocessor{RequestID: frame.RequestID}
+			streamProcessors[frame.RequestID] = sp
+			streamContexts[frame.RequestID] = reqCtx
+			streamCancels[frame.RequestID] = cancel
 
-		// ---------------- Streaming start ----------------
-		case MsgRequestStart:
-			var meta requestmeta
-			if err := json.Unmarshal(frame.Payload, &meta); err != nil {
-				ctx.send(errorFrame(frame.RequestID, "invalid meta"))
-				continue
-			}
-			processor := &streamprocessor{
-				RequestID: frame.RequestID,
-			}
-			streamProcessors[frame.RequestID] = processor
-
-		// ---------------- Streaming chunk ----------------
 		case MsgRequestChunk:
-			processor, ok := streamProcessors[frame.RequestID]
+			sp, ok := streamProcessors[frame.RequestID]
 			if !ok {
-				ctx.send(errorFrame(frame.RequestID, "unknown stream ID"))
+				ctx.send(errorFrame(frame.RequestID, "unknown request ID"))
 				continue
 			}
-			if err := processor.ProcessChunk(frame.Payload); err != nil {
-				ctx.send(errorFrame(frame.RequestID, "failed to process chunk"))
-				delete(streamProcessors, frame.RequestID)
-			}
+			reqCtx := streamContexts[frame.RequestID] // use the original request context
 
-		// ---------------- Streaming end ----------------
-		case MsgRequestEnd:
-			processor, ok := streamProcessors[frame.RequestID]
-			if !ok {
-				ctx.send(errorFrame(frame.RequestID, "unknown stream ID"))
-				continue
-			}
-			resp, err := processor.Finish()
-			if err != nil {
-				ctx.send(errorFrame(frame.RequestID, err.Error()))
-			} else {
+			if err := sp.ProcessChunk(reqCtx, frame.Payload); err != nil {
+				// Context done (timeout) or error during chunk processing
+				resp, _ := sp.Finish(reqCtx)
 				ctx.send(resp)
+				cleanupStream(frame.RequestID)
+				continue
 			}
-			delete(streamProcessors, frame.RequestID)
 
-		// ---------------- Invalid message type ----------------
+		case MsgRequestEnd:
+			sp, ok := streamProcessors[frame.RequestID]
+			if !ok {
+				ctx.send(errorFrame(frame.RequestID, "unknown request ID"))
+				continue
+			}
+			reqCtx := streamContexts[frame.RequestID]
+
+			resp, _ := sp.Finish(reqCtx) // returns MsgError if timeout
+			ctx.send(resp)
+			cleanupStream(frame.RequestID)
+
 		default:
 			ctx.send(errorFrame(frame.RequestID, "invalid message type"))
 		}

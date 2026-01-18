@@ -15,7 +15,6 @@ type frame struct {
 	Payload   []byte
 }
 
-// readFrame reads a single frame from conn
 func readFrame(conn net.Conn) (*frame, error) {
 	var header [headerSize]byte
 	if _, err := io.ReadFull(conn, header[:]); err != nil {
@@ -41,12 +40,7 @@ func readFrame(conn net.Conn) (*frame, error) {
 	}, nil
 }
 
-// writeFrame writes a single frame to conn
 func writeFrame(conn net.Conn, f *frame) error {
-	if f.Type == MsgRequest && len(f.Payload) > maxFrameSize {
-		return errors.New("inline payload too large; use streaming")
-	}
-
 	var header [headerSize]byte
 	header[0] = f.Version
 	header[1] = f.Type

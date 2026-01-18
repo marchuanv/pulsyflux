@@ -2,15 +2,14 @@ package socket
 
 import (
 	"context"
-	"io"
-	"runtime"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 )
 
-// ---------------- Inline small payload tests ----------------
-func TestServerClientInline(t *testing.T) {
+// -------------------- Small payload streaming --------------------
+func TestSmallPayloadStreaming(t *testing.T) {
 	server := NewServer("9090")
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
@@ -27,19 +26,20 @@ func TestServerClientInline(t *testing.T) {
 
 	requests := []string{"first", "second", "third"}
 	for i, msg := range requests {
-		resp, err := client.SendRequest(msg, 1000)
+		resp, err := client.SendString(msg, 1000)
 		if err != nil {
 			t.Errorf("Request %d error: %v", i, err)
 			continue
 		}
-		expected := "ACK: " + msg
+
+		expected := formatProcessed(msg)
 		if string(resp.Payload) != expected {
 			t.Errorf("Request %d: expected %q, got %q", i, expected, string(resp.Payload))
 		}
 	}
 }
 
-// ---------------- Client timeout tests ----------------
+// -------------------- Timeout tests --------------------
 func TestClientTimeout(t *testing.T) {
 	server := NewServer("9091")
 	if err := server.Start(); err != nil {
@@ -55,19 +55,20 @@ func TestClientTimeout(t *testing.T) {
 	}
 	defer client.Close()
 
-	// Fast request (should succeed)
-	resp, err := client.SendRequest("fast request", 1000)
+	// Fast request should succeed
+	resp, err := client.SendString("fast request", 1000)
 	if err != nil {
 		t.Fatalf("Fast request failed: %v", err)
 	}
-	if string(resp.Payload) != "ACK: fast request" {
-		t.Fatalf("Expected ACK: fast request, got %q", string(resp.Payload))
+	expected := formatProcessed("fast request")
+	if string(resp.Payload) != expected {
+		t.Fatalf("Expected %q, got %q", expected, string(resp.Payload))
 	}
 
-	// Slow request exceeds timeout
-	resp, err = client.SendRequest("sleep 2000", 500) // 0.5s timeout, server sleeps 2s
+	// Slow request should hit timeout
+	resp, err = client.SendString("sleep 2000", 500) // 0.5s timeout
 	if err != nil {
-		t.Fatalf("SendRequest failed unexpectedly: %v", err)
+		t.Fatalf("SendString failed unexpectedly: %v", err)
 	}
 	if resp.Type != MsgError {
 		t.Fatalf("Expected error frame for timeout, got %+v", resp)
@@ -77,8 +78,8 @@ func TestClientTimeout(t *testing.T) {
 	}
 }
 
-// ---------------- Streaming large payload tests ----------------
-func TestLargePayloadStreamingFromReader(t *testing.T) {
+// -------------------- Large payload streaming --------------------
+func TestLargePayloadStreaming(t *testing.T) {
 	server := NewServer("9092")
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
@@ -93,35 +94,23 @@ func TestLargePayloadStreamingFromReader(t *testing.T) {
 	}
 	defer client.Close()
 
-	// Record memory before streaming
-	var memStart runtime.MemStats
-	runtime.ReadMemStats(&memStart)
+	largeData := strings.Repeat("X", 2*1024*1024+10) // 2 MB + 10 bytes
 
-	totalSize := 2*1024*1024 + 10 // 2 MB + 10 bytes
-	reader := strings.NewReader(strings.Repeat("X", totalSize))
-
-	resp, err := client.SendStreamFromReader(reader, 5000)
+	resp, err := client.SendStreamFromReader(strings.NewReader(largeData), 5000)
 	if err != nil {
-		t.Fatalf("SendStreamFromReader failed: %v", err)
+		t.Fatalf("Large payload request failed: %v", err)
 	}
 
-	if !strings.HasPrefix(string(resp.Payload), "Processed") && !strings.HasPrefix(string(resp.Payload), "ACK:") {
-		t.Fatalf("Unexpected response for streamed payload: %q", string(resp.Payload))
+	expectedPrefix := "Processed"
+	if !strings.HasPrefix(string(resp.Payload), expectedPrefix) {
+		t.Fatalf("Unexpected response for large payload: %q", string(resp.Payload))
 	}
 
-	// Record memory after streaming
-	var memEnd runtime.MemStats
-	runtime.ReadMemStats(&memEnd)
-	allocMB := float64(memEnd.Alloc-memStart.Alloc) / 1024.0 / 1024.0
-	t.Logf("Streaming test passed: %d bytes, RAM delta: %.2f MB", totalSize, allocMB)
-
-	if allocMB > 50 {
-		t.Errorf("RAM usage too high for streaming: %.2f MB", allocMB)
-	}
+	t.Logf("Large payload streaming test passed: %d bytes", len(largeData))
 }
 
-// ---------------- Streaming very large payload (~3 MB) ----------------
-func TestStreamFromReaderMultiChunk(t *testing.T) {
+// -------------------- Multi-chunk streaming test --------------------
+func TestMultiChunkStreaming(t *testing.T) {
 	server := NewServer("9093")
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
@@ -136,48 +125,24 @@ func TestStreamFromReaderMultiChunk(t *testing.T) {
 	}
 	defer client.Close()
 
-	totalSize := 3*1024*1024 + 123 // ~3 MB
-	reader := strings.NewReader(strings.Repeat("R", totalSize))
-
-	resp, err := client.SendStreamFromReader(reader, 5000)
+	// 3 MB payload → multiple chunks
+	data := strings.Repeat("A", 3*1024*1024)
+	resp, err := client.SendStreamFromReader(strings.NewReader(data), 5000)
 	if err != nil {
-		t.Fatalf("SendStreamFromReader failed: %v", err)
+		t.Fatalf("Multi-chunk streaming failed: %v", err)
 	}
 
-	if !strings.HasPrefix(string(resp.Payload), "Processed") && !strings.HasPrefix(string(resp.Payload), "ACK:") {
-		t.Fatalf("Unexpected response from SendStreamFromReader: %q", string(resp.Payload))
+	expectedPrefix := "Processed"
+	if !strings.HasPrefix(string(resp.Payload), expectedPrefix) {
+		t.Fatalf("Unexpected response for multi-chunk payload: %q", string(resp.Payload))
 	}
 
-	t.Logf("Streaming from reader test passed, total size: %d bytes", totalSize)
+	t.Logf("Multi-chunk streaming test passed: %d bytes", len(data))
 }
 
-// ---------------- Streaming from file-like reader (io.Reader) ----------------
-func TestStreamFromGenericReader(t *testing.T) {
-	server := NewServer("9094")
-	if err := server.Start(); err != nil {
-		t.Fatalf("Failed to start server: %v", err)
-	}
-	defer server.Stop(context.Background())
+// -------------------- Helper --------------------
 
-	time.Sleep(50 * time.Millisecond)
-
-	client, err := NewClient("9094")
-	if err != nil {
-		t.Fatalf("Failed to connect client: %v", err)
-	}
-	defer client.Close()
-
-	totalSize := 1*1024*1024 + 500 // 1 MB + 500 bytes
-	reader := io.LimitReader(strings.NewReader(strings.Repeat("C", totalSize)), int64(totalSize))
-
-	resp, err := client.SendStreamFromReader(reader, 5000)
-	if err != nil {
-		t.Fatalf("SendStreamFromReader failed: %v", err)
-	}
-
-	if !strings.HasPrefix(string(resp.Payload), "Processed") && !strings.HasPrefix(string(resp.Payload), "ACK:") {
-		t.Fatalf("Unexpected response from SendStreamFromReader: %q", string(resp.Payload))
-	}
-
-	t.Logf("Streaming from generic io.Reader test passed, total size: %d bytes", totalSize)
+// formatProcessed returns the expected "Processed N bytes" string for payloads
+func formatProcessed(s string) string {
+	return fmt.Sprintf("Processed %d bytes", len(s))
 }

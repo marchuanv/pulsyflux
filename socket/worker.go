@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// Worker pool for async processing (optional)
 type workerpool struct {
 	jobs chan request
 	wg   sync.WaitGroup
