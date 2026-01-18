@@ -93,7 +93,8 @@ func (s *server) handle(conn net.Conn) {
 
 	defer func() {
 		// Cancel all pending requests
-		for _, req := range streamReqs {
+		for reqIId, req := range streamReqs {
+			streamReqs[reqIId] = nil
 			if req.cancel != nil {
 				req.cancel()
 			}
