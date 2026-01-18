@@ -2,7 +2,6 @@ package socket
 
 import (
 	"sync"
-	"time"
 )
 
 type workerpool struct {
@@ -28,12 +27,14 @@ func newWorkerPool(workers, queue int) *workerpool {
 				}
 
 				resp, err := process(req.ctx, req)
-				req.cancel() // always cancel after processing
+				req.cancel()
 
 				if err != nil {
 					req.connctx.send(errorFrame(req.frame.RequestID, err.Error()))
 					continue
 				}
+
+				// non-blocking send
 				req.connctx.send(resp)
 			}
 		}()
@@ -42,15 +43,12 @@ func newWorkerPool(workers, queue int) *workerpool {
 	return wp
 }
 
+// submit tries to enqueue request; fails only if queue is full
 func (wp *workerpool) submit(req request) bool {
 	select {
 	case wp.jobs <- req:
 		return true
-	case <-time.After(workerQueueTimeout):
-		req.cancel() // cancel if submission fails
-		return false
-	case <-req.ctx.Done():
-		req.cancel()
+	default:
 		return false
 	}
 }

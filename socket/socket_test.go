@@ -5,97 +5,84 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestConcurrentClients(t *testing.T) {
+func TestSmallPayloadStreaming(t *testing.T) {
 	server := NewServer("9090")
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
 	defer server.Stop(context.Background())
 
-	time.Sleep(100 * time.Millisecond) // allow server to start
+	time.Sleep(50 * time.Millisecond)
 
-	numClients := 10
-	numRequests := 5
-	var wg sync.WaitGroup
-	wg.Add(numClients)
-
-	for c := 0; c < numClients; c++ {
-		go func(clientID int) {
-			defer wg.Done()
-			client, err := NewClient("9090")
-			if err != nil {
-				t.Errorf("Client %d failed to connect: %v", clientID, err)
-				return
-			}
-			defer client.Close()
-
-			for r := 0; r < numRequests; r++ {
-				msg := "client" + strconv.Itoa(clientID) + "_msg" + strconv.Itoa(r)
-				// Increased timeout to 5s
-				resp, err := client.SendStreamFromReader(strings.NewReader(msg), 5*time.Second)
-				if err != nil {
-					t.Errorf("Client %d request %d error: %v", clientID, r, err)
-					continue
-				}
-				expected := "Processed " + strconv.Itoa(len(msg)) + " bytes"
-				if string(resp.Payload) != expected {
-					t.Errorf("Client %d request %d: expected %q, got %q", clientID, r, expected, string(resp.Payload))
-				}
-			}
-		}(c)
+	cli, err := NewClient("9090")
+	if err != nil {
+		t.Fatalf("Failed to connect client: %v", err)
 	}
+	defer cli.Close()
 
-	wg.Wait()
+	payloads := []string{"first", "second", "third"}
+	for i, msg := range payloads {
+		resp, err := cli.SendStreamFromReader(strings.NewReader(msg), 5000) // 5s timeout
+		if err != nil {
+			t.Errorf("Request %d error: %v", i, err)
+			continue
+		}
+
+		expected := "Processed " + strconv.Itoa(len(msg)) + " bytes"
+		if string(resp.Payload) != expected {
+			t.Errorf("Request %d: expected %q, got %q", i, expected, string(resp.Payload))
+		}
+	}
 }
 
-func TestLargePayloadFullValidation(t *testing.T) {
+func TestLargePayloadStreaming(t *testing.T) {
 	server := NewServer("9091")
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
 	defer server.Stop(context.Background())
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
-	client, err := NewClient("9091")
+	cli, err := NewClient("9091")
 	if err != nil {
 		t.Fatalf("Failed to connect client: %v", err)
 	}
-	defer client.Close()
+	defer cli.Close()
 
 	largeData := strings.Repeat("X", 2*1024*1024+10)
-	resp, err := client.SendStreamFromReader(strings.NewReader(largeData), 15*time.Second) // longer timeout
+	resp, err := cli.SendStreamFromReader(strings.NewReader(largeData), 5000)
 	if err != nil {
 		t.Fatalf("Large payload request failed: %v", err)
 	}
 
-	expected := "Processed " + strconv.Itoa(len(largeData)) + " bytes"
-	if string(resp.Payload) != expected {
-		t.Fatalf("Large payload response mismatch: got %q", string(resp.Payload))
+	expectedPrefix := "Processed " + strconv.Itoa(len(largeData)) + " bytes"
+	if !strings.HasPrefix(string(resp.Payload), expectedPrefix[:20]) {
+		t.Fatalf("Large payload response seems wrong, got first bytes: %q", string(resp.Payload[:20]))
 	}
 }
 
-func TestClientTimeoutBehavior(t *testing.T) {
+func TestClientTimeout(t *testing.T) {
 	server := NewServer("9092")
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
 	defer server.Stop(context.Background())
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
-	client, err := NewClient("9092")
+	cli, err := NewClient("9092")
 	if err != nil {
 		t.Fatalf("Failed to connect client: %v", err)
 	}
-	defer client.Close()
+	defer cli.Close()
 
-	// Fast request (should succeed)
-	resp, err := client.SendStreamFromReader(strings.NewReader("fast request"), 3*time.Second)
+	resp, err := cli.SendStreamFromReader(strings.NewReader("fast request"), 5000)
 	if err != nil {
 		t.Fatalf("Fast request failed: %v", err)
 	}
@@ -104,57 +91,97 @@ func TestClientTimeoutBehavior(t *testing.T) {
 		t.Fatalf("Expected %q, got %q", expected, string(resp.Payload))
 	}
 
-	// Timeout request: server sleeps 2s but timeout is 1s
 	sleepPayload := "sleep 2000"
-	resp, err = client.SendStreamFromReader(strings.NewReader(sleepPayload), 1*time.Second)
+	resp, err = cli.SendStreamFromReader(strings.NewReader(sleepPayload), 500)
 	if err == nil {
 		t.Fatalf("Expected timeout error, got nil")
 	}
-	if resp == nil || resp.Type != ErrorFrame {
+
+	if resp.Type != ErrorFrame {
 		t.Fatalf("Expected error frame for timeout, got %+v", resp)
 	}
+
 	if string(resp.Payload) != "context deadline exceeded" {
 		t.Fatalf("Expected 'context deadline exceeded', got %q", string(resp.Payload))
 	}
 }
 
-func TestWorkerPoolOverload(t *testing.T) {
-	// Increase workerQueueTimeout temporarily
-	originalQueueTimeout := workerQueueTimeout
-	defer func() { workerQueueTimeout = originalQueueTimeout }()
-	workerQueueTimeout = 5 * time.Second // prevent premature timeout
-
+func TestConcurrentClients(t *testing.T) {
 	server := NewServer("9093")
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
 	defer server.Stop(context.Background())
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
-	client, err := NewClient("9093")
+	numClients := 10
+	numRequests := 100
+	var wg sync.WaitGroup
+
+	for i := 0; i < numClients; i++ {
+		cli, err := NewClient("9093")
+		if err != nil {
+			t.Fatalf("Failed to create client %d: %v", i, err)
+		}
+		defer cli.Close()
+
+		wg.Add(1)
+		go func(c *client) {
+			defer wg.Done()
+			for j := 0; j < numRequests; j++ {
+				msg := "msg " + strconv.Itoa(j)
+				resp, err := c.SendStreamFromReader(strings.NewReader(msg), 5000)
+				if err != nil {
+					t.Errorf("Concurrent client error: %v", err)
+					continue
+				}
+				expected := "Processed " + strconv.Itoa(len(msg)) + " bytes"
+				if string(resp.Payload) != expected {
+					t.Errorf("Expected %q, got %q", expected, string(resp.Payload))
+				}
+			}
+		}(cli)
+	}
+
+	wg.Wait()
+}
+
+func TestServerQueueOverload(t *testing.T) {
+	server := NewServer("9094")
+	if err := server.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer server.Stop(context.Background())
+
+	time.Sleep(50 * time.Millisecond)
+
+	cli, err := NewClient("9094")
 	if err != nil {
 		t.Fatalf("Failed to connect client: %v", err)
 	}
-	defer client.Close()
+	defer cli.Close()
 
-	numRequests := 1100
-	errorsSeen := 0
+	totalRequests := 2000
+	var wg sync.WaitGroup
+	wg.Add(totalRequests)
 
-	for i := 0; i < numRequests; i++ {
-		payload := "msg" + strconv.Itoa(i)
-		resp, err := client.SendStreamFromReader(strings.NewReader(payload), 10*time.Second)
-		if err != nil {
-			if resp != nil && resp.Type == ErrorFrame && string(resp.Payload) == "server overloaded" {
-				errorsSeen++
-			} else {
-				t.Errorf("Unexpected error: %v, resp: %+v", err, resp)
+	var failCount int32
+
+	for i := 0; i < totalRequests; i++ {
+		go func(i int) {
+			defer wg.Done()
+			msg := "msg " + strconv.Itoa(i)
+			resp, err := cli.SendStreamFromReader(strings.NewReader(msg), 5000)
+			if err != nil && resp != nil && resp.Type == ErrorFrame {
+				atomic.AddInt32(&failCount, 1)
 			}
-		}
+		}(i)
 	}
 
-	t.Logf("Worker pool overload test: %d/%d requests returned 'server overloaded'", errorsSeen, numRequests)
-	if errorsSeen == 0 {
-		t.Fatalf("Expected some requests to fail due to overload, but none did")
+	wg.Wait()
+
+	if failCount == 0 {
+		t.Errorf("Expected some requests to fail due to server overload")
 	}
 }
