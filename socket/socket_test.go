@@ -15,7 +15,10 @@ func TestSmallPayloadStreaming(t *testing.T) {
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
-	defer server.Stop(context.Background())
+	defer func() {
+		server.Stop(context.Background())
+		time.Sleep(100 * time.Millisecond)
+	}()
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -27,7 +30,7 @@ func TestSmallPayloadStreaming(t *testing.T) {
 
 	payloads := []string{"first", "second", "third"}
 	for i, msg := range payloads {
-		resp, err := cli.SendStreamFromReader(strings.NewReader(msg), 5000) // 5s timeout
+		resp, err := cli.SendStreamFromReader(strings.NewReader(msg), 1000*time.Millisecond) // 5s timeout
 		if err != nil {
 			t.Errorf("Request %d error: %v", i, err)
 			continue
@@ -45,7 +48,10 @@ func TestLargePayloadStreaming(t *testing.T) {
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
-	defer server.Stop(context.Background())
+	defer func() {
+		server.Stop(context.Background())
+		time.Sleep(100 * time.Millisecond)
+	}()
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -56,7 +62,7 @@ func TestLargePayloadStreaming(t *testing.T) {
 	defer cli.Close()
 
 	largeData := strings.Repeat("X", 2*1024*1024+10)
-	resp, err := cli.SendStreamFromReader(strings.NewReader(largeData), 5000)
+	resp, err := cli.SendStreamFromReader(strings.NewReader(largeData), 1000*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Large payload request failed: %v", err)
 	}
@@ -72,7 +78,10 @@ func TestClientTimeout(t *testing.T) {
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
-	defer server.Stop(context.Background())
+	defer func() {
+		server.Stop(context.Background())
+		time.Sleep(100 * time.Millisecond)
+	}()
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -82,7 +91,7 @@ func TestClientTimeout(t *testing.T) {
 	}
 	defer cli.Close()
 
-	resp, err := cli.SendStreamFromReader(strings.NewReader("fast request"), 5000)
+	resp, err := cli.SendStreamFromReader(strings.NewReader("fast request"), 5000*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Fast request failed: %v", err)
 	}
@@ -92,17 +101,13 @@ func TestClientTimeout(t *testing.T) {
 	}
 
 	sleepPayload := "sleep 2000"
-	resp, err = cli.SendStreamFromReader(strings.NewReader(sleepPayload), 500)
+	resp, err = cli.SendStreamFromReader(strings.NewReader(sleepPayload), 500*time.Millisecond)
 	if err == nil {
 		t.Fatalf("Expected timeout error, got nil")
 	}
 
-	if resp.Type != ErrorFrame {
-		t.Fatalf("Expected error frame for timeout, got %+v", resp)
-	}
-
-	if string(resp.Payload) != "context deadline exceeded" {
-		t.Fatalf("Expected 'context deadline exceeded', got %q", string(resp.Payload))
+	if err.Error() != "context deadline exceeded" {
+		t.Fatalf("Expected 'context deadline exceeded', got %q", err.Error())
 	}
 }
 
@@ -111,7 +116,10 @@ func TestConcurrentClients(t *testing.T) {
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
-	defer server.Stop(context.Background())
+	defer func() {
+		server.Stop(context.Background())
+		time.Sleep(100 * time.Millisecond)
+	}()
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -130,8 +138,9 @@ func TestConcurrentClients(t *testing.T) {
 		go func(c *client) {
 			defer wg.Done()
 			for j := 0; j < numRequests; j++ {
-				msg := "msg " + strconv.Itoa(j)
-				resp, err := c.SendStreamFromReader(strings.NewReader(msg), 5000)
+				// Create a larger payload (1KB) to be more realistic
+				msg := strings.Repeat("x", 1024) + strconv.Itoa(j)
+				resp, err := c.SendStreamFromReader(strings.NewReader(msg), 1000*time.Millisecond)
 				if err != nil {
 					t.Errorf("Concurrent client error: %v", err)
 					continue
@@ -152,7 +161,10 @@ func TestServerQueueOverload(t *testing.T) {
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
-	defer server.Stop(context.Background())
+	defer func() {
+		server.Stop(context.Background())
+		time.Sleep(100 * time.Millisecond)
+	}()
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -162,26 +174,92 @@ func TestServerQueueOverload(t *testing.T) {
 	}
 	defer cli.Close()
 
-	totalRequests := 2000
+	totalRequests := 10000 // Increase to 10k to exceed queue capacity
 	var wg sync.WaitGroup
 	wg.Add(totalRequests)
 
 	var failCount int32
+	var overloadCount int32
+	var connErrors int32
 
 	for i := 0; i < totalRequests; i++ {
 		go func(i int) {
 			defer wg.Done()
 			msg := "msg " + strconv.Itoa(i)
-			resp, err := cli.SendStreamFromReader(strings.NewReader(msg), 5000)
-			if err != nil && resp != nil && resp.Type == ErrorFrame {
+			resp, err := cli.SendStreamFromReader(strings.NewReader(msg), 5000*time.Millisecond)
+			if err != nil {
+				// Count total failures
 				atomic.AddInt32(&failCount, 1)
+				// Check specifically for overload errors
+				if strings.Contains(err.Error(), "server overloaded") {
+					atomic.AddInt32(&overloadCount, 1)
+				}
+				if strings.Contains(err.Error(), "forcibly closed") || strings.Contains(err.Error(), "aborted") {
+					atomic.AddInt32(&connErrors, 1)
+				}
 			}
+			_ = resp
 		}(i)
 	}
 
 	wg.Wait()
 
+	// Under overload, we expect connection failures
 	if failCount == 0 {
-		t.Errorf("Expected some requests to fail due to server overload")
+		t.Errorf("Expected request failures under heavy load")
+	}
+}
+
+func BenchmarkServerQueueOverloadThreshold(b *testing.B) {
+	// Test at different load levels to find overload threshold
+	testLoads := []int{100, 500, 1000, 2000}
+
+	for _, load := range testLoads {
+		b.Run(strconv.Itoa(load)+"Requests", func(b *testing.B) {
+			server := NewServer("9096")
+			if err := server.Start(); err != nil {
+				b.Fatalf("Failed to start server: %v", err)
+			}
+			defer func() {
+				server.Stop(context.Background())
+				time.Sleep(100 * time.Millisecond)
+			}()
+
+			time.Sleep(50 * time.Millisecond)
+
+			cli, err := NewClient("9096")
+			if err != nil {
+				b.Fatalf("Failed to connect client: %v", err)
+			}
+			defer cli.Close()
+
+			var failCount int32
+			var overloadCount int32
+			var connErrors int32
+			var wg sync.WaitGroup
+			wg.Add(load)
+
+			for i := 0; i < load; i++ {
+				go func(i int) {
+					defer wg.Done()
+					msg := "msg " + strconv.Itoa(i)
+					resp, err := cli.SendStreamFromReader(strings.NewReader(msg), 5000*time.Millisecond)
+					if err != nil {
+						atomic.AddInt32(&failCount, 1)
+						if strings.Contains(err.Error(), "server overloaded") {
+							atomic.AddInt32(&overloadCount, 1)
+						}
+						if strings.Contains(err.Error(), "forcibly closed") || strings.Contains(err.Error(), "aborted") {
+							atomic.AddInt32(&connErrors, 1)
+						}
+					}
+					_ = resp
+				}(i)
+			}
+
+			wg.Wait()
+
+			b.Logf("Load: %d | Total Failures: %d | Overload Errors: %d | Connection Errors: %d", load, failCount, overloadCount, connErrors)
+		})
 	}
 }

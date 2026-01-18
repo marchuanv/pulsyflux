@@ -67,18 +67,27 @@ func (s *server) handle(conn net.Conn) {
 	ctx := &connctx{
 		conn:   conn,
 		writes: make(chan *frame, 2048),
+		errors: make(chan *frame, 512), // Higher priority queue for errors
 		closed: make(chan struct{}),
 		wg:     &sync.WaitGroup{},
 	}
 	ctx.wg.Add(1)
 	startWriter(ctx)
+
+	streamReqs := make(map[uint64]*request)
+
 	defer func() {
+		// Cancel all pending requests
+		for _, req := range streamReqs {
+			if req.cancel != nil {
+				req.cancel()
+			}
+		}
 		close(ctx.writes)
+		close(ctx.errors)
 		ctx.wg.Wait()
 		conn.Close()
 	}()
-
-	streamReqs := make(map[uint64]*request)
 
 	for {
 		select {

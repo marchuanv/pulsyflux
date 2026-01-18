@@ -104,6 +104,9 @@ func (c *client) SendStreamFromReader(r io.Reader, reqTimeout time.Duration) (*f
 		if resp.RequestID != reqID {
 			return nil, ErrRequestIDMismatch
 		}
+		if resp.Type == ErrorFrame {
+			return nil, errors.New(string(resp.Payload))
+		}
 		return resp, nil
 	}
 }
