@@ -26,16 +26,18 @@ const (
 )
 
 type request struct {
-	connctx   *connctx
-	frame     *frame
-	requestID uint64
-	payload   []byte
-	dataSize  uint64
-	timeout   time.Duration
-	reqType   string
-	encoding  string
-	ctx       context.Context
-	cancel    context.CancelFunc
+	connctx    *connctx
+	frame      *frame
+	requestID  uint64
+	payload    []byte
+	dataSize   uint64
+	timeout    time.Duration
+	reqType    string
+	encoding   string
+	ctx        context.Context
+	cancel     context.CancelFunc
+	consumerID uint64
+	providerID uint64
 }
 
 // process simulates request processing with optional sleep for testing timeouts

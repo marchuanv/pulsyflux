@@ -10,12 +10,12 @@ import (
 )
 
 type server struct {
-	port   string
-	ln     net.Listener
-	ctx    context.Context
-	cancel context.CancelFunc
-	conns  sync.WaitGroup
-	pool   *workerpool
+	port           string
+	ln             net.Listener
+	ctx            context.Context
+	cancel         context.CancelFunc
+	conns          sync.WaitGroup
+	requestHandler *requestHandler
 }
 
 func NewServer(port string) *server {
@@ -45,7 +45,8 @@ func (s *server) Start() error {
 		return err
 	}
 	s.ln = ln
-	s.pool = newWorkerPool(64, 8192)
+	registry := newClientRegistry()
+	s.requestHandler = newRequestHandler(64, 8192, registry)
 	go s.acceptLoop()
 	return nil
 }
@@ -54,7 +55,7 @@ func (s *server) Stop(ctx context.Context) error {
 	s.cancel()
 	s.ln.Close()
 	s.conns.Wait()
-	s.pool.stop()
+	s.requestHandler.stop()
 	return nil
 }
 
@@ -144,7 +145,7 @@ func (s *server) handle(conn net.Conn) {
 			req.ctx = reqCtx
 			req.cancel = cancel
 
-			if !s.pool.submit(*req) {
+			if !s.requestHandler.handle(*req) {
 				cancel()
 				ctx.send(errorFrame(req.frame.RequestID, "server overloaded"))
 			}
