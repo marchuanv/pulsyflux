@@ -58,24 +58,3 @@ func (wp *workerpool) stop() {
 	close(wp.jobs)
 	wp.wg.Wait()
 }
-
-func (wp *workerpool) worker() {
-	defer wp.wg.Done()
-	for req := range wp.jobs {
-		select {
-		case <-req.ctx.Done():
-			req.cancel()
-			continue
-		default:
-		}
-
-		resp, err := process(req.ctx, req.frame)
-		req.cancel()
-
-		if err != nil {
-			req.connctx.send(errorFrame(req.frame.RequestID, err.Error()))
-			continue
-		}
-		req.connctx.send(resp)
-	}
-}

@@ -28,8 +28,11 @@ func (c *client) Close() error {
 
 // Send a request with a client timeout (ms)
 func (c *client) SendRequest(data string, timeoutMs uint32) (*frame, error) {
+
 	// Generate unique RequestID
 	reqID := atomic.AddUint64(&c.requestID, 1)
+
+	fmt.Printf("[Client] Sending request with RequestID=%d, data=%q, timeout=%dms\n", reqID, data, timeoutMs)
 
 	// Prepare payload
 	payloadObj := requestpayload{

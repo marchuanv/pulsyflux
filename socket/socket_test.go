@@ -13,7 +13,7 @@ func TestServerClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
-	defer server.Stop(context.TODO())
+	defer server.Stop(context.Background())
 
 	// Give server a moment to start
 	time.Sleep(100 * time.Millisecond)
@@ -47,7 +47,7 @@ func TestClientTimeout(t *testing.T) {
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
-	defer server.Stop(context.TODO())
+	defer server.Stop(context.Background())
 
 	time.Sleep(100 * time.Millisecond) // give server time to start
 

@@ -104,7 +104,8 @@ func (s *server) handle(conn net.Conn) {
 		// Parse client-specified timeout
 		timeout := defaultReqTimeout
 		var payload requestpayload
-		if err := json.Unmarshal(frame.Payload, &payload); err == nil && payload.TimeoutMs > 0 {
+		err = json.Unmarshal(frame.Payload, &payload)
+		if err == nil && payload.TimeoutMs > 0 {
 			clientTimeout := time.Duration(payload.TimeoutMs) * time.Millisecond
 			if clientTimeout < defaultReqTimeout {
 				timeout = clientTimeout
