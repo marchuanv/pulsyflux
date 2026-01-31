@@ -59,8 +59,10 @@ Consumer → Server → Provider
 - Error buffer: 2048 frames
 
 ### 7. Request Workers (`reqworker.go`, `reqhandler.go`)
-- Pool of 64 workers processing requests from a queue
-- Queue size: 8192 requests
+- Pool of 64 workers processing requests from per-worker queues
+- Each worker has its own queue (8192 / 64 = 128 requests per worker)
+- **RequestID-based routing**: Frames for the same RequestID are hashed to the same worker
+- Ensures sequential processing of StartFrame → ChunkFrame(s) → EndFrame
 - Forwards frames between peers with routing info (clientID + channelID)
 - Handles peer disappearance gracefully
 
@@ -94,6 +96,8 @@ Consumer → Server → Provider
 - **Graceful cleanup**: Proper connection and resource cleanup
 - **Backpressure handling**: Drops frames when buffers full
 - **Error prioritization**: Error frames bypass regular queue
+- **Frame ordering**: RequestID-based worker routing ensures frames are processed in order
+- **Concurrent request processing**: Different requests can be processed in parallel by different workers
 
 ## Usage Example
 
@@ -122,7 +126,7 @@ fmt.Println(string(response)) // "processed: hello"
 ## Configuration
 
 - **Worker pool size**: 64 workers
-- **Worker queue size**: 8192 requests
+- **Per-worker queue size**: 128 requests (8192 total / 64 workers)
 - **Write buffer**: 8192 frames per connection
 - **Error buffer**: 2048 frames per connection
 - **Socket buffers**: 512KB send/receive
@@ -130,3 +134,19 @@ fmt.Println(string(response)) // "processed: hello"
 - **Default timeout**: 5 seconds
 - **Frame read timeout**: 2 minutes
 - **Frame write timeout**: 5 seconds
+
+## Implementation Details
+
+### Frame Ordering
+
+The system ensures frames for the same request are processed in order:
+
+1. **Server receives frames** from consumer in order: StartFrame → ChunkFrame(s) → EndFrame
+2. **RequestID hashing** routes all frames for the same RequestID to the same worker
+3. **Worker processes sequentially** from its dedicated queue
+4. **Async writes** through connctx preserve order on the wire
+
+This design allows:
+- **Sequential processing** of frames within a request
+- **Parallel processing** of different requests across workers
+- **No race conditions** between frames of the same request
