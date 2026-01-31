@@ -7,6 +7,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type server struct {
@@ -16,6 +18,7 @@ type server struct {
 	cancel         context.CancelFunc
 	conns          sync.WaitGroup
 	requestHandler *requestHandler
+	clientRegistry *clientRegistry
 }
 
 func NewServer(port string) *server {
@@ -46,6 +49,7 @@ func (s *server) Start() error {
 	}
 	s.ln = ln
 	registry := newClientRegistry()
+	s.clientRegistry = registry
 	s.requestHandler = newRequestHandler(64, 8192, registry)
 	go s.acceptLoop()
 	return nil
@@ -88,14 +92,14 @@ func (s *server) handle(conn net.Conn) {
 		wg:     &sync.WaitGroup{},
 	}
 	ctx.wg.Add(1)
-	startWriter(ctx)
+	go ctx.startWriter()
 
-	streamReqs := make(map[uint64]*request)
+	streamReqs := make(map[uuid.UUID]*request)
 
 	defer func() {
 		// Cancel all pending requests
-		for reqIId, req := range streamReqs {
-			streamReqs[reqIId] = nil
+		for reqID, req := range streamReqs {
+			streamReqs[reqID] = nil
 			if req.cancel != nil {
 				req.cancel()
 			}
@@ -113,24 +117,53 @@ func (s *server) handle(conn net.Conn) {
 		default:
 		}
 
-		f, err := readFrame(conn)
+		f, err := newFrame(conn)
 		if err != nil {
 			return
 		}
 
 		switch f.Type {
 		case StartFrame:
-			if len(f.Payload) != 8 {
-				ctx.send(errorFrame(f.RequestID, "invalid request start header"))
+			// Validate payload length
+			if len(f.Payload) < 41 {
+				ctx.send(newErrorFrame(f.RequestID, "start frame payload too short"))
 				continue
 			}
-			timeoutMs := binary.BigEndian.Uint64(f.Payload)
+
+			// Extract fields from payload
+			role := ClientRole(f.Payload[0])
+			if role != RoleConsumer && role != RoleProvider {
+				ctx.send(newErrorFrame(f.RequestID, "invalid client role"))
+				continue
+			}
+
+			timeoutMs := binary.BigEndian.Uint64(f.Payload[1:9])
+			timeout := time.Duration(timeoutMs) * time.Millisecond
+
+			var clientID uuid.UUID
+			copy(clientID[:], f.Payload[9:25])
+
+			var channelID uuid.UUID
+			copy(channelID[:], f.Payload[25:41])
+
+			if !s.clientRegistry.hasPeerForChannel(role, channelID) {
+				ctx.send(newErrorFrame(f.RequestID, "no peer available for channel"))
+				continue
+			}
+
+			// Create the request record without storing peer info
+			reqCtx, cancel := context.WithCancel(context.Background())
 			streamReqs[f.RequestID] = &request{
 				connctx:   ctx,
 				frame:     f,
-				payload:   []byte{},
-				timeout:   time.Duration(timeoutMs) * time.Millisecond,
 				requestID: f.RequestID,
+				clientID:  clientID,
+				channelID: channelID,
+				payload:   []byte{},
+				timeout:   timeout,
+				role:      role,
+				ctx:       reqCtx,
+				cancel:    cancel,
 			}
 
 		case ChunkFrame:
@@ -145,13 +178,13 @@ func (s *server) handle(conn net.Conn) {
 			req.ctx = reqCtx
 			req.cancel = cancel
 
-			if !s.requestHandler.handle(*req) {
+			if !s.requestHandler.handle(req) {
 				cancel()
-				ctx.send(errorFrame(req.frame.RequestID, "server overloaded"))
+				ctx.send(newErrorFrame(req.frame.RequestID, "server overloaded"))
 			}
 
 		default:
-			ctx.send(errorFrame(f.RequestID, "invalid message type"))
+			ctx.send(newErrorFrame(f.RequestID, "invalid message type"))
 		}
 	}
 }

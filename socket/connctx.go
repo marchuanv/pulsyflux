@@ -43,38 +43,36 @@ func (ctx *connctx) send(f *frame) bool {
 	}
 }
 
-func startWriter(ctx *connctx) {
-	go func() {
-		defer ctx.wg.Done()
-		for {
-			select {
-			// Prioritize error frames
-			case frame, ok := <-ctx.errors:
-				if !ok {
-					// errors channel closed, drain writes and exit
-					for {
-						select {
-						case frame, ok := <-ctx.writes:
-							if !ok {
-								return
-							}
-							_ = writeFrame(ctx.conn, frame)
-						case <-ctx.closed:
+func (ctx *connctx) startWriter() {
+	defer ctx.wg.Done()
+	for {
+		select {
+		// Prioritize error frames
+		case frame, ok := <-ctx.errors:
+			if !ok {
+				// errors channel closed, drain writes and exit
+				for {
+					select {
+					case frame, ok := <-ctx.writes:
+						if !ok {
 							return
 						}
+						_ = frame.writeFrame(ctx.conn)
+					case <-ctx.closed:
+						return
 					}
 				}
-				if frame != nil {
-					_ = writeFrame(ctx.conn, frame)
-				}
-			case frame, ok := <-ctx.writes:
-				if !ok {
-					return
-				}
-				_ = writeFrame(ctx.conn, frame)
-			case <-ctx.closed:
+			}
+			if frame != nil {
+				_ = frame.writeFrame(ctx.conn)
+			}
+		case frame, ok := <-ctx.writes:
+			if !ok {
 				return
 			}
+			_ = frame.writeFrame(ctx.conn)
+		case <-ctx.closed:
+			return
 		}
-	}()
+	}
 }

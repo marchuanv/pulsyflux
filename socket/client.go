@@ -6,62 +6,121 @@ import (
 	"errors"
 	"io"
 	"net"
-	"sync/atomic"
+	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
+var (
+	ErrRequestIDMismatch = errors.New("response ID mismatch")
+	defaultTimeout       = 5 * time.Second
+)
+
+// client represents a logical client for a single role + channel
 type client struct {
+	addr      string
 	conn      net.Conn
-	requestID uint64
+	connMu    sync.Mutex
+	clientID  uuid.UUID
+	role      ClientRole
+	channelID uuid.UUID
 }
 
-var ErrRequestIDMismatch = errors.New("response ID mismatch")
-
-func NewClient(port string) (*client, error) {
-	conn, err := net.Dial("tcp4", "127.0.0.1:"+port)
-	if err != nil {
+// NewClient automatically creates a TCP connection internally
+func NewClient(addr string, role ClientRole, channelID uuid.UUID) (*client, error) {
+	c := &client{
+		addr:      addr,
+		clientID:  uuid.New(),
+		role:      role,
+		channelID: channelID,
+	}
+	if err := c.ensureConnection(); err != nil {
 		return nil, err
 	}
-	return &client{conn: conn}, nil
+	return c, nil
+}
+
+// ensureConnection creates the TCP connection if it does not exist
+func (c *client) ensureConnection() error {
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+
+	if c.conn != nil {
+		return nil // already connected
+	}
+
+	conn, err := net.Dial("tcp4", c.addr)
+	if err != nil {
+		return err
+	}
+	c.conn = conn
+	return nil
 }
 
 func (c *client) Close() error {
-	return c.conn.Close()
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+
+	if c.conn != nil {
+		err := c.conn.Close()
+		c.conn = nil
+		return err
+	}
+	return nil
 }
 
+// SendStreamFromReader uses the internal connection, role, and channelID automatically
 func (c *client) SendStreamFromReader(r io.Reader, reqTimeout time.Duration) (*frame, error) {
-	reqID := atomic.AddUint64(&c.requestID, 1)
+	if err := c.ensureConnection(); err != nil {
+		return nil, err
+	}
 
-	timeoutBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(timeoutBytes, uint64(reqTimeout.Milliseconds()))
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
 
+	reqID := uuid.New()
+	timeoutMs := uint64(reqTimeout.Milliseconds())
+	if timeoutMs == 0 {
+		timeoutMs = uint64(defaultTimeout.Milliseconds())
+	}
+
+	// Payload: Role (1) + Timeout (8) + ClientID (16) + ChannelID (16)
+	payload := make([]byte, 1+8+16+16)
+	payload[0] = byte(c.role)
+	binary.BigEndian.PutUint64(payload[1:9], timeoutMs)
+	copy(payload[9:25], c.clientID[:])
+	copy(payload[25:41], c.channelID[:])
+
+	// Build and send StartFrame
 	startFrame := frame{
 		Version:   Version1,
 		Type:      StartFrame,
 		Flags:     0,
 		RequestID: reqID,
-		Payload:   timeoutBytes,
+		Payload:   payload,
 	}
-
-	if err := writeFrame(c.conn, &startFrame); err != nil {
+	if err := startFrame.writeFrame(c.conn); err != nil {
 		return nil, err
 	}
 
-	chunkBuf := make([]byte, maxFrameSize)
+	// Stream chunks
+	buf := make([]byte, maxFrameSize)
 	for {
-		n, err := r.Read(chunkBuf)
+		n, err := r.Read(buf)
 		if n > 0 {
 			chunk := frame{
 				Version:   Version1,
 				Type:      ChunkFrame,
 				Flags:     0,
 				RequestID: reqID,
-				Payload:   chunkBuf[:n],
+				Payload:   buf[:n],
 			}
-			if err := writeFrame(c.conn, &chunk); err != nil {
+			if err := chunk.writeFrame(c.conn); err != nil {
 				return nil, err
 			}
 		}
+
 		if err == io.EOF {
 			break
 		}
@@ -70,16 +129,18 @@ func (c *client) SendStreamFromReader(r io.Reader, reqTimeout time.Duration) (*f
 		}
 	}
 
+	// Send EndFrame
 	endFrame := frame{
 		Version:   Version1,
 		Type:      EndFrame,
 		Flags:     0,
 		RequestID: reqID,
 	}
-	if err := writeFrame(c.conn, &endFrame); err != nil {
+	if err := endFrame.writeFrame(c.conn); err != nil {
 		return nil, err
 	}
 
+	// Wait for response
 	ctx, cancel := context.WithTimeout(context.Background(), reqTimeout+time.Second)
 	defer cancel()
 
@@ -87,7 +148,7 @@ func (c *client) SendStreamFromReader(r io.Reader, reqTimeout time.Duration) (*f
 	errCh := make(chan error, 1)
 
 	go func() {
-		resp, err := readFrame(c.conn)
+		resp, err := newFrame(c.conn)
 		if err != nil {
 			errCh <- err
 			return
