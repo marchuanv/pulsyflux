@@ -9,21 +9,69 @@ import (
 type ClientRole byte
 
 const (
-	RoleConsumer ClientRole = 0x01 // single byte: 0x01
-	RoleProvider ClientRole = 0x02 // single byte: 0x01
+	RoleConsumer ClientRole = 0x01
+	RoleProvider ClientRole = 0x02
 )
 
 type clientRegistry struct {
-	mu        sync.RWMutex
-	consumers map[uuid.UUID]map[uuid.UUID]*connctx // channelID -> clientID -> connctx
-	providers map[uuid.UUID]map[uuid.UUID]*connctx // channelID -> clientID -> connctx
+	mu             sync.RWMutex
+	consumers      map[uuid.UUID]map[uuid.UUID]*connctx // channelID -> clientID -> connctx
+	providers      map[uuid.UUID]map[uuid.UUID]*connctx // channelID -> clientID -> connctx
+	peerToOriginal map[uuid.UUID]uuid.UUID              // peer's requestID -> original requestID
+	originalToPeer map[uuid.UUID]uuid.UUID              // original requestID -> peer's requestID
 }
 
 func newClientRegistry() *clientRegistry {
 	return &clientRegistry{
-		consumers: make(map[uuid.UUID]map[uuid.UUID]*connctx),
-		providers: make(map[uuid.UUID]map[uuid.UUID]*connctx),
+		consumers:      make(map[uuid.UUID]map[uuid.UUID]*connctx),
+		providers:      make(map[uuid.UUID]map[uuid.UUID]*connctx),
+		peerToOriginal: make(map[uuid.UUID]uuid.UUID),
+		originalToPeer: make(map[uuid.UUID]uuid.UUID),
 	}
+}
+
+func (r *clientRegistry) trackRequest(originalID, peerID uuid.UUID) {
+	r.mu.Lock()
+	r.peerToOriginal[peerID] = originalID
+	r.originalToPeer[originalID] = peerID
+	r.mu.Unlock()
+}
+
+func (r *clientRegistry) getOriginalRequestID(peerID uuid.UUID) (uuid.UUID, bool) {
+	r.mu.RLock()
+	originalID, ok := r.peerToOriginal[peerID]
+	r.mu.RUnlock()
+	return originalID, ok
+}
+
+func (r *clientRegistry) untrackRequest(originalID uuid.UUID) {
+	r.mu.Lock()
+	if peerID, ok := r.originalToPeer[originalID]; ok {
+		delete(r.peerToOriginal, peerID)
+		delete(r.originalToPeer, originalID)
+	}
+	r.mu.Unlock()
+}
+
+func (r *clientRegistry) getClient(role ClientRole, channelID, clientID uuid.UUID) (*connctx, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	switch role {
+	case RoleConsumer:
+		if clients, ok := r.consumers[channelID]; ok {
+			if ctx, ok := clients[clientID]; ok {
+				return ctx, true
+			}
+		}
+	case RoleProvider:
+		if clients, ok := r.providers[channelID]; ok {
+			if ctx, ok := clients[clientID]; ok {
+				return ctx, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func (r *clientRegistry) hasClient(role ClientRole, channelID, clientID uuid.UUID) bool {

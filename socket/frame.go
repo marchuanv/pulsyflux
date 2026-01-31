@@ -24,6 +24,11 @@ const (
 	defaultFrameWriteTimeout      = 5 * time.Second
 )
 
+// Frame flags
+const (
+	FlagForwarded uint16 = 1 << 0 // Indicates this frame was forwarded by server
+)
+
 type frame struct {
 	Version   byte
 	Type      byte
@@ -77,7 +82,7 @@ func newErrorFrame(reqID uuid.UUID, msg string) *frame {
 }
 
 // writeFrame writes the frame to a net.Conn
-func (f *frame) writeFrame(conn net.Conn) error {
+func (f *frame) write(conn net.Conn) error {
 	conn.SetWriteDeadline(time.Now().Add(defaultFrameWriteTimeout))
 
 	var header [frameHeaderSize]byte

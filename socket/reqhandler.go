@@ -9,12 +9,12 @@ type requestHandler struct {
 	wg       sync.WaitGroup
 }
 
-func newRequestHandler(noHandlers, handlerQueueSize int, registry *clientRegistry) *requestHandler {
+func newRequestHandler(noHandlers, handlerQueueSize int, clientRegistry *clientRegistry) *requestHandler {
 	rh := &requestHandler{
 		requests: make(chan *request, handlerQueueSize),
 	}
 	for i := 0; i < noHandlers; i++ {
-		rw := newRequestWorker(uint64(i), registry) // workerID is not used in this implementation
+		rw := newRequestWorker(uint64(i), clientRegistry)
 		rh.wg.Add(1)
 		go rw.handle(rh.requests, &rh.wg)
 	}

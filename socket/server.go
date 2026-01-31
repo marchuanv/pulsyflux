@@ -55,7 +55,7 @@ func (s *server) Start() error {
 	return nil
 }
 
-func (s *server) Stop(ctx context.Context) error {
+func (s *server) Stop() error {
 	s.cancel()
 	s.ln.Close()
 	s.conns.Wait()
@@ -125,6 +125,19 @@ func (s *server) handle(conn net.Conn) {
 
 		switch f.Type {
 		case StartFrame:
+			// Check if this is a forwarded request (not a new connection)
+			if f.Flags&FlagForwarded != 0 {
+				// This is a forwarded request - send ResponseFrame directly
+				ctx.send(&frame{
+					Version:   Version1,
+					Type:      ResponseFrame,
+					RequestID: f.RequestID,
+					Payload:   f.Payload, // Echo back for now, provider should process
+				})
+				continue
+			}
+
+			// Regular StartFrame for new connection
 			// Validate payload length
 			if len(f.Payload) < 41 {
 				ctx.send(newErrorFrame(f.RequestID, "start frame payload too short"))
@@ -151,10 +164,28 @@ func (s *server) handle(conn net.Conn) {
 				s.clientRegistry.addClient(role, channelID, clientID, ctx)
 			}
 
+			// Wait for peer with timeout
 			if !s.clientRegistry.hasPeerForChannel(role, channelID) {
-				ctx.send(newErrorFrame(f.RequestID, "no peer available for channel"))
-				continue
+				waitCtx, waitCancel := context.WithTimeout(context.Background(), timeout)
+				defer waitCancel()
+
+				ticker := time.NewTicker(50 * time.Millisecond)
+				defer ticker.Stop()
+
+				for {
+					select {
+					case <-waitCtx.Done():
+						ctx.send(newErrorFrame(f.RequestID, "no peer available for channel"))
+						continue
+					case <-ticker.C:
+						if s.clientRegistry.hasPeerForChannel(role, channelID) {
+							goto peerFound
+						}
+					}
+				}
 			}
+
+		peerFound:
 
 			// Create the request record without storing peer info
 			reqCtx, cancel := context.WithCancel(context.Background())
@@ -170,7 +201,6 @@ func (s *server) handle(conn net.Conn) {
 				ctx:       reqCtx,
 				cancel:    cancel,
 			}
-
 		case ChunkFrame:
 			req := streamReqs[f.RequestID]
 			req.payload = append(req.payload, f.Payload...)
@@ -179,6 +209,7 @@ func (s *server) handle(conn net.Conn) {
 			req := streamReqs[f.RequestID]
 			delete(streamReqs, f.RequestID)
 
+			// Process as new request
 			reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
 			req.ctx = reqCtx
 			req.cancel = cancel

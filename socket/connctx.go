@@ -57,20 +57,20 @@ func (ctx *connctx) startWriter() {
 						if !ok {
 							return
 						}
-						_ = frame.writeFrame(ctx.conn)
+						_ = frame.write(ctx.conn)
 					case <-ctx.closed:
 						return
 					}
 				}
 			}
 			if frame != nil {
-				_ = frame.writeFrame(ctx.conn)
+				_ = frame.write(ctx.conn)
 			}
 		case frame, ok := <-ctx.writes:
 			if !ok {
 				return
 			}
-			_ = frame.writeFrame(ctx.conn)
+			_ = frame.write(ctx.conn)
 		case <-ctx.closed:
 			return
 		}
