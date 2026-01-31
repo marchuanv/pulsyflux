@@ -14,43 +14,16 @@ const (
 )
 
 type clientRegistry struct {
-	mu             sync.RWMutex
-	consumers      map[uuid.UUID]map[uuid.UUID]*connctx // channelID -> clientID -> connctx
-	providers      map[uuid.UUID]map[uuid.UUID]*connctx // channelID -> clientID -> connctx
-	peerToOriginal map[uuid.UUID]uuid.UUID              // peer's requestID -> original requestID
-	originalToPeer map[uuid.UUID]uuid.UUID              // original requestID -> peer's requestID
+	mu        sync.RWMutex
+	consumers map[uuid.UUID]map[uuid.UUID]*connctx // channelID -> clientID -> connctx
+	providers map[uuid.UUID]map[uuid.UUID]*connctx // channelID -> clientID -> connctx
 }
 
 func newClientRegistry() *clientRegistry {
 	return &clientRegistry{
-		consumers:      make(map[uuid.UUID]map[uuid.UUID]*connctx),
-		providers:      make(map[uuid.UUID]map[uuid.UUID]*connctx),
-		peerToOriginal: make(map[uuid.UUID]uuid.UUID),
-		originalToPeer: make(map[uuid.UUID]uuid.UUID),
+		consumers: make(map[uuid.UUID]map[uuid.UUID]*connctx),
+		providers: make(map[uuid.UUID]map[uuid.UUID]*connctx),
 	}
-}
-
-func (r *clientRegistry) trackRequest(originalID, peerID uuid.UUID) {
-	r.mu.Lock()
-	r.peerToOriginal[peerID] = originalID
-	r.originalToPeer[originalID] = peerID
-	r.mu.Unlock()
-}
-
-func (r *clientRegistry) getOriginalRequestID(peerID uuid.UUID) (uuid.UUID, bool) {
-	r.mu.RLock()
-	originalID, ok := r.peerToOriginal[peerID]
-	r.mu.RUnlock()
-	return originalID, ok
-}
-
-func (r *clientRegistry) untrackRequest(originalID uuid.UUID) {
-	r.mu.Lock()
-	if peerID, ok := r.originalToPeer[originalID]; ok {
-		delete(r.peerToOriginal, peerID)
-		delete(r.originalToPeer, originalID)
-	}
-	r.mu.Unlock()
 }
 
 func (r *clientRegistry) getClient(role ClientRole, channelID, clientID uuid.UUID) (*connctx, bool) {

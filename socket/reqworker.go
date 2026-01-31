@@ -41,9 +41,15 @@ func (rw *requestWorker) handle(reqCh chan *request, wg *sync.WaitGroup) {
 			continue
 		}
 
+		// Prepend consumer's clientID and channelID to payload for routing
+		routingInfo := make([]byte, 32)
+		copy(routingInfo[0:16], req.clientID[:])
+		copy(routingInfo[16:32], req.channelID[:])
+		forwardPayload := append(routingInfo, req.payload...)
+
 		// Forward with original requestID and set forwarded flag
 		req.frame.Flags |= FlagForwarded
-		req.frame.Payload = req.payload
+		req.frame.Payload = forwardPayload
 		if !peerCtx.send(req.frame) {
 			req.connctx.send(newErrorFrame(req.requestID, "failed to send to peer"))
 		}

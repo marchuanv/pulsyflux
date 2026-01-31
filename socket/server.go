@@ -125,19 +125,6 @@ func (s *server) handle(conn net.Conn) {
 
 		switch f.Type {
 		case StartFrame:
-			// Check if this is a forwarded request (not a new connection)
-			if f.Flags&FlagForwarded != 0 {
-				// This is a forwarded request - send ResponseFrame directly
-				ctx.send(&frame{
-					Version:   Version1,
-					Type:      ResponseFrame,
-					RequestID: f.RequestID,
-					Payload:   f.Payload, // Echo back for now, provider should process
-				})
-				continue
-			}
-
-			// Regular StartFrame for new connection
 			// Validate payload length
 			if len(f.Payload) < 41 {
 				ctx.send(newErrorFrame(f.RequestID, "start frame payload too short"))
@@ -218,6 +205,45 @@ func (s *server) handle(conn net.Conn) {
 				cancel()
 				ctx.send(newErrorFrame(req.frame.RequestID, "server overloaded"))
 			}
+
+		case ResponseFrame:
+			// Extract consumer's clientID and channelID from response payload
+			if len(f.Payload) < 32 {
+				continue
+			}
+
+			var clientID uuid.UUID
+			copy(clientID[:], f.Payload[0:16])
+
+			var channelID uuid.UUID
+			copy(channelID[:], f.Payload[16:32])
+
+			// Get the consumer's connection
+			consumerCtx, ok := s.clientRegistry.getClient(RoleConsumer, channelID, clientID)
+			if !ok {
+				continue
+			}
+
+			// Send response back to consumer
+			consumerCtx.send(f)
+
+		case ErrorFrame:
+			// Check if error payload contains routing info
+			if len(f.Payload) >= 32 {
+				var clientID uuid.UUID
+				copy(clientID[:], f.Payload[0:16])
+
+				var channelID uuid.UUID
+				copy(channelID[:], f.Payload[16:32])
+
+				consumerCtx, ok := s.clientRegistry.getClient(RoleConsumer, channelID, clientID)
+				if ok {
+					consumerCtx.send(f)
+					continue
+				}
+			}
+			// If no routing info or consumer not found, error is for current connection
+			ctx.send(f)
 
 		default:
 			ctx.send(newErrorFrame(f.RequestID, "invalid message type"))

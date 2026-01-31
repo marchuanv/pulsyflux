@@ -48,17 +48,33 @@ func (p *Provider) listen() {
 		}
 
 		if f.Type == StartFrame && f.Flags&FlagForwarded != 0 {
-			response, err := p.handler(f.Payload)
+			// Extract routing info (consumer's clientID and channelID)
+			if len(f.Payload) < 32 {
+				continue
+			}
+			routingInfo := f.Payload[0:32]
+			requestPayload := f.Payload[32:]
+
+			response, err := p.handler(requestPayload)
 
 			var respFrame frame
 			if err != nil {
-				respFrame = *newErrorFrame(f.RequestID, err.Error())
+				// Prepend routing info to error message
+				errorPayload := append(routingInfo, []byte(err.Error())...)
+				respFrame = frame{
+					Version:   Version1,
+					Type:      ErrorFrame,
+					RequestID: f.RequestID,
+					Payload:   errorPayload,
+				}
 			} else {
+				// Prepend routing info to response
+				responsePayload := append(routingInfo, response...)
 				respFrame = frame{
 					Version:   Version1,
 					Type:      ResponseFrame,
 					RequestID: f.RequestID,
-					Payload:   response,
+					Payload:   responsePayload,
 				}
 			}
 

@@ -118,7 +118,16 @@ func (c *Consumer) Send(r io.Reader, reqTimeout time.Duration) ([]byte, error) {
 			return nil, ErrRequestIDMismatch
 		}
 		if resp.Type == ErrorFrame {
-			return nil, errors.New(string(resp.Payload))
+			// Skip routing info if present
+			errorMsg := resp.Payload
+			if len(errorMsg) >= 32 {
+				errorMsg = errorMsg[32:]
+			}
+			return nil, errors.New(string(errorMsg))
+		}
+		// Skip routing info from response payload
+		if len(resp.Payload) >= 32 {
+			return resp.Payload[32:], nil
 		}
 		return resp.Payload, nil
 	}

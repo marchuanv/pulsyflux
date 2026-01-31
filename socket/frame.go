@@ -81,7 +81,7 @@ func newErrorFrame(reqID uuid.UUID, msg string) *frame {
 	}
 }
 
-// writeFrame writes the frame to a net.Conn
+// write writes the frame to a net.Conn
 func (f *frame) write(conn net.Conn) error {
 	conn.SetWriteDeadline(time.Now().Add(defaultFrameWriteTimeout))
 
