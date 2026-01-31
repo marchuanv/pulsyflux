@@ -13,15 +13,16 @@ import (
 const Version1 byte = 1
 
 const (
-	ResponseFrame            byte = 0x02
-	ErrorFrame               byte = 0x03
-	StartFrame               byte = 0x04
-	ChunkFrame               byte = 0x05
-	EndFrame                 byte = 0x06
-	frameHeaderSize               = 24
-	maxFrameSize                  = 1024 * 1024
-	defaultFrameReadTimeout       = 2 * time.Minute
-	defaultFrameWriteTimeout      = 5 * time.Second
+	ResponseFrame            byte   = 0x02
+	ErrorFrame               byte   = 0x03
+	StartFrame               byte   = 0x04
+	ChunkFrame               byte   = 0x05
+	EndFrame                 byte   = 0x06
+	frameHeaderSize                 = 24
+	maxFrameSize                    = 1024 * 1024
+	defaultFrameReadTimeout         = 2 * time.Minute
+	defaultFrameWriteTimeout        = 5 * time.Second
+	FlagRegistration         uint16 = 0x01
 )
 
 type frame struct {

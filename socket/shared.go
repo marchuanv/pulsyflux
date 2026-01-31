@@ -16,15 +16,14 @@ var (
 const workerQueueTimeout = 500 * time.Millisecond
 
 type request struct {
-	connctx            *connctx
-	frame              *frame
-	requestID          uuid.UUID
-	clientID           uuid.UUID
-	channelID          uuid.UUID
-	timeout            time.Duration
-	ctx                context.Context
-	cancel             context.CancelFunc
-	role               ClientRole
-	hasPeerClient      bool
-	isClientRegistered bool
+	connctx        *connctx
+	frame          *frame
+	requestID      uuid.UUID
+	clientID       uuid.UUID
+	channelID      uuid.UUID
+	timeout        time.Duration
+	ctx            context.Context
+	cancel         context.CancelFunc
+	role           ClientRole
+	isRegistration bool
 }

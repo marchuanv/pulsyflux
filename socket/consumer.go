@@ -51,7 +51,7 @@ func (c *Consumer) Send(r io.Reader, reqTimeout time.Duration) ([]byte, error) {
 	startFrame := frame{
 		Version:   Version1,
 		Type:      StartFrame,
-		Flags:     0,
+		Flags:     0, // Request flag (not registration)
 		RequestID: reqID,
 		Payload:   c.buildMetadataPayload(timeoutMs),
 	}

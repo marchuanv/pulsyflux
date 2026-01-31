@@ -96,14 +96,21 @@ func (s *server) handle(conn net.Conn) {
 
 	streamReqs := make(map[uuid.UUID]*request)
 
+	var registeredRole ClientRole
+	var registeredClientID uuid.UUID
+	var registeredChannelID uuid.UUID
+	var clientRegistered bool
+
 	defer func() {
 		// Cancel all pending requests
-		for reqID, req := range streamReqs {
-			streamReqs[reqID] = nil
-			s.clientRegistry.removeClient(req.role, req.channelID, req.clientID)
+		for _, req := range streamReqs {
 			if req.cancel != nil {
 				req.cancel()
 			}
+		}
+		// Remove client from registry if registered
+		if clientRegistered {
+			s.clientRegistry.removeClient(registeredRole, registeredChannelID, registeredClientID)
 		}
 		close(ctx.writes)
 		close(ctx.errors)
@@ -147,35 +154,33 @@ func (s *server) handle(conn net.Conn) {
 			var channelID uuid.UUID
 			copy(channelID[:], f.Payload[25:41])
 
+			isRegistration := f.Flags&FlagRegistration != 0
 			reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
 			req := &request{
-				connctx:            ctx,
-				frame:              f,
-				requestID:          f.RequestID,
-				clientID:           clientID,
-				channelID:          channelID,
-				timeout:            timeout,
-				role:               role,
-				ctx:                reqCtx,
-				cancel:             cancel,
-				hasPeerClient:      s.clientRegistry.hasPeerForChannel(role, channelID),
-				isClientRegistered: s.clientRegistry.hasClient(role, channelID, clientID),
+				connctx:        ctx,
+				frame:          f,
+				requestID:      f.RequestID,
+				clientID:       clientID,
+				channelID:      channelID,
+				timeout:        timeout,
+				role:           role,
+				ctx:            reqCtx,
+				cancel:         cancel,
+				isRegistration: isRegistration,
 			}
 			streamReqs[f.RequestID] = req
 
-			if !req.isClientRegistered {
+			isClientRegistered := s.clientRegistry.hasClient(role, channelID, clientID)
+			
+			if !isClientRegistered {
 				s.clientRegistry.addClient(role, channelID, clientID, ctx)
+				clientRegistered = true
+				registeredRole = role
+				registeredClientID = clientID
+				registeredChannelID = channelID
 			}
 
-			if req.hasPeerClient && req.isClientRegistered {
-
-				// Process as new request
-				reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
-				req.ctx = reqCtx
-				req.cancel = cancel
-
-				streamReqs[f.RequestID] = req
-
+			if !isRegistration {
 				if !s.requestHandler.handle(req) {
 					req.cancel()
 					ctx.send(newErrorFrame(f.RequestID, "server overloaded"))
@@ -185,18 +190,11 @@ func (s *server) handle(conn net.Conn) {
 
 		case ChunkFrame:
 			req := streamReqs[f.RequestID]
-
-			if req.hasPeerClient && req.isClientRegistered {
-
-				// Set to ChunkFrame
+			if req != nil && !req.isRegistration {
 				req.frame = f
-
-				// Process as new request
 				reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
 				req.ctx = reqCtx
 				req.cancel = cancel
-
-				streamReqs[f.RequestID] = req
 
 				if !s.requestHandler.handle(req) {
 					req.cancel()
@@ -206,21 +204,15 @@ func (s *server) handle(conn net.Conn) {
 			}
 
 		case EndFrame:
-
 			req := streamReqs[f.RequestID]
 			delete(streamReqs, f.RequestID)
 
-			if req.hasPeerClient && req.isClientRegistered {
-
-				// Set to EndFrame
+			if req != nil && !req.isRegistration {
 				req.frame = f
-
-				// Process as new request
 				reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
 				req.ctx = reqCtx
 				req.cancel = cancel
 
-				// Now update to ChunkFrame and forward it
 				if !s.requestHandler.handle(req) {
 					req.cancel()
 					ctx.send(newErrorFrame(f.RequestID, "server overloaded"))

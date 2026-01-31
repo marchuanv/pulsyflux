@@ -52,9 +52,9 @@ func (c *baseClient) register() error {
 	regFrame := frame{
 		Version:   Version1,
 		Type:      StartFrame,
-		Flags:     0,
+		Flags:     FlagRegistration,
 		RequestID: reqID,
-		Payload:   c.buildMetadataPayload(uint64(5000)), // 5 second peer wait timeout
+		Payload:   c.buildMetadataPayload(uint64(5000)),
 	}
 	if err := regFrame.write(c.conn); err != nil {
 		return err
