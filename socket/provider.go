@@ -35,6 +35,9 @@ func NewProvider(addr string, channelID uuid.UUID, handler RequestHandler) (*Pro
 }
 
 func (p *Provider) listen() {
+	streamReqs := make(map[uuid.UUID][]byte)       // Stores request payload
+	routingInfo := make(map[uuid.UUID][]byte)      // Stores routing info per request
+
 	for {
 		select {
 		case <-p.done:
@@ -47,20 +50,32 @@ func (p *Provider) listen() {
 			return
 		}
 
-		if f.Type == StartFrame && f.Flags&FlagForwarded != 0 {
-			// Extract routing info (consumer's clientID and channelID)
+		switch f.Type {
+		case StartFrame:
 			if len(f.Payload) < 32 {
-				continue
+				panic("provider received invalid StartFrame with payload < 32 bytes")
 			}
-			routingInfo := f.Payload[0:32]
-			requestPayload := f.Payload[32:]
+			// Extract and store routing info separately
+			routingInfo[f.RequestID] = f.Payload[0:32]
+			// Initialize empty payload for this request
+			streamReqs[f.RequestID] = []byte{}
+
+		case ChunkFrame:
+			// Append chunk data to payload
+			payload := streamReqs[f.RequestID]
+			streamReqs[f.RequestID] = append(payload, f.Payload...)
+
+		case EndFrame:
+			requestPayload := streamReqs[f.RequestID]
+			routing := routingInfo[f.RequestID]
+			delete(streamReqs, f.RequestID)
+			delete(routingInfo, f.RequestID)
 
 			response, err := p.handler(requestPayload)
 
 			var respFrame frame
 			if err != nil {
-				// Prepend routing info to error message
-				errorPayload := append(routingInfo, []byte(err.Error())...)
+				errorPayload := append(routing, []byte(err.Error())...)
 				respFrame = frame{
 					Version:   Version1,
 					Type:      ErrorFrame,
@@ -68,8 +83,7 @@ func (p *Provider) listen() {
 					Payload:   errorPayload,
 				}
 			} else {
-				// Prepend routing info to response
-				responsePayload := append(routingInfo, response...)
+				responsePayload := append(routing, response...)
 				respFrame = frame{
 					Version:   Version1,
 					Type:      ResponseFrame,
@@ -79,7 +93,9 @@ func (p *Provider) listen() {
 			}
 
 			p.connMu.Lock()
-			respFrame.write(p.conn)
+			if err := respFrame.write(p.conn); err != nil {
+				// Failed to send response
+			}
 			p.connMu.Unlock()
 		}
 	}

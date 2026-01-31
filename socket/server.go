@@ -126,8 +126,8 @@ func (s *server) handle(conn net.Conn) {
 		switch f.Type {
 		case StartFrame:
 			// Validate payload length
-			if len(f.Payload) < 41 {
-				ctx.send(newErrorFrame(f.RequestID, "start frame payload too short"))
+			if len(f.Payload) != 41 {
+				ctx.send(newErrorFrame(f.RequestID, "invalid start frame payload length"))
 				continue
 			}
 
@@ -147,63 +147,85 @@ func (s *server) handle(conn net.Conn) {
 			var channelID uuid.UUID
 			copy(channelID[:], f.Payload[25:41])
 
-			if !s.clientRegistry.hasClient(role, channelID, clientID) {
+			reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
+			req := &request{
+				connctx:            ctx,
+				frame:              f,
+				requestID:          f.RequestID,
+				clientID:           clientID,
+				channelID:          channelID,
+				timeout:            timeout,
+				role:               role,
+				ctx:                reqCtx,
+				cancel:             cancel,
+				hasPeerClient:      s.clientRegistry.hasPeerForChannel(role, channelID),
+				isClientRegistered: s.clientRegistry.hasClient(role, channelID, clientID),
+			}
+			streamReqs[f.RequestID] = req
+
+			if !req.isClientRegistered {
 				s.clientRegistry.addClient(role, channelID, clientID, ctx)
 			}
 
-			// Wait for peer with timeout
-			if !s.clientRegistry.hasPeerForChannel(role, channelID) {
-				waitCtx, waitCancel := context.WithTimeout(context.Background(), timeout)
-				defer waitCancel()
+			if req.hasPeerClient && req.isClientRegistered {
 
-				ticker := time.NewTicker(50 * time.Millisecond)
-				defer ticker.Stop()
+				// Process as new request
+				reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
+				req.ctx = reqCtx
+				req.cancel = cancel
 
-				for {
-					select {
-					case <-waitCtx.Done():
-						ctx.send(newErrorFrame(f.RequestID, "no peer available for channel"))
-						continue
-					case <-ticker.C:
-						if s.clientRegistry.hasPeerForChannel(role, channelID) {
-							goto peerFound
-						}
-					}
+				streamReqs[f.RequestID] = req
+
+				if !s.requestHandler.handle(req) {
+					req.cancel()
+					ctx.send(newErrorFrame(f.RequestID, "server overloaded"))
+					return
 				}
 			}
 
-		peerFound:
-
-			// Create the request record without storing peer info
-			reqCtx, cancel := context.WithCancel(context.Background())
-			streamReqs[f.RequestID] = &request{
-				connctx:   ctx,
-				frame:     f,
-				requestID: f.RequestID,
-				clientID:  clientID,
-				channelID: channelID,
-				payload:   []byte{},
-				timeout:   timeout,
-				role:      role,
-				ctx:       reqCtx,
-				cancel:    cancel,
-			}
 		case ChunkFrame:
 			req := streamReqs[f.RequestID]
-			req.payload = append(req.payload, f.Payload...)
+
+			if req.hasPeerClient && req.isClientRegistered {
+
+				// Set to ChunkFrame
+				req.frame = f
+
+				// Process as new request
+				reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
+				req.ctx = reqCtx
+				req.cancel = cancel
+
+				streamReqs[f.RequestID] = req
+
+				if !s.requestHandler.handle(req) {
+					req.cancel()
+					ctx.send(newErrorFrame(f.RequestID, "server overloaded"))
+					return
+				}
+			}
 
 		case EndFrame:
+
 			req := streamReqs[f.RequestID]
 			delete(streamReqs, f.RequestID)
 
-			// Process as new request
-			reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
-			req.ctx = reqCtx
-			req.cancel = cancel
+			if req.hasPeerClient && req.isClientRegistered {
 
-			if !s.requestHandler.handle(req) {
-				cancel()
-				ctx.send(newErrorFrame(req.frame.RequestID, "server overloaded"))
+				// Set to EndFrame
+				req.frame = f
+
+				// Process as new request
+				reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
+				req.ctx = reqCtx
+				req.cancel = cancel
+
+				// Now update to ChunkFrame and forward it
+				if !s.requestHandler.handle(req) {
+					req.cancel()
+					ctx.send(newErrorFrame(f.RequestID, "server overloaded"))
+					return
+				}
 			}
 
 		case ResponseFrame:
@@ -247,6 +269,34 @@ func (s *server) handle(conn net.Conn) {
 
 		default:
 			ctx.send(newErrorFrame(f.RequestID, "invalid message type"))
+		}
+	}
+}
+
+func waitForChannelPeer(
+	registry *clientRegistry,
+	role ClientRole,
+	channelID uuid.UUID,
+	timeout time.Duration,
+) bool {
+	if registry.hasPeerForChannel(role, channelID) {
+		return true
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			if registry.hasPeerForChannel(role, channelID) {
+				return true
+			}
 		}
 	}
 }

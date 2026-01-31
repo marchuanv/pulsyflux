@@ -2,6 +2,7 @@ package socket
 
 import (
 	"encoding/binary"
+	"errors"
 	"net"
 	"sync"
 
@@ -47,12 +48,13 @@ func (c *baseClient) buildMetadataPayload(timeoutMs uint64) []byte {
 func (c *baseClient) register() error {
 	reqID := uuid.New()
 
+	// Use a reasonable timeout for waiting for peers during registration
 	regFrame := frame{
 		Version:   Version1,
 		Type:      StartFrame,
 		Flags:     0,
 		RequestID: reqID,
-		Payload:   c.buildMetadataPayload(0),
+		Payload:   c.buildMetadataPayload(uint64(5000)), // 5 second peer wait timeout
 	}
 	if err := regFrame.write(c.conn); err != nil {
 		return err
@@ -65,4 +67,27 @@ func (c *baseClient) register() error {
 		RequestID: reqID,
 	}
 	return endFrame.write(c.conn)
+}
+
+func (c *baseClient) assembleChunks(reqID uuid.UUID) ([]byte, error) {
+	var payload []byte
+	for {
+		f, err := newFrame(c.conn)
+		if err != nil {
+			return nil, err
+		}
+		if f.RequestID != reqID {
+			return nil, ErrRequestIDMismatch
+		}
+		switch f.Type {
+		case ChunkFrame:
+			payload = append(payload, f.Payload...)
+		case EndFrame:
+			return payload, nil
+		case ErrorFrame:
+			return nil, errors.New(string(f.Payload))
+		default:
+			return nil, errors.New("unexpected frame type")
+		}
+	}
 }

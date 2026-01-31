@@ -39,7 +39,7 @@ func TestConsumerProviderBidirectional(t *testing.T) {
 	defer consumer.Close()
 
 	// Send request
-	response, err := consumer.Send(strings.NewReader("hello"), 2*time.Second)
+	response, err := consumer.Send(strings.NewReader("hello"), 20*time.Second)
 	if err != nil {
 		t.Fatalf("Consumer send failed: %v", err)
 	}

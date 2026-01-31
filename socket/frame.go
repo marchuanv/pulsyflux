@@ -24,11 +24,6 @@ const (
 	defaultFrameWriteTimeout      = 5 * time.Second
 )
 
-// Frame flags
-const (
-	FlagForwarded uint16 = 1 << 0 // Indicates this frame was forwarded by server
-)
-
 type frame struct {
 	Version   byte
 	Type      byte
