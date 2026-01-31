@@ -45,7 +45,15 @@ func (p *Provider) listen() {
 		default:
 		}
 
-		f, err := newFrame(p.conn)
+		p.connMu.Lock()
+		if p.conn == nil {
+			p.connMu.Unlock()
+			return
+		}
+		conn := p.conn
+		p.connMu.Unlock()
+
+		f, err := newFrame(conn)
 		if err != nil {
 			return
 		}
@@ -63,6 +71,10 @@ func (p *Provider) listen() {
 		case ChunkFrame:
 			// Append chunk data to payload
 			payload := streamReqs[f.RequestID]
+			if payload == nil {
+				// ChunkFrame arrived without StartFrame
+				panic("provider received ChunkFrame without StartFrame")
+			}
 			streamReqs[f.RequestID] = append(payload, f.Payload...)
 
 		case EndFrame:
@@ -93,8 +105,11 @@ func (p *Provider) listen() {
 			}
 
 			p.connMu.Lock()
-			if err := respFrame.write(p.conn); err != nil {
-				// Failed to send response
+			conn := p.conn
+			if conn != nil {
+				if err := respFrame.write(conn); err != nil {
+					// Failed to send response
+				}
 			}
 			p.connMu.Unlock()
 		}

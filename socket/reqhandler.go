@@ -5,25 +5,30 @@ import (
 )
 
 type requestHandler struct {
-	requests chan *request
-	wg       sync.WaitGroup
+	requests      []chan *request // One queue per worker
+	wg            sync.WaitGroup
+	numWorkers    int
 }
 
 func newRequestHandler(noHandlers, handlerQueueSize int, clientRegistry *clientRegistry) *requestHandler {
 	rh := &requestHandler{
-		requests: make(chan *request, handlerQueueSize),
+		requests:   make([]chan *request, noHandlers),
+		numWorkers: noHandlers,
 	}
 	for i := 0; i < noHandlers; i++ {
-		rw := newRequestWorker(uint64(i), clientRegistry)
+		rh.requests[i] = make(chan *request, handlerQueueSize/noHandlers)
+		rw := newRequestWorker(uint64(i), clientRegistry, rh)
 		rh.wg.Add(1)
-		go rw.handle(rh.requests, &rh.wg)
+		go rw.handle(rh.requests[i], &rh.wg)
 	}
 	return rh
 }
 
 func (rh *requestHandler) handle(req *request) bool {
+	// Hash RequestID to a specific worker to ensure sequential processing
+	workerID := int(req.requestID[0]) % rh.numWorkers
 	select {
-	case rh.requests <- req:
+	case rh.requests[workerID] <- req:
 		return true
 	default:
 		return false
@@ -31,6 +36,8 @@ func (rh *requestHandler) handle(req *request) bool {
 }
 
 func (rh *requestHandler) stop() {
-	close(rh.requests)
+	for _, ch := range rh.requests {
+		close(ch)
+	}
 	rh.wg.Wait()
 }

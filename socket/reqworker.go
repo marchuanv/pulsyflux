@@ -7,12 +7,14 @@ import (
 type requestWorker struct {
 	workerID       uint64
 	clientRegistry *clientRegistry
+	handler        *requestHandler
 }
 
-func newRequestWorker(workerID uint64, clientRegistry *clientRegistry) *requestWorker {
+func newRequestWorker(workerID uint64, clientRegistry *clientRegistry, handler *requestHandler) *requestWorker {
 	return &requestWorker{
 		workerID:       workerID,
 		clientRegistry: clientRegistry,
+		handler:        handler,
 	}
 }
 

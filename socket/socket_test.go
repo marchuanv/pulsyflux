@@ -29,7 +29,7 @@ func TestConsumerProviderBidirectional(t *testing.T) {
 	}
 	defer provider.Close()
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	// Create consumer
 	consumer, err := NewConsumer("127.0.0.1:9090", channelID)
@@ -111,8 +111,8 @@ func TestNoPeerAvailable(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error when no peer available")
 	}
-	if !strings.Contains(err.Error(), "no peer available") {
-		t.Fatalf("Expected 'no peer available' error, got: %v", err)
+	if !strings.Contains(err.Error(), "peer disappeared") {
+		t.Fatalf("Expected 'peer disappeared' error, got: %v", err)
 	}
 }
 

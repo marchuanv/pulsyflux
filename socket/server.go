@@ -184,22 +184,17 @@ func (s *server) handle(conn net.Conn) {
 				if !s.requestHandler.handle(req) {
 					req.cancel()
 					ctx.send(newErrorFrame(f.RequestID, "server overloaded"))
-					return
 				}
 			}
 
 		case ChunkFrame:
 			req := streamReqs[f.RequestID]
 			if req != nil && !req.isRegistration {
-				req.frame = f
-				reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
-				req.ctx = reqCtx
-				req.cancel = cancel
-
-				if !s.requestHandler.handle(req) {
-					req.cancel()
+				reqCopy := *req
+				reqCopy.frame = f
+				if !s.requestHandler.handle(&reqCopy) {
+					reqCopy.cancel()
 					ctx.send(newErrorFrame(f.RequestID, "server overloaded"))
-					return
 				}
 			}
 
@@ -208,15 +203,11 @@ func (s *server) handle(conn net.Conn) {
 			delete(streamReqs, f.RequestID)
 
 			if req != nil && !req.isRegistration {
-				req.frame = f
-				reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
-				req.ctx = reqCtx
-				req.cancel = cancel
-
-				if !s.requestHandler.handle(req) {
-					req.cancel()
+				reqCopy := *req
+				reqCopy.frame = f
+				if !s.requestHandler.handle(&reqCopy) {
+					reqCopy.cancel()
 					ctx.send(newErrorFrame(f.RequestID, "server overloaded"))
-					return
 				}
 			}
 
