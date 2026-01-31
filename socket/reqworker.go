@@ -38,7 +38,6 @@ func (rw *requestWorker) handle(reqCh chan *request, wg *sync.WaitGroup) {
 			continue
 		}
 
-		// Forward the frame to a peer
 		peerCtx, ok := rw.registry.getPeerForChannel(req.role, req.channelID)
 		if !ok {
 			// This should rarely happen if hasPeerForChannel returned true
@@ -47,6 +46,7 @@ func (rw *requestWorker) handle(reqCh chan *request, wg *sync.WaitGroup) {
 			continue
 		}
 
+		// Forward the frame to a peer
 		if !peerCtx.send(req.frame) {
 			req.connctx.send(newErrorFrame(req.requestID, "failed to send frame to peer"))
 			req.cancel()

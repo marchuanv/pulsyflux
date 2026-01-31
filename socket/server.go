@@ -100,6 +100,7 @@ func (s *server) handle(conn net.Conn) {
 		// Cancel all pending requests
 		for reqID, req := range streamReqs {
 			streamReqs[reqID] = nil
+			s.clientRegistry.removeClient(req.role, req.channelID, req.clientID)
 			if req.cancel != nil {
 				req.cancel()
 			}
@@ -145,6 +146,10 @@ func (s *server) handle(conn net.Conn) {
 
 			var channelID uuid.UUID
 			copy(channelID[:], f.Payload[25:41])
+
+			if !s.clientRegistry.hasClient(role, channelID, clientID) {
+				s.clientRegistry.addClient(role, channelID, clientID, ctx)
+			}
 
 			if !s.clientRegistry.hasPeerForChannel(role, channelID) {
 				ctx.send(newErrorFrame(f.RequestID, "no peer available for channel"))

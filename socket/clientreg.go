@@ -26,6 +26,26 @@ func newClientRegistry() *clientRegistry {
 	}
 }
 
+func (r *clientRegistry) hasClient(role ClientRole, channelID, clientID uuid.UUID) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	switch role {
+	case RoleConsumer:
+		if clients, ok := r.consumers[channelID]; ok {
+			_, exists := clients[clientID]
+			return exists
+		}
+	case RoleProvider:
+		if clients, ok := r.providers[channelID]; ok {
+			_, exists := clients[clientID]
+			return exists
+		}
+	}
+
+	return false
+}
+
 // Registers a client without checking peers
 func (r *clientRegistry) addClient(role ClientRole, channelID, clientID uuid.UUID, ctx *connctx) {
 	r.mu.Lock()
