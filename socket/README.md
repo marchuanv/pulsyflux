@@ -17,7 +17,8 @@ Consumer → Server → Provider
 ### 1. Server (`server.go`)
 - TCP server that brokers messages between consumers and providers
 - Maintains a client registry to track connections by channel ID
-- Uses a pool of 64 request workers to handle message routing
+- Uses one request handler managing 64 worker goroutines for message routing
+- Each worker runs concurrently processing requests from its own queue
 - Handles connection lifecycle and frame forwarding
 - Configurable socket buffers (512KB send/receive)
 
@@ -58,11 +59,12 @@ Consumer → Server → Provider
 - Write buffer: 8192 frames
 - Error buffer: 2048 frames
 
-### 7. Request Workers (`reqworker.go`, `reqhandler.go`)
-- Pool of 64 workers processing requests from per-worker queues
-- Each worker has its own queue (8192 / 64 = 128 requests per worker)
+### 7. Request Handler & Workers (`reqworker.go`, `reqhandler.go`)
+- One request handler managing 64 worker goroutines running concurrently
+- Each worker has its own dedicated queue (128 requests per worker, 8192 total)
 - **RequestID-based routing**: Frames for the same RequestID are hashed to the same worker
-- Ensures sequential processing of StartFrame → ChunkFrame(s) → EndFrame
+- Ensures sequential processing of StartFrame → ChunkFrame(s) → EndFrame per request
+- Workers process different requests in parallel across CPU cores
 - Forwards frames between peers with routing info (clientID + channelID)
 - Handles peer disappearance gracefully
 
@@ -125,8 +127,8 @@ fmt.Println(string(response)) // "processed: hello"
 
 ## Configuration
 
-- **Worker pool size**: 64 workers
-- **Per-worker queue size**: 128 requests (8192 total / 64 workers)
+- **Worker goroutines**: 64 concurrent workers
+- **Per-worker queue size**: 128 requests (8192 total capacity)
 - **Write buffer**: 8192 frames per connection
 - **Error buffer**: 2048 frames per connection
 - **Socket buffers**: 512KB send/receive
