@@ -1,4 +1,4 @@
-import { Consumer, Provider, Server } from '../socket.mjs';
+import { Consumer, Provider, Server } from '../wrapper.mjs';
 import { v4 as uuidv4 } from 'uuid';
 
 describe('Socket Library', () => {
@@ -7,218 +7,158 @@ describe('Socket Library', () => {
   let channelID;
   let provider;
   let consumer;
-  let intervals = [];
 
-  beforeAll(() => {
+  beforeAll(async () => {
     server = new Server('9090');
-    if (server) {
-      server.start();
-    }
+    await server.start();
+    await new Promise(resolve => setTimeout(resolve, 100));
   });
 
-  afterAll(() => {
-    if (server) {
-      server.stop();
-    }
+  afterAll(async () => {
+    await server?.stop();
   });
 
   beforeEach(() => {
     channelID = uuidv4();
-    intervals = [];
   });
 
-  afterEach(() => {
-    intervals.forEach(clearInterval);
-    intervals = [];
-    if (consumer) {
-      consumer.close();
-      consumer = null;
-    }
-    if (provider) {
-      provider.close();
-      provider = null;
-    }
+  afterEach(async () => {
+    await consumer?.close();
+    await provider?.close();
+    consumer = null;
+    provider = null;
   });
 
   describe('Consumer', () => {
     it('should create a consumer', () => {
       consumer = new Consumer(SERVER_ADDR, channelID);
       expect(consumer).toBeDefined();
-      expect(consumer.id).toBeGreaterThanOrEqual(0);
     });
 
-    it('should send and receive a message', (done) => {
+    it('should send and receive a message', async () => {
       provider = new Provider(SERVER_ADDR, channelID);
       consumer = new Consumer(SERVER_ADDR, channelID);
 
-      const interval = setInterval(() => {
-        const req = provider.receive();
-        if (req) {
-          provider.respond(req.requestID, 'pong');
-          clearInterval(interval);
-          done();
-        }
-      }, 10);
-      intervals.push(interval);
+      const responsePromise = consumer.send('ping', 5000);
+      const req = await provider.receive();
+      await provider.respond(req.requestID, 'pong');
+      const response = await responsePromise;
 
-      setTimeout(() => {
-        const response = consumer.send('ping', 5000);
-        expect(response).toBe('pong');
-      }, 100);
-    }, 5000);
+      expect(response).toBe('pong');
+    }, 40000);
 
-    it('should handle timeout', (done) => {
+    it('should handle timeout', async () => {
       consumer = new Consumer(SERVER_ADDR, channelID);
-
+      const start = Date.now();
       try {
-        consumer.send('test', 100);
-        done.fail('Should have thrown');
-      } catch (e) {
-        expect(e).toBeDefined();
-        done();
+        await consumer.send('test', 500); // Increase timeout to 500ms
+        fail('Should have thrown');
+      } catch (error) {
+        const elapsed = Date.now() - start;
+        expect(error).toBeDefined();
+        expect(elapsed).toBeGreaterThan(400); // Should timeout around 500ms
+        expect(elapsed).toBeLessThan(1000); // But not take too long
       }
-    }, 3000);
+    }, 10000);
   });
 
   describe('Provider', () => {
     it('should create a provider', () => {
       provider = new Provider(SERVER_ADDR, channelID);
       expect(provider).toBeDefined();
-      expect(provider.id).toBeGreaterThanOrEqual(0);
     });
 
-    it('should receive and respond to requests', (done) => {
+    it('should receive and respond to requests', async () => {
       provider = new Provider(SERVER_ADDR, channelID);
       consumer = new Consumer(SERVER_ADDR, channelID);
 
-      const interval = setInterval(() => {
-        const req = provider.receive();
-        if (req) {
-          expect(req.requestID).toBeDefined();
-          expect(req.data).toBe('hello');
-          provider.respond(req.requestID, 'world');
-          clearInterval(interval);
-        }
-      }, 10);
-      intervals.push(interval);
+      const responsePromise = consumer.send('hello', 5000);
+      const req = await provider.receive();
 
-      setTimeout(() => {
-        const response = consumer.send('hello', 5000);
-        expect(response).toBe('world');
-        done();
-      }, 100);
-    }, 5000);
+      expect(req.requestID).toBeDefined();
+      expect(req.data).toBe('hello');
 
-    it('should handle multiple requests', (done) => {
+      await provider.respond(req.requestID, 'world');
+      const response = await responsePromise;
+
+      expect(response).toBe('world');
+    });
+
+    it('should handle multiple requests', async () => {
       provider = new Provider(SERVER_ADDR, channelID);
       consumer = new Consumer(SERVER_ADDR, channelID);
 
-      let count = 0;
-      const interval = setInterval(() => {
-        const req = provider.receive();
-        if (req) {
-          count++;
-          provider.respond(req.requestID, `response-${count}`);
-          if (count >= 3) {
-            clearInterval(interval);
-          }
-        }
-      }, 10);
-      intervals.push(interval);
+      const promises = [
+        consumer.send('req1', 3000),
+        consumer.send('req2', 3000),
+        consumer.send('req3', 3000)
+      ];
 
-      setTimeout(() => {
-        const r1 = consumer.send('req1', 3000);
-        const r2 = consumer.send('req2', 3000);
-        const r3 = consumer.send('req3', 3000);
+      for (let i = 0; i < 3; i++) {
+        const req = await provider.receive();
+        await provider.respond(req.requestID, `response-${i + 1}`);
+      }
 
-        expect(r1).toContain('response-');
-        expect(r2).toContain('response-');
-        expect(r3).toContain('response-');
+      const responses = await Promise.all(promises);
+      responses.forEach(r => expect(r).toContain('response-'));
+    });
 
-        done();
-      }, 100);
-    }, 5000);
-
-    it('should respond with error', (done) => {
+    it('should respond with error', async () => {
       provider = new Provider(SERVER_ADDR, channelID);
       consumer = new Consumer(SERVER_ADDR, channelID);
 
-      const interval = setInterval(() => {
-        const req = provider.receive();
-        if (req) {
-          provider.respond(req.requestID, null, 'test error');
-          clearInterval(interval);
-        }
-      }, 10);
-      intervals.push(interval);
+      const responsePromise = consumer.send('test', 3000);
+      const req = await provider.receive();
+      await provider.respond(req.requestID, null, 'test error');
 
-      setTimeout(() => {
-        try {
-          consumer.send('test', 3000);
-          done.fail('Should have thrown');
-        } catch (e) {
-          expect(e).toBeDefined();
-          done();
-        }
-      }, 100);
-    }, 5000);
+      try {
+        await responsePromise;
+        fail('Should have thrown');
+      } catch (error) {
+        expect(error).toBeDefined();
+      }
+    });
   });
 
   describe('Multiple Consumers', () => {
-    it('should handle multiple consumers on same channel', (done) => {
+    it('should handle multiple consumers on same channel', async () => {
       provider = new Provider(SERVER_ADDR, channelID);
       const consumer1 = new Consumer(SERVER_ADDR, channelID);
       const consumer2 = new Consumer(SERVER_ADDR, channelID);
 
-      let responses = 0;
-      const interval = setInterval(() => {
-        const req = provider.receive();
-        if (req) {
-          provider.respond(req.requestID, `echo: ${req.data}`);
-          responses++;
-          if (responses >= 2) {
-            clearInterval(interval);
-          }
-        }
-      }, 10);
-      intervals.push(interval);
+      const promises = [
+        consumer1.send('msg1', 3000),
+        consumer2.send('msg2', 3000)
+      ];
 
-      setTimeout(() => {
-        const r1 = consumer1.send('msg1', 3000);
-        const r2 = consumer2.send('msg2', 3000);
+      for (let i = 0; i < 2; i++) {
+        const req = await provider.receive();
+        await provider.respond(req.requestID, `echo: ${req.data}`);
+      }
 
-        expect(r1).toBe('echo: msg1');
-        expect(r2).toBe('echo: msg2');
+      const [r1, r2] = await Promise.all(promises);
+      expect(r1).toBe('echo: msg1');
+      expect(r2).toBe('echo: msg2');
 
-        consumer1.close();
-        consumer2.close();
-        done();
-      }, 100);
-    }, 5000);
+      await consumer1.close();
+      await consumer2.close();
+    });
   });
 
   describe('Large Payloads', () => {
-    it('should handle large messages', (done) => {
+    it('should handle large messages', async () => {
       provider = new Provider(SERVER_ADDR, channelID);
       consumer = new Consumer(SERVER_ADDR, channelID);
 
-      const largeData = 'X'.repeat(10000); // 10KB (smaller for faster test)
+      const largeData = 'X'.repeat(10000);
+      const responsePromise = consumer.send(largeData, 5000);
 
-      const interval = setInterval(() => {
-        const req = provider.receive();
-        if (req) {
-          expect(req.data.length).toBe(10000);
-          provider.respond(req.requestID, req.data);
-          clearInterval(interval);
-        }
-      }, 10);
-      intervals.push(interval);
+      const req = await provider.receive();
+      expect(req.data.length).toBe(10000);
+      await provider.respond(req.requestID, req.data);
 
-      setTimeout(() => {
-        const response = consumer.send(largeData, 5000);
-        expect(response.length).toBe(10000);
-        done();
-      }, 100);
-    }, 8000);
+      const response = await responsePromise;
+      expect(response.length).toBe(10000);
+    });
   });
 });

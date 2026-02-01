@@ -2,7 +2,8 @@ import ffi from 'ffi-napi';
 import ref from 'ref-napi';
 import { EventEmitter } from 'events';
 
-const stringPtr = ref.refType('string');
+const charPtr = ref.refType('char');
+const stringPtr = ref.refType(charPtr);
 const intPtr = ref.refType('int');
 
 const socketLib = ffi.Library('./build/socket_lib', {
@@ -63,15 +64,13 @@ class Provider extends EventEmitter {
       if (result !== 0) {  // 0 = success, -1 = error, -2 = no request
         return null;
       }
-
-      const reqIDStr = reqID.deref();
+      let reqIDStr = reqID.deref();
       const dataPtr = data.deref();
       const dataLenVal = dataLen.deref();
-
       if (!reqIDStr || !dataPtr) {
         return null;
       }
-
+      reqIDStr = ref.readCString(reqIDStr, 0);
       return {
         requestID: reqIDStr,
         data: ref.readCString(dataPtr, 0, dataLenVal)
