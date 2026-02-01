@@ -72,16 +72,18 @@ func (c *baseClient) register() error {
 }
 
 func (c *baseClient) sendChunkedRequest(reqID uuid.UUID, r io.Reader) error {
-	buf := make([]byte, maxFrameSize)
+	buf := getBuffer()
+	defer putBuffer(buf)
+	
 	for {
-		n, err := r.Read(buf)
+		n, err := r.Read(*buf)
 		if n > 0 {
 			chunk := frame{
 				Version:   Version1,
 				Type:      ChunkFrame,
 				Flags:     0,
 				RequestID: reqID,
-				Payload:   buf[:n],
+				Payload:   (*buf)[:n],
 			}
 			if err := chunk.write(c.conn); err != nil {
 				return err
@@ -109,16 +111,18 @@ func (c *baseClient) sendChunkedResponse(reqID uuid.UUID, r io.Reader, routing [
 		return err
 	}
 
-	buf := make([]byte, maxFrameSize)
+	buf := getBuffer()
+	defer putBuffer(buf)
+	
 	for {
-		n, err := r.Read(buf)
+		n, err := r.Read(*buf)
 		if n > 0 {
 			chunk := frame{
 				Version:   Version1,
 				Type:      ResponseChunkFrame,
 				Flags:     0,
 				RequestID: reqID,
-				Payload:   buf[:n],
+				Payload:   (*buf)[:n],
 			}
 			if err := chunk.write(c.conn); err != nil {
 				return err
@@ -160,7 +164,8 @@ func (c *baseClient) receiveChunkedResponse(reqID uuid.UUID) (io.Reader, error) 
 		return nil, errors.New("unexpected frame type")
 	}
 
-	var payload []byte
+	// Pre-allocate with estimated capacity to reduce reallocations
+	payload := make([]byte, 0, maxFrameSize)
 	for {
 		f, err := newFrame(c.conn)
 		if err != nil {
