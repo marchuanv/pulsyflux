@@ -12,6 +12,93 @@ Consumer → Server → Provider
     Provider → Server → Consumer
 ```
 
+## Detailed Lifecycle & Message Flow
+
+```
+┌─────────────┐                    ┌─────────────┐                    ┌─────────────┐
+│  Consumer   │                    │   Server    │                    │  Provider   │
+└──────┬──────┘                    └──────┬──────┘                    └──────┬──────┘
+       │                                  │                                  │
+       │ 1. Connect & Register            │                                  │
+       ├─────────────────────────────────>│                                  │
+       │   StartFrame (FlagRegistration)  │                                  │
+       │   - clientID, channelID, role    │                                  │
+       │                                  │                                  │
+       │                                  │ 2. Add to Registry               │
+       │                                  │    (consumers map)               │
+       │                                  │                                  │
+       │                                  │ 3. Connect & Register            │
+       │                                  │<─────────────────────────────────┤
+       │                                  │   StartFrame (FlagRegistration)  │
+       │                                  │   - clientID, channelID, role    │
+       │                                  │                                  │
+       │                                  │ 4. Add to Registry               │
+       │                                  │    (providers map)               │
+       │                                  │                                  │
+       │ 5. Send Request                  │                                  │
+       ├─────────────────────────────────>│                                  │
+       │   StartFrame (metadata)          │                                  │
+       │                                  │                                  │
+       │                                  │ 6. Hash RequestID → Worker       │
+       │                                  │    Queue frames to Worker N      │
+       │                                  │                                  │
+       │                                  │ 7. Forward StartFrame            │
+       │                                  ├─────────────────────────────────>│
+       │                                  │   (routing info: clientID +      │
+       │                                  │    channelID prepended)          │
+       │                                  │                                  │
+       │ 8. Send Chunk(s)                 │                                  │
+       ├─────────────────────────────────>│                                  │
+       │   ChunkFrame (payload data)      │                                  │
+       │                                  │                                  │
+       │                                  │ 9. Same Worker (RequestID hash)  │
+       │                                  │                                  │
+       │                                  │ 10. Forward ChunkFrame           │
+       │                                  ├─────────────────────────────────>│
+       │                                  │                                  │
+       │                                  │                                  │
+       │ 11. Send End                     │                                  │
+       ├─────────────────────────────────>│                                  │
+       │   EndFrame                       │                                  │
+       │                                  │                                  │
+       │                                  │ 12. Same Worker (RequestID hash) │
+       │                                  │                                  │
+       │                                  │ 13. Forward EndFrame             │
+       │                                  ├─────────────────────────────────>│
+       │                                  │                                  │
+       │                                  │                                  │ 14. Process Request
+       │                                  │                                  │     handler(payload)
+       │                                  │                                  │
+       │                                  │ 15. Send Response                │
+       │                                  │<─────────────────────────────────┤
+       │                                  │   ResponseFrame                  │
+       │                                  │   (routing info + response)      │
+       │                                  │                                  │
+       │                                  │ 16. Extract routing info         │
+       │                                  │     Lookup consumer in registry  │
+       │                                  │                                  │
+       │ 17. Deliver Response             │                                  │
+       │<─────────────────────────────────┤                                  │
+       │   ResponseFrame                  │                                  │
+       │                                  │                                  │
+       │ 18. Close                        │                                  │
+       ├─────────────────────────────────>│                                  │
+       │                                  │                                  │
+       │                                  │ 19. Remove from Registry         │
+       │                                  │                                  │
+       │                                  │ 20. Close                        │
+       │                                  │<─────────────────────────────────┤
+       │                                  │                                  │
+       │                                  │ 21. Remove from Registry         │
+       │                                  │                                  │
+```
+
+**Key Points:**
+- Steps 6, 9, 12: RequestID hashing ensures same worker processes all frames
+- Steps 7, 10, 13: Frames forwarded in order by single worker
+- Step 14: Provider processes complete request after receiving all frames
+- Steps 16-17: Routing info enables response delivery back to correct consumer
+
 ## Key Components
 
 ### 1. Server (`server.go`)
