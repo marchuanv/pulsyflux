@@ -57,7 +57,7 @@ class Provider {
 
     const result = socketLib.ProviderReceive(this.id, reqID, data, dataLen);
     if (result < 0) {
-      return null;
+      return null; // No request available or error
     }
 
     return {

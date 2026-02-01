@@ -128,9 +128,24 @@ func ProviderReceive(id C.int, reqID **C.char, data **C.char, dataLen *C.int) C.
 		return -1
 	}
 
-	uuid, reader, ok := p.Receive()
-	if !ok {
-		return -1
+	// Use a very short timeout to make it non-blocking
+	done := make(chan struct{})
+	var uuid uuid.UUID
+	var reader io.Reader
+	var success bool
+
+	go func() {
+		uuid, reader, success = p.Receive()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if !success {
+			return -1
+		}
+	case <-time.After(1 * time.Millisecond):
+		return -2 // No request available (timeout)
 	}
 
 	payload, err := io.ReadAll(reader)
