@@ -8,12 +8,12 @@ import (
 	"github.com/google/uuid"
 )
 
-type consumer struct {
+type Consumer struct {
 	baseClient
 }
 
-func NewConsumer(addr string, channelID uuid.UUID) (*consumer, error) {
-	c := &consumer{
+func NewConsumer(addr string, channelID uuid.UUID) (*Consumer, error) {
+	c := &Consumer{
 		baseClient: baseClient{
 			addr:      addr,
 			clientID:  uuid.New(),
@@ -31,13 +31,13 @@ func NewConsumer(addr string, channelID uuid.UUID) (*consumer, error) {
 	return c, nil
 }
 
-func (c *consumer) Close() error {
+func (c *Consumer) Close() error {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 	return c.close()
 }
 
-func (c *consumer) Send(r io.Reader, reqTimeout time.Duration) (io.Reader, error) {
+func (c *Consumer) Send(r io.Reader, reqTimeout time.Duration) (io.Reader, error) {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 

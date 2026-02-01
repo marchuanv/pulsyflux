@@ -20,3 +20,6 @@ replace msgbuscontainer v1.0.0 => /msgbuscontainer
 
 replace socket v1.0.0 => /socket
 
+replace socket-exp v1.0.0 => /socket-exp
+
+

@@ -1,0 +1,10 @@
+module socket-exp
+
+go 1.21
+
+require (
+	github.com/google/uuid v1.6.0
+	pulsyflux/socket v0.0.0
+)
+
+replace pulsyflux/socket => ../socket

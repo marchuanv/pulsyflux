@@ -23,7 +23,11 @@
 		},
 		{
 			"path": "socket"
+		},
+		{
+			"path": "socket-exp"
 		}
+
 
 	],
 	"settings": {

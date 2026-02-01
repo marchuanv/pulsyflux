@@ -19,7 +19,7 @@ type providerResponse struct {
 	Err    error
 }
 
-type provider struct {
+type Provider struct {
 	baseClient
 	requests    chan *providerRequest
 	responses   chan *providerResponse
@@ -28,8 +28,8 @@ type provider struct {
 	done        chan struct{}
 }
 
-func NewProvider(addr string, channelID uuid.UUID) (*provider, error) {
-	p := &provider{
+func NewProvider(addr string, channelID uuid.UUID) (*Provider, error) {
+	p := &Provider{
 		baseClient: baseClient{
 			addr:      addr,
 			clientID:  uuid.New(),
@@ -53,7 +53,7 @@ func NewProvider(addr string, channelID uuid.UUID) (*provider, error) {
 	return p, nil
 }
 
-func (p *provider) listen() {
+func (p *Provider) listen() {
 	streamReqs := make(map[uuid.UUID]*bytes.Buffer)  // Use buffer for efficient appending
 	routingInfo := make(map[uuid.UUID][]byte)        // Stores routing info per request
 
@@ -125,7 +125,7 @@ func (p *provider) listen() {
 	}
 }
 
-func (p *provider) writeResponses() {
+func (p *Provider) writeResponses() {
 	for {
 		select {
 		case <-p.done:
@@ -164,7 +164,7 @@ func (p *provider) writeResponses() {
 	}
 }
 
-func (p *provider) Receive() (uuid.UUID, io.Reader, bool) {
+func (p *Provider) Receive() (uuid.UUID, io.Reader, bool) {
 	select {
 	case req, ok := <-p.requests:
 		if !ok {
@@ -176,7 +176,7 @@ func (p *provider) Receive() (uuid.UUID, io.Reader, bool) {
 	}
 }
 
-func (p *provider) Respond(reqID uuid.UUID, r io.Reader, err error) {
+func (p *Provider) Respond(reqID uuid.UUID, r io.Reader, err error) {
 	resp := &providerResponse{
 		ID:     reqID,
 		Reader: r,
@@ -188,7 +188,7 @@ func (p *provider) Respond(reqID uuid.UUID, r io.Reader, err error) {
 	}
 }
 
-func (p *provider) Close() error {
+func (p *Provider) Close() error {
 	close(p.done)
 	close(p.requests)
 	close(p.responses)

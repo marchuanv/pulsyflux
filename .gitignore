@@ -1,3 +1,46 @@
-pkg/
-bin/
+# Binaries
 *.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+
+# Go build cache
+socket-exp/build/
+socket-exp/.cache/
+
+# C headers (generated)
+socket-exp/socket_lib.h
+
+# Node modules
+socket-exp/node_modules/
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Profiles
+*.prof
+*.pprof
+cpu.prof
+mem.prof
+
+# Test artifacts
+perf_*.txt
+benchmark_*.txt
