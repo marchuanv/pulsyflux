@@ -1,0 +1,167 @@
+package socket
+
+import (
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+func BenchmarkSingleRequest(b *testing.B) {
+	server := NewServer("9095")
+	server.Start()
+	defer server.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	channelID := uuid.New()
+	provider, _ := NewProvider("127.0.0.1:9095", channelID, func(payload []byte) ([]byte, error) {
+		return []byte("ok"), nil
+	})
+	defer provider.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	consumer, _ := NewConsumer("127.0.0.1:9095", channelID)
+	defer consumer.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		consumer.Send(strings.NewReader("test"), 5*time.Second)
+	}
+}
+
+func BenchmarkConcurrentRequests(b *testing.B) {
+	server := NewServer("9096")
+	server.Start()
+	defer server.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	channelID := uuid.New()
+	provider, _ := NewProvider("127.0.0.1:9096", channelID, func(payload []byte) ([]byte, error) {
+		return []byte("ok"), nil
+	})
+	defer provider.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	numConsumers := 10
+	consumers := make([]*Consumer, numConsumers)
+	for i := 0; i < numConsumers; i++ {
+		consumers[i], _ = NewConsumer("127.0.0.1:9096", channelID)
+		defer consumers[i].Close()
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		consumerIdx := 0
+		for pb.Next() {
+			consumer := consumers[consumerIdx%numConsumers]
+			consumer.Send(strings.NewReader("test"), 5*time.Second)
+			consumerIdx++
+		}
+	})
+}
+
+func BenchmarkLargePayload(b *testing.B) {
+	server := NewServer("9097")
+	server.Start()
+	defer server.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	channelID := uuid.New()
+	provider, _ := NewProvider("127.0.0.1:9097", channelID, func(payload []byte) ([]byte, error) {
+		return []byte("ok"), nil
+	})
+	defer provider.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	consumer, _ := NewConsumer("127.0.0.1:9097", channelID)
+	defer consumer.Close()
+
+	largeData := strings.Repeat("X", 1024*1024) // 1MB
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		consumer.Send(strings.NewReader(largeData), 5*time.Second)
+	}
+}
+
+func BenchmarkMultipleChannels(b *testing.B) {
+	server := NewServer("9098")
+	server.Start()
+	defer server.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	numChannels := 10
+	channels := make([]uuid.UUID, numChannels)
+	providers := make([]*Provider, numChannels)
+	consumers := make([]*Consumer, numChannels)
+
+	for i := 0; i < numChannels; i++ {
+		channels[i] = uuid.New()
+		providers[i], _ = NewProvider("127.0.0.1:9098", channels[i], func(payload []byte) ([]byte, error) {
+			return []byte("ok"), nil
+		})
+		defer providers[i].Close()
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	for i := 0; i < numChannels; i++ {
+		consumers[i], _ = NewConsumer("127.0.0.1:9098", channels[i])
+		defer consumers[i].Close()
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		channelIdx := 0
+		for pb.Next() {
+			consumer := consumers[channelIdx%numChannels]
+			consumer.Send(strings.NewReader("test"), 5*time.Second)
+			channelIdx++
+		}
+	})
+}
+
+func BenchmarkThroughput(b *testing.B) {
+	server := NewServer("9099")
+	server.Start()
+	defer server.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	channelID := uuid.New()
+	provider, _ := NewProvider("127.0.0.1:9099", channelID, func(payload []byte) ([]byte, error) {
+		return payload, nil
+	})
+	defer provider.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	numConsumers := 100
+	consumers := make([]*Consumer, numConsumers)
+	for i := 0; i < numConsumers; i++ {
+		consumers[i], _ = NewConsumer("127.0.0.1:9099", channelID)
+		defer consumers[i].Close()
+	}
+
+	b.ResetTimer()
+	var wg sync.WaitGroup
+	for i := 0; i < numConsumers; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			for j := 0; j < b.N/numConsumers; j++ {
+				consumers[idx].Send(strings.NewReader("test"), 5*time.Second)
+			}
+		}(i)
+	}
+	wg.Wait()
+}

@@ -152,3 +152,23 @@ This design allows:
 - **Sequential processing** of frames within a request
 - **Parallel processing** of different requests across workers
 - **No race conditions** between frames of the same request
+
+## Performance
+
+### Benchmarks (Intel i5-12400F, 12 cores)
+
+| Benchmark | Requests/sec | Latency | Memory/op |
+|-----------|--------------|---------|------------|
+| Single Request | 3,333 | 300µs | 1.0 MB |
+| Concurrent (10 consumers) | 8,680 | 115µs | 1.0 MB |
+| Large Payload (1MB) | 860 | 1.16ms | 4.0 MB |
+| Multiple Channels (10) | 9,916 | 100µs | 1.0 MB |
+| High Throughput (100 consumers) | 11,560 | 86µs | 1.0 MB |
+
+### Resource Management
+
+- **No goroutine leaks**: Verified across 10 iterations
+- **No memory leaks**: <0.5 MB growth after 100 iterations
+- **Clean registry**: All connections properly cleaned up
+- **Throughput**: ~860 MB/s for large payloads
+- **Scalability**: 2.6x performance improvement with concurrency
