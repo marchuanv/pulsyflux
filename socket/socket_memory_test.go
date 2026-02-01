@@ -2,6 +2,7 @@ package socket
 
 import (
 	"bytes"
+	"io"
 	"runtime"
 	"strings"
 	"testing"
@@ -31,8 +32,8 @@ func TestMemoryStressLargePayloads(t *testing.T) {
 			if !ok {
 				break
 			}
-			data, _ := bytes.NewBuffer(nil).ReadFrom(r)
-			provider.Respond(reqID, bytes.NewReader(bytes.Repeat([]byte("X"), int(data))), nil)
+			data, _ := io.ReadAll(r)
+			provider.Respond(reqID, bytes.NewReader(bytes.Repeat([]byte("X"), len(data))), nil)
 		}
 	}()
 

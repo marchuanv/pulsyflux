@@ -2,7 +2,7 @@ package main
 
 // #include <stdlib.h>
 import "C"
-	import (
+import (
 	"bytes"
 	"errors"
 	"io"
@@ -10,14 +10,15 @@ import "C"
 	"time"
 	"unsafe"
 
+	pfSocket "pulsyflux/socket"
+
 	"github.com/google/uuid"
-	"pulsyflux/socket"
 )
 
 type (
-	consumer = socket.Consumer
-	provider = socket.Provider
-	server   = socket.Server
+	consumer = pfSocket.Consumer
+	provider = pfSocket.Provider
+	server   = pfSocket.Server
 )
 
 var (
@@ -36,7 +37,7 @@ func ConsumerNew(address *C.char, channelID *C.char) C.int {
 		return -1
 	}
 
-	c, err := socket.NewConsumer(addr, chanID)
+	c, err := pfSocket.NewConsumer(addr, chanID)
 	if err != nil {
 		return -1
 	}
@@ -103,7 +104,7 @@ func ProviderNew(address *C.char, channelID *C.char) C.int {
 		return -1
 	}
 
-	p, err := socket.NewProvider(addr, chanID)
+	p, err := pfSocket.NewProvider(addr, chanID)
 	if err != nil {
 		return -1
 	}
@@ -200,7 +201,7 @@ func FreeString(str *C.char) {
 
 //export ServerNew
 func ServerNew(port *C.char) C.int {
-	s := socket.NewServer(C.GoString(port))
+	s := pfSocket.NewServer(C.GoString(port))
 	if err := s.Start(); err != nil {
 		return -1
 	}

@@ -108,17 +108,17 @@ func (c *baseClient) sendChunkedRequest(reqID uuid.UUID, r io.Reader) error {
 }
 
 func (c *baseClient) sendChunkedResponse(reqID uuid.UUID, r io.Reader, routing []byte, frameType byte) error {
-	startFrame := getFrame()
-	startFrame.Version = version1
-	startFrame.Type = frameType
-	startFrame.Flags = 0
-	startFrame.RequestID = reqID
-	startFrame.Payload = routing
-	if err := startFrame.write(c.conn); err != nil {
-		putFrame(startFrame)
+	_startFrame := getFrame()
+	_startFrame.Version = version1
+	_startFrame.Type = frameType
+	_startFrame.Flags = 0
+	_startFrame.RequestID = reqID
+	_startFrame.Payload = routing
+	if err := _startFrame.write(c.conn); err != nil {
+		putFrame(_startFrame)
 		return err
 	}
-	putFrame(startFrame)
+	putFrame(_startFrame)
 
 	buf := getBuffer()
 	defer putBuffer(buf)
@@ -146,14 +146,14 @@ func (c *baseClient) sendChunkedResponse(reqID uuid.UUID, r io.Reader, routing [
 		}
 	}
 
-	endFrame := getFrame()
-	endFrame.Version = version1
-	endFrame.Type = responseEndFrame
-	endFrame.Flags = 0
-	endFrame.RequestID = reqID
-	endFrame.Payload = nil
-	err := endFrame.write(c.conn)
-	putFrame(endFrame)
+	_endFrame := getFrame()
+	_endFrame.Version = version1
+	_endFrame.Type = responseEndFrame
+	_endFrame.Flags = 0
+	_endFrame.RequestID = reqID
+	_endFrame.Payload = nil
+	err := _endFrame.write(c.conn)
+	putFrame(_endFrame)
 	return err
 }
 

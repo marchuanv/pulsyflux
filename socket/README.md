@@ -301,25 +301,26 @@ Benefits:
 
 ## Performance
 
-### Benchmarks (Intel i5-12400F, 12 cores, 3s runs)
+### Benchmarks (Intel i5-12400F, 12 cores)
 
 | Benchmark | ns/op | B/op | allocs/op | Throughput |
 |-----------|-------|------|-----------|------------|
-| Single Request | 123,539 | 7,592 | 79 | 8,095 req/s |
-| Small Payload | 125,773 | 6,797 | 79 | - |
-| Medium Payload (10KB) | 159,813 | 260,979 | 85 | - |
-| Echo Payload (1KB) | 132,268 | 24,522 | 82 | - |
-| Large Payload (1MB) | 1,878,880 | 6,980,525 | 102 | - |
-| Concurrent (10 consumers) | 60,090,898 | 279,892 | 79 | - |
-| Parallel (50 consumers) | 12,630,256 | 6,753 | 73 | - |
-| Multiple Channels (10) | 1,221,536 | 8,734 | 72 | - |
-| Multiple Providers (10) | 300,096,805 | 205,516 | 60 | - |
-| Bandwidth (1MB) | 4,467,676 | 12,437,179 | 111 | 448 MB/s |
+| Single Request | 122,586 | 6,802 | 79 | 8,288 req/s |
+| Small Payload | 125,030 | 9,254 | 79 | - |
+| Medium Payload (10KB) | 161,476 | 260,973 | 85 | - |
+| Echo Payload (1KB) | 126,504 | 23,857 | 82 | - |
+| Large Payload (1MB) | 1,645,718 | 6,966,502 | 102 | - |
+| Concurrent (10 consumers) | 3,627,506 | 6,282 | 61 | - |
+| Parallel (50 consumers) | 13,825,198 | 7,269 | 72 | - |
+| Multiple Channels (10) | 3,625,755 | 7,157 | 72 | - |
+| Multiple Providers (10) | 300,118,023 | 184,307 | 58 | - |
+| Bandwidth (1MB) | 4,396,813 | 12,416,774 | 110 | 454.69 MB/s |
+| Latency | 124,843 | 7,845 | 79 | 124.0 µs/op |
 
 ### Key Metrics
-- **Latency**: 123µs average for small requests
-- **Throughput**: 8,125 req/s (single consumer)
-- **Bandwidth**: 448 MB/s for large payloads
+- **Latency**: 124µs average for small requests
+- **Throughput**: 8,288 req/s (single consumer)
+- **Bandwidth**: 454.69 MB/s for large payloads
 - **Allocations**: 79 per request (optimized)
 
 ### Recent Optimizations
