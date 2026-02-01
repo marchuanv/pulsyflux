@@ -1,4 +1,4 @@
-import { Consumer, Provider, Server } from './socket.mjs';
+import { Consumer, Provider, Server } from '../socket.mjs';
 import { v4 as uuidv4 } from 'uuid';
 
 describe('Socket Library', () => {

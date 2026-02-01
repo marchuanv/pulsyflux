@@ -1,9 +1,13 @@
 {
-  "spec_dir": ".",
+  "spec_dir": "spec",
   "spec_files": [
-    "socket.spec.js"
+    "**/*[sS]pec.?(m)js"
   ],
-  "helpers": [],
-  "stopSpecOnExpectationFailure": false,
-  "random": false
+  "helpers": [
+    "helpers/**/*.?(m)js"
+  ],
+  "env": {
+    "stopSpecOnExpectationFailure": false,
+    "random": true
+  }
 }
