@@ -10,22 +10,22 @@ import (
 	"github.com/google/uuid"
 )
 
-const Version1 byte = 1
+const version1 byte = 1
 
 const (
-	ResponseFrame            byte   = 0x02
-	ErrorFrame               byte   = 0x03
-	StartFrame               byte   = 0x04
-	ChunkFrame               byte   = 0x05
-	EndFrame                 byte   = 0x06
-	ResponseStartFrame       byte   = 0x07
-	ResponseChunkFrame       byte   = 0x08
-	ResponseEndFrame         byte   = 0x09
+	responseFrame            byte   = 0x02
+	errorFrame               byte   = 0x03
+	startFrame               byte   = 0x04
+	chunkFrame               byte   = 0x05
+	endFrame                 byte   = 0x06
+	responseStartFrame       byte   = 0x07
+	responseChunkFrame       byte   = 0x08
+	responseEndFrame         byte   = 0x09
 	frameHeaderSize                 = 24
 	maxFrameSize                    = 1024 * 1024
 	defaultFrameReadTimeout         = 2 * time.Minute
 	defaultFrameWriteTimeout        = 5 * time.Second
-	FlagRegistration         uint16 = 0x01
+	flagRegistration         uint16 = 0x01
 )
 
 type frame struct {
@@ -45,7 +45,7 @@ func newFrame(conn net.Conn) (*frame, error) {
 		return nil, err
 	}
 
-	if header[0] != Version1 {
+	if header[0] != version1 {
 		return nil, errors.New("unsupported protocol version")
 	}
 
@@ -76,8 +76,8 @@ func newFrame(conn net.Conn) (*frame, error) {
 // newErrorFrame constructs an error frame with the given message
 func newErrorFrame(reqID uuid.UUID, msg string) *frame {
 	f := getFrame()
-	f.Version = Version1
-	f.Type = ErrorFrame
+	f.Version = version1
+	f.Type = errorFrame
 	f.RequestID = reqID
 	f.Payload = []byte(msg)
 	return f

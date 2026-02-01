@@ -21,7 +21,7 @@ func (ctx *connctx) send(f *frame) bool {
 	}()
 
 	// Send error frames on priority channel
-	if f.Type == ErrorFrame {
+	if f.Type == errorFrame {
 		select {
 		case ctx.errors <- f:
 			return true

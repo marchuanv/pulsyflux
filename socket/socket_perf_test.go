@@ -137,7 +137,7 @@ func BenchmarkParallelConsumers(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	numConsumers := 50
-	consumers := make([]*consumer, numConsumers)
+	consumers := make([]*Consumer, numConsumers)
 	for i := 0; i < numConsumers; i++ {
 		consumers[i], _ = NewConsumer("127.0.0.1:9303", channelID)
 		defer consumers[i].Close()
@@ -245,13 +245,13 @@ func BenchmarkMultipleProviders(b *testing.B) {
 
 	numProviders := 10
 	channelID := uuid.New()
-	providers := make([]*provider, numProviders)
+	providers := make([]*Provider, numProviders)
 
 	for i := 0; i < numProviders; i++ {
 		providers[i], _ = NewProvider("127.0.0.1:9306", channelID)
 		defer providers[i].Close()
 
-		go func(p *provider) {
+		go func(p *Provider) {
 			for {
 				reqID, _, ok := p.Receive()
 				if !ok {
@@ -265,7 +265,7 @@ func BenchmarkMultipleProviders(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	numConsumers := 20
-	consumers := make([]*consumer, numConsumers)
+	consumers := make([]*Consumer, numConsumers)
 	for i := 0; i < numConsumers; i++ {
 		consumers[i], _ = NewConsumer("127.0.0.1:9306", channelID)
 		defer consumers[i].Close()

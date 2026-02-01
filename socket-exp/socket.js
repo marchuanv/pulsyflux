@@ -12,6 +12,8 @@ const socketLib = ffi.Library('./build/socket_lib', {
   'ProviderReceive': ['int', ['int', stringPtr, stringPtr, intPtr]],
   'ProviderRespond': ['int', ['int', 'string', 'string', 'int', 'string']],
   'ProviderClose': ['int', ['int']],
+  'ServerNew': ['int', ['string']],
+  'ServerStop': ['int', ['int']],
   'FreeString': ['void', ['string']]
 });
 
@@ -84,4 +86,20 @@ class Provider {
   }
 }
 
-module.exports = { Consumer, Provider };
+class Server {
+  constructor(port) {
+    this.id = socketLib.ServerNew(port);
+    if (this.id < 0) {
+      throw new Error('Failed to create server');
+    }
+  }
+
+  stop() {
+    if (this.id >= 0) {
+      socketLib.ServerStop(this.id);
+      this.id = -1;
+    }
+  }
+}
+
+module.exports = { Consumer, Provider, Server };

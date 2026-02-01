@@ -34,7 +34,7 @@ func NewProvider(addr string, channelID uuid.UUID) (*Provider, error) {
 			addr:      addr,
 			clientID:  uuid.New(),
 			channelID: channelID,
-			role:      RoleProvider,
+			role:      roleProvider,
 		},
 		requests:    make(chan *providerRequest, 100),
 		responses:   make(chan *providerResponse, 100),
@@ -78,7 +78,7 @@ func (p *Provider) listen() {
 		}
 
 		switch f.Type {
-		case StartFrame:
+		case startFrame:
 			if len(f.Payload) < 32 {
 				putFrame(f)
 				continue // Skip invalid frames instead of panic
@@ -87,7 +87,7 @@ func (p *Provider) listen() {
 			streamReqs[f.RequestID] = bytes.NewBuffer(make([]byte, 0, 1024))
 			putFrame(f)
 
-		case ChunkFrame:
+		case chunkFrame:
 			buf := streamReqs[f.RequestID]
 			if buf == nil {
 				putFrame(f)
@@ -96,7 +96,7 @@ func (p *Provider) listen() {
 			buf.Write(f.Payload)
 			putFrame(f)
 
-		case EndFrame:
+		case endFrame:
 			buf := streamReqs[f.RequestID]
 			routing := routingInfo[f.RequestID]
 			delete(streamReqs, f.RequestID)
@@ -145,8 +145,8 @@ func (p *Provider) writeResponses() {
 			if resp.Err != nil {
 				errorPayload := append(routing, []byte(resp.Err.Error())...)
 				errFrame := getFrame()
-				errFrame.Version = Version1
-				errFrame.Type = ErrorFrame
+				errFrame.Version = version1
+				errFrame.Type = errorFrame
 				errFrame.RequestID = resp.ID
 				errFrame.Payload = errorPayload
 				errFrame.write(p.conn)
@@ -155,7 +155,7 @@ func (p *Provider) writeResponses() {
 				continue
 			}
 
-			if err := p.sendChunkedResponse(resp.ID, resp.Reader, routing, ResponseStartFrame); err != nil {
+			if err := p.sendChunkedResponse(resp.ID, resp.Reader, routing, responseStartFrame); err != nil {
 				p.connMu.Unlock()
 				continue
 			}

@@ -33,7 +33,7 @@ func (rw *requestWorker) handle(reqCh chan *request, wg *sync.WaitGroup) {
 		peerCtx, ok := rw.clientRegistry.getPeerForChannel(req.role, req.channelID)
 		if !ok {
 			req.connctx.send(newErrorFrame(req.requestID, "peer disappeared"))
-			if req.frame.Type == EndFrame {
+			if req.frame.Type == endFrame {
 				req.cancel()
 			}
 			continue
@@ -41,7 +41,7 @@ func (rw *requestWorker) handle(reqCh chan *request, wg *sync.WaitGroup) {
 
 		// Forward frame based on type
 		switch req.frame.Type {
-		case StartFrame:
+		case startFrame:
 			// Reuse worker's routing buffer
 			copy(rw.routingBuf[0:16], req.clientID[:])
 			copy(rw.routingBuf[16:32], req.channelID[:])
@@ -52,13 +52,13 @@ func (rw *requestWorker) handle(reqCh chan *request, wg *sync.WaitGroup) {
 				continue
 			}
 
-		case ChunkFrame:
+		case chunkFrame:
 			if !peerCtx.send(req.frame) {
 				req.connctx.send(newErrorFrame(req.requestID, "failed to send chunk to peer"))
 				continue
 			}
 
-		case EndFrame:
+		case endFrame:
 			if !peerCtx.send(req.frame) {
 				req.connctx.send(newErrorFrame(req.requestID, "failed to send end to peer"))
 			}

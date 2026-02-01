@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	ErrRequestIDMismatch = errors.New("response ID mismatch")
+	errRequestIDMismatch = errors.New("response ID mismatch")
 	defaultTimeout       = 5 * time.Second
 )
 
@@ -24,6 +24,6 @@ type request struct {
 	timeout        time.Duration
 	ctx            context.Context
 	cancel         context.CancelFunc
-	role           ClientRole
+	role           clientRole
 	isRegistration bool
 }

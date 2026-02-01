@@ -18,7 +18,7 @@ func NewConsumer(addr string, channelID uuid.UUID) (*Consumer, error) {
 			addr:      addr,
 			clientID:  uuid.New(),
 			channelID: channelID,
-			role:      RoleConsumer,
+			role:      roleConsumer,
 		},
 	}
 	if err := c.dial(); err != nil {
@@ -47,33 +47,33 @@ func (c *Consumer) Send(r io.Reader, reqTimeout time.Duration) (io.Reader, error
 		timeoutMs = uint64(defaultTimeout.Milliseconds())
 	}
 
-	startFrame := getFrame()
-	startFrame.Version = Version1
-	startFrame.Type = StartFrame
-	startFrame.Flags = 0
-	startFrame.RequestID = reqID
-	startFrame.Payload = c.buildMetadataPayload(timeoutMs)
-	if err := startFrame.write(c.conn); err != nil {
-		putFrame(startFrame)
+	_startFrame := getFrame()
+	_startFrame.Version = version1
+	_startFrame.Type = startFrame
+	_startFrame.Flags = 0
+	_startFrame.RequestID = reqID
+	_startFrame.Payload = c.buildMetadataPayload(timeoutMs)
+	if err := _startFrame.write(c.conn); err != nil {
+		putFrame(_startFrame)
 		return nil, err
 	}
-	putFrame(startFrame)
+	putFrame(_startFrame)
 
 	if err := c.sendChunkedRequest(reqID, r); err != nil {
 		return nil, err
 	}
 
-	endFrame := getFrame()
-	endFrame.Version = Version1
-	endFrame.Type = EndFrame
-	endFrame.Flags = 0
-	endFrame.RequestID = reqID
-	endFrame.Payload = nil
-	if err := endFrame.write(c.conn); err != nil {
-		putFrame(endFrame)
+	_endFrame := getFrame()
+	_endFrame.Version = version1
+	_endFrame.Type = endFrame
+	_endFrame.Flags = 0
+	_endFrame.RequestID = reqID
+	_endFrame.Payload = nil
+	if err := _endFrame.write(c.conn); err != nil {
+		putFrame(_endFrame)
 		return nil, err
 	}
-	putFrame(endFrame)
+	putFrame(_endFrame)
 
 	ctx, cancel := context.WithTimeout(context.Background(), reqTimeout+time.Second)
 	defer cancel()

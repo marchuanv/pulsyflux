@@ -88,7 +88,7 @@ func TestMemoryStressConcurrent(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Create 50 concurrent consumers
-	consumers := make([]*consumer, 50)
+	consumers := make([]*Consumer, 50)
 	for i := 0; i < 50; i++ {
 		consumers[i], _ = NewConsumer("127.0.0.1:9201", channelID)
 		defer consumers[i].Close()
@@ -97,7 +97,7 @@ func TestMemoryStressConcurrent(t *testing.T) {
 	// Each consumer sends 100 requests
 	done := make(chan bool, 50)
 	for i := 0; i < 50; i++ {
-		go func(c *consumer) {
+		go func(c *Consumer) {
 			for j := 0; j < 100; j++ {
 				c.Send(strings.NewReader("test"), 5*time.Second)
 			}
@@ -201,14 +201,14 @@ func TestMemoryLeakUnderLoad(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		// 20 consumers, 50 requests each
-		consumers := make([]*consumer, 20)
+		consumers := make([]*Consumer, 20)
 		for i := 0; i < 20; i++ {
 			consumers[i], _ = NewConsumer("127.0.0.1:9203", channelID)
 		}
 
 		done := make(chan bool, 20)
 		for i := 0; i < 20; i++ {
-			go func(c *consumer) {
+			go func(c *Consumer) {
 				for j := 0; j < 50; j++ {
 					c.Send(strings.NewReader("test"), 5*time.Second)
 				}

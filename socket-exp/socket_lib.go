@@ -17,11 +17,13 @@ import "C"
 type (
 	consumer = socket.Consumer
 	provider = socket.Provider
+	server   = socket.Server
 )
 
 var (
 	consumers = make(map[int]*consumer)
 	providers = make(map[int]*provider)
+	servers   = make(map[int]*server)
 	nextID    = 1
 	mu        sync.Mutex
 )
@@ -194,6 +196,41 @@ func ProviderClose(id C.int) C.int {
 //export FreeString
 func FreeString(str *C.char) {
 	C.free(unsafe.Pointer(str))
+}
+
+//export ServerNew
+func ServerNew(port *C.char) C.int {
+	s := socket.NewServer(C.GoString(port))
+	if err := s.Start(); err != nil {
+		return -1
+	}
+
+	mu.Lock()
+	id := nextID
+	nextID++
+	servers[id] = s
+	mu.Unlock()
+
+	return C.int(id)
+}
+
+//export ServerStop
+func ServerStop(id C.int) C.int {
+	mu.Lock()
+	s, ok := servers[int(id)]
+	if ok {
+		delete(servers, int(id))
+	}
+	mu.Unlock()
+
+	if !ok {
+		return -1
+	}
+
+	if err := s.Stop(); err != nil {
+		return -1
+	}
+	return 0
 }
 
 func main() {}

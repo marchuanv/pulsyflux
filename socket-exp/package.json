@@ -5,14 +5,21 @@
   "main": "socket.js",
   "scripts": {
     "build": "build.bat",
-    "test": "node example.js"
+    "test": "jasmine"
   },
   "dependencies": {
     "ffi-napi": "^4.0.3",
     "ref-napi": "^3.0.3",
     "uuid": "^9.0.0"
   },
-  "keywords": ["socket", "rpc", "messaging"],
+  "devDependencies": {
+    "jasmine": "^5.13.0"
+  },
+  "keywords": [
+    "socket",
+    "rpc",
+    "messaging"
+  ],
   "author": "",
   "license": "MIT"
 }

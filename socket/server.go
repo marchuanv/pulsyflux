@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type server struct {
+type Server struct {
 	port           string
 	ln             net.Listener
 	ctx            context.Context
@@ -21,16 +21,16 @@ type server struct {
 	clientRegistry *clientRegistry
 }
 
-func NewServer(port string) *server {
+func NewServer(port string) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &server{
+	return &Server{
 		port:   port,
 		ctx:    ctx,
 		cancel: cancel,
 	}
 }
 
-func (s *server) Start() error {
+func (s *Server) Start() error {
 	lc := &net.ListenConfig{
 		Control: func(network, address string, conn syscall.RawConn) error {
 			return conn.Control(func(fd uintptr) {
@@ -55,7 +55,7 @@ func (s *server) Start() error {
 	return nil
 }
 
-func (s *server) Stop() error {
+func (s *Server) Stop() error {
 	s.cancel()
 	s.ln.Close()
 	s.conns.Wait()
@@ -63,7 +63,7 @@ func (s *server) Stop() error {
 	return nil
 }
 
-func (s *server) acceptLoop() {
+func (s *Server) acceptLoop() {
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
@@ -81,7 +81,7 @@ func (s *server) acceptLoop() {
 	}
 }
 
-func (s *server) handle(conn net.Conn) {
+func (s *Server) handle(conn net.Conn) {
 	defer s.conns.Done()
 
 	ctx := &connctx{
@@ -97,7 +97,7 @@ func (s *server) handle(conn net.Conn) {
 	streamReqs := make(map[uuid.UUID]*request)
 	responseRouting := make(map[uuid.UUID]*connctx)
 
-	var registeredRole ClientRole
+	var registeredRole clientRole
 	var registeredClientID uuid.UUID
 	var registeredChannelID uuid.UUID
 	var clientRegistered bool
@@ -132,7 +132,7 @@ func (s *server) handle(conn net.Conn) {
 		}
 
 		switch f.Type {
-		case StartFrame:
+		case startFrame:
 			// Validate payload length
 			if len(f.Payload) != 41 {
 				ctx.send(newErrorFrame(f.RequestID, "invalid start frame payload length"))
@@ -140,8 +140,8 @@ func (s *server) handle(conn net.Conn) {
 			}
 
 			// Extract fields from payload
-			role := ClientRole(f.Payload[0])
-			if role != RoleConsumer && role != RoleProvider {
+			role := clientRole(f.Payload[0])
+			if role != roleConsumer && role != roleProvider {
 				ctx.send(newErrorFrame(f.RequestID, "invalid client role"))
 				continue
 			}
@@ -155,7 +155,7 @@ func (s *server) handle(conn net.Conn) {
 			var channelID uuid.UUID
 			copy(channelID[:], f.Payload[25:41])
 
-			isRegistration := f.Flags&FlagRegistration != 0
+			isRegistration := f.Flags&flagRegistration != 0
 			reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
 			req := &request{
 				connctx:        ctx,
@@ -188,7 +188,7 @@ func (s *server) handle(conn net.Conn) {
 				}
 			}
 
-		case ChunkFrame:
+		case chunkFrame:
 			req := streamReqs[f.RequestID]
 			if req != nil && !req.isRegistration {
 				reqCopy := *req
@@ -199,7 +199,7 @@ func (s *server) handle(conn net.Conn) {
 				}
 			}
 
-		case EndFrame:
+		case endFrame:
 			req := streamReqs[f.RequestID]
 			delete(streamReqs, f.RequestID)
 
@@ -212,7 +212,7 @@ func (s *server) handle(conn net.Conn) {
 				}
 			}
 
-		case ResponseStartFrame:
+		case responseStartFrame:
 			if len(f.Payload) < 32 {
 				continue
 			}
@@ -223,7 +223,7 @@ func (s *server) handle(conn net.Conn) {
 			var channelID uuid.UUID
 			copy(channelID[:], f.Payload[16:32])
 
-			consumerCtx, ok := s.clientRegistry.getClient(RoleConsumer, channelID, clientID)
+			consumerCtx, ok := s.clientRegistry.getClient(roleConsumer, channelID, clientID)
 			if !ok {
 				continue
 			}
@@ -231,14 +231,14 @@ func (s *server) handle(conn net.Conn) {
 			responseRouting[f.RequestID] = consumerCtx
 			consumerCtx.send(f)
 
-		case ResponseChunkFrame:
+		case responseChunkFrame:
 			consumerCtx, ok := responseRouting[f.RequestID]
 			if !ok {
 				continue
 			}
 			consumerCtx.send(f)
 
-		case ResponseEndFrame:
+		case responseEndFrame:
 			consumerCtx, ok := responseRouting[f.RequestID]
 			delete(responseRouting, f.RequestID)
 			if !ok {
@@ -246,7 +246,7 @@ func (s *server) handle(conn net.Conn) {
 			}
 			consumerCtx.send(f)
 
-		case ResponseFrame:
+		case responseFrame:
 			// Extract consumer's clientID and channelID from response payload
 			if len(f.Payload) < 32 {
 				continue
@@ -259,7 +259,7 @@ func (s *server) handle(conn net.Conn) {
 			copy(channelID[:], f.Payload[16:32])
 
 			// Get the consumer's connection
-			consumerCtx, ok := s.clientRegistry.getClient(RoleConsumer, channelID, clientID)
+			consumerCtx, ok := s.clientRegistry.getClient(roleConsumer, channelID, clientID)
 			if !ok {
 				continue
 			}
@@ -267,7 +267,7 @@ func (s *server) handle(conn net.Conn) {
 			// Send response back to consumer
 			consumerCtx.send(f)
 
-		case ErrorFrame:
+		case errorFrame:
 			// Check if error payload contains routing info
 			if len(f.Payload) >= 32 {
 				var clientID uuid.UUID
@@ -276,7 +276,7 @@ func (s *server) handle(conn net.Conn) {
 				var channelID uuid.UUID
 				copy(channelID[:], f.Payload[16:32])
 
-				consumerCtx, ok := s.clientRegistry.getClient(RoleConsumer, channelID, clientID)
+				consumerCtx, ok := s.clientRegistry.getClient(roleConsumer, channelID, clientID)
 				if ok {
 					consumerCtx.send(f)
 					continue

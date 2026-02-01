@@ -6,11 +6,11 @@ import (
 	"github.com/google/uuid"
 )
 
-type ClientRole byte
+type clientRole byte
 
 const (
-	RoleConsumer ClientRole = 0x01
-	RoleProvider ClientRole = 0x02
+	roleConsumer clientRole = 0x01
+	roleProvider clientRole = 0x02
 )
 
 type clientRegistry struct {
@@ -26,18 +26,18 @@ func newClientRegistry() *clientRegistry {
 	}
 }
 
-func (r *clientRegistry) getClient(role ClientRole, channelID, clientID uuid.UUID) (*connctx, bool) {
+func (r *clientRegistry) getClient(role clientRole, channelID, clientID uuid.UUID) (*connctx, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	switch role {
-	case RoleConsumer:
+	case roleConsumer:
 		if clients, ok := r.consumers[channelID]; ok {
 			if ctx, ok := clients[clientID]; ok {
 				return ctx, true
 			}
 		}
-	case RoleProvider:
+	case roleProvider:
 		if clients, ok := r.providers[channelID]; ok {
 			if ctx, ok := clients[clientID]; ok {
 				return ctx, true
@@ -47,17 +47,17 @@ func (r *clientRegistry) getClient(role ClientRole, channelID, clientID uuid.UUI
 	return nil, false
 }
 
-func (r *clientRegistry) hasClient(role ClientRole, channelID, clientID uuid.UUID) bool {
+func (r *clientRegistry) hasClient(role clientRole, channelID, clientID uuid.UUID) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	switch role {
-	case RoleConsumer:
+	case roleConsumer:
 		if clients, ok := r.consumers[channelID]; ok {
 			_, exists := clients[clientID]
 			return exists
 		}
-	case RoleProvider:
+	case roleProvider:
 		if clients, ok := r.providers[channelID]; ok {
 			_, exists := clients[clientID]
 			return exists
@@ -68,16 +68,16 @@ func (r *clientRegistry) hasClient(role ClientRole, channelID, clientID uuid.UUI
 }
 
 // Registers a client without checking peers
-func (r *clientRegistry) addClient(role ClientRole, channelID, clientID uuid.UUID, ctx *connctx) {
+func (r *clientRegistry) addClient(role clientRole, channelID, clientID uuid.UUID, ctx *connctx) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	switch role {
-	case RoleConsumer:
+	case roleConsumer:
 		if r.consumers[channelID] == nil {
 			r.consumers[channelID] = make(map[uuid.UUID]*connctx)
 		}
 		r.consumers[channelID][clientID] = ctx
-	case RoleProvider:
+	case roleProvider:
 		if r.providers[channelID] == nil {
 			r.providers[channelID] = make(map[uuid.UUID]*connctx)
 		}
@@ -86,13 +86,13 @@ func (r *clientRegistry) addClient(role ClientRole, channelID, clientID uuid.UUI
 }
 
 // Removes a client
-func (r *clientRegistry) removeClient(role ClientRole, channelID, clientID uuid.UUID) {
+func (r *clientRegistry) removeClient(role clientRole, channelID, clientID uuid.UUID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	var clients map[uuid.UUID]*connctx
 	switch role {
-	case RoleConsumer:
+	case roleConsumer:
 		clients = r.consumers[channelID]
 		if clients != nil {
 			delete(clients, clientID)
@@ -100,7 +100,7 @@ func (r *clientRegistry) removeClient(role ClientRole, channelID, clientID uuid.
 				delete(r.consumers, channelID)
 			}
 		}
-	case RoleProvider:
+	case roleProvider:
 		clients = r.providers[channelID]
 		if clients != nil {
 			delete(clients, clientID)
@@ -111,15 +111,15 @@ func (r *clientRegistry) removeClient(role ClientRole, channelID, clientID uuid.
 	}
 }
 
-func (r *clientRegistry) hasPeerForChannel(role ClientRole, channelID uuid.UUID) bool {
+func (r *clientRegistry) hasPeerForChannel(role clientRole, channelID uuid.UUID) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	switch role {
-	case RoleConsumer:
+	case roleConsumer:
 		// consumer needs a provider
 		return len(r.providers[channelID]) > 0
-	case RoleProvider:
+	case roleProvider:
 		// provider needs a consumer
 		return len(r.consumers[channelID]) > 0
 	default:
@@ -127,15 +127,15 @@ func (r *clientRegistry) hasPeerForChannel(role ClientRole, channelID uuid.UUID)
 	}
 }
 
-func (r *clientRegistry) getPeerForChannel(role ClientRole, channelID uuid.UUID) (*connctx, bool) {
+func (r *clientRegistry) getPeerForChannel(role clientRole, channelID uuid.UUID) (*connctx, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	var peers map[uuid.UUID]*connctx
 	switch role {
-	case RoleConsumer:
+	case roleConsumer:
 		peers = r.providers[channelID] // consumer wants a provider
-	case RoleProvider:
+	case roleProvider:
 		peers = r.consumers[channelID] // provider wants a consumer
 	default:
 		return nil, false

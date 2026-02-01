@@ -17,7 +17,7 @@ type baseClient struct {
 	connMu    sync.Mutex
 	clientID  uuid.UUID
 	channelID uuid.UUID
-	role      ClientRole
+	role      clientRole
 }
 
 func (c *baseClient) dial() error {
@@ -56,9 +56,9 @@ func (c *baseClient) register() error {
 	reqID := uuid.New()
 
 	regFrame := getFrame()
-	regFrame.Version = Version1
-	regFrame.Type = StartFrame
-	regFrame.Flags = FlagRegistration
+	regFrame.Version = version1
+	regFrame.Type = startFrame
+	regFrame.Flags = flagRegistration
 	regFrame.RequestID = reqID
 	regFrame.Payload = c.buildMetadataPayload(uint64(5000))
 	if err := regFrame.write(c.conn); err != nil {
@@ -67,28 +67,28 @@ func (c *baseClient) register() error {
 	}
 	putFrame(regFrame)
 
-	endFrame := getFrame()
-	endFrame.Version = Version1
-	endFrame.Type = EndFrame
-	endFrame.Flags = 0
-	endFrame.RequestID = reqID
-	endFrame.Payload = nil
-	err := endFrame.write(c.conn)
-	putFrame(endFrame)
+	_endFrame := getFrame()
+	_endFrame.Version = version1
+	_endFrame.Type = endFrame
+	_endFrame.Flags = 0
+	_endFrame.RequestID = reqID
+	_endFrame.Payload = nil
+	err := _endFrame.write(c.conn)
+	putFrame(_endFrame)
 	return err
 }
 
 func (c *baseClient) sendChunkedRequest(reqID uuid.UUID, r io.Reader) error {
 	buf := getBuffer()
 	defer putBuffer(buf)
-	
+
 	chunk := getFrame()
-	chunk.Version = Version1
-	chunk.Type = ChunkFrame
+	chunk.Version = version1
+	chunk.Type = chunkFrame
 	chunk.Flags = 0
 	chunk.RequestID = reqID
 	defer putFrame(chunk)
-	
+
 	for {
 		n, err := r.Read(*buf)
 		if n > 0 {
@@ -109,7 +109,7 @@ func (c *baseClient) sendChunkedRequest(reqID uuid.UUID, r io.Reader) error {
 
 func (c *baseClient) sendChunkedResponse(reqID uuid.UUID, r io.Reader, routing []byte, frameType byte) error {
 	startFrame := getFrame()
-	startFrame.Version = Version1
+	startFrame.Version = version1
 	startFrame.Type = frameType
 	startFrame.Flags = 0
 	startFrame.RequestID = reqID
@@ -122,14 +122,14 @@ func (c *baseClient) sendChunkedResponse(reqID uuid.UUID, r io.Reader, routing [
 
 	buf := getBuffer()
 	defer putBuffer(buf)
-	
+
 	chunk := getFrame()
-	chunk.Version = Version1
-	chunk.Type = ResponseChunkFrame
+	chunk.Version = version1
+	chunk.Type = responseChunkFrame
 	chunk.Flags = 0
 	chunk.RequestID = reqID
 	defer putFrame(chunk)
-	
+
 	for {
 		n, err := r.Read(*buf)
 		if n > 0 {
@@ -147,8 +147,8 @@ func (c *baseClient) sendChunkedResponse(reqID uuid.UUID, r io.Reader, routing [
 	}
 
 	endFrame := getFrame()
-	endFrame.Version = Version1
-	endFrame.Type = ResponseEndFrame
+	endFrame.Version = version1
+	endFrame.Type = responseEndFrame
 	endFrame.Flags = 0
 	endFrame.RequestID = reqID
 	endFrame.Payload = nil
@@ -163,23 +163,23 @@ func (c *baseClient) receiveChunkedResponse(reqID uuid.UUID) (io.Reader, error) 
 		return nil, err
 	}
 	if resp.RequestID != reqID {
-		return nil, ErrRequestIDMismatch
+		return nil, errRequestIDMismatch
 	}
-	if resp.Type == ErrorFrame {
+	if resp.Type == errorFrame {
 		errorMsg := resp.Payload
 		if len(errorMsg) >= 32 {
 			errorMsg = errorMsg[32:]
 		}
 		return nil, errors.New(string(errorMsg))
 	}
-	if resp.Type != ResponseStartFrame {
+	if resp.Type != responseStartFrame {
 		return nil, errors.New("unexpected frame type")
 	}
 
 	// Use buffer pool for response assembly
 	buf := getBuffer()
 	payload := (*buf)[:0]
-	
+
 	for {
 		f, err := newFrame(c.conn)
 		if err != nil {
@@ -188,17 +188,17 @@ func (c *baseClient) receiveChunkedResponse(reqID uuid.UUID) (io.Reader, error) 
 		}
 		if f.RequestID != reqID {
 			putBuffer(buf)
-			return nil, ErrRequestIDMismatch
+			return nil, errRequestIDMismatch
 		}
 		switch f.Type {
-		case ResponseChunkFrame:
+		case responseChunkFrame:
 			payload = append(payload, f.Payload...)
-		case ResponseEndFrame:
+		case responseEndFrame:
 			result := make([]byte, len(payload))
 			copy(result, payload)
 			putBuffer(buf)
 			return bytes.NewReader(result), nil
-		case ErrorFrame:
+		case errorFrame:
 			putBuffer(buf)
 			errorMsg := f.Payload
 			if len(errorMsg) >= 32 {
