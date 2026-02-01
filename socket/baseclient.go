@@ -25,6 +25,11 @@ func (c *baseClient) dial() error {
 	if err != nil {
 		return err
 	}
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		tcpConn.SetNoDelay(true)
+		tcpConn.SetReadBuffer(2 * 1024 * 1024)
+		tcpConn.SetWriteBuffer(2 * 1024 * 1024)
+	}
 	c.conn = conn
 	return nil
 }
@@ -50,41 +55,44 @@ func (c *baseClient) buildMetadataPayload(timeoutMs uint64) []byte {
 func (c *baseClient) register() error {
 	reqID := uuid.New()
 
-	// Use a reasonable timeout for waiting for peers during registration
-	regFrame := frame{
-		Version:   Version1,
-		Type:      StartFrame,
-		Flags:     FlagRegistration,
-		RequestID: reqID,
-		Payload:   c.buildMetadataPayload(uint64(5000)),
-	}
+	regFrame := getFrame()
+	regFrame.Version = Version1
+	regFrame.Type = StartFrame
+	regFrame.Flags = FlagRegistration
+	regFrame.RequestID = reqID
+	regFrame.Payload = c.buildMetadataPayload(uint64(5000))
 	if err := regFrame.write(c.conn); err != nil {
+		putFrame(regFrame)
 		return err
 	}
+	putFrame(regFrame)
 
-	endFrame := frame{
-		Version:   Version1,
-		Type:      EndFrame,
-		Flags:     0,
-		RequestID: reqID,
-	}
-	return endFrame.write(c.conn)
+	endFrame := getFrame()
+	endFrame.Version = Version1
+	endFrame.Type = EndFrame
+	endFrame.Flags = 0
+	endFrame.RequestID = reqID
+	endFrame.Payload = nil
+	err := endFrame.write(c.conn)
+	putFrame(endFrame)
+	return err
 }
 
 func (c *baseClient) sendChunkedRequest(reqID uuid.UUID, r io.Reader) error {
 	buf := getBuffer()
 	defer putBuffer(buf)
 	
+	chunk := getFrame()
+	chunk.Version = Version1
+	chunk.Type = ChunkFrame
+	chunk.Flags = 0
+	chunk.RequestID = reqID
+	defer putFrame(chunk)
+	
 	for {
 		n, err := r.Read(*buf)
 		if n > 0 {
-			chunk := frame{
-				Version:   Version1,
-				Type:      ChunkFrame,
-				Flags:     0,
-				RequestID: reqID,
-				Payload:   (*buf)[:n],
-			}
+			chunk.Payload = (*buf)[:n]
 			if err := chunk.write(c.conn); err != nil {
 				return err
 			}
@@ -100,30 +108,32 @@ func (c *baseClient) sendChunkedRequest(reqID uuid.UUID, r io.Reader) error {
 }
 
 func (c *baseClient) sendChunkedResponse(reqID uuid.UUID, r io.Reader, routing []byte, frameType byte) error {
-	startFrame := frame{
-		Version:   Version1,
-		Type:      frameType,
-		Flags:     0,
-		RequestID: reqID,
-		Payload:   routing,
-	}
+	startFrame := getFrame()
+	startFrame.Version = Version1
+	startFrame.Type = frameType
+	startFrame.Flags = 0
+	startFrame.RequestID = reqID
+	startFrame.Payload = routing
 	if err := startFrame.write(c.conn); err != nil {
+		putFrame(startFrame)
 		return err
 	}
+	putFrame(startFrame)
 
 	buf := getBuffer()
 	defer putBuffer(buf)
 	
+	chunk := getFrame()
+	chunk.Version = Version1
+	chunk.Type = ResponseChunkFrame
+	chunk.Flags = 0
+	chunk.RequestID = reqID
+	defer putFrame(chunk)
+	
 	for {
 		n, err := r.Read(*buf)
 		if n > 0 {
-			chunk := frame{
-				Version:   Version1,
-				Type:      ResponseChunkFrame,
-				Flags:     0,
-				RequestID: reqID,
-				Payload:   (*buf)[:n],
-			}
+			chunk.Payload = (*buf)[:n]
 			if err := chunk.write(c.conn); err != nil {
 				return err
 			}
@@ -136,13 +146,15 @@ func (c *baseClient) sendChunkedResponse(reqID uuid.UUID, r io.Reader, routing [
 		}
 	}
 
-	endFrame := frame{
-		Version:   Version1,
-		Type:      ResponseEndFrame,
-		Flags:     0,
-		RequestID: reqID,
-	}
-	return endFrame.write(c.conn)
+	endFrame := getFrame()
+	endFrame.Version = Version1
+	endFrame.Type = ResponseEndFrame
+	endFrame.Flags = 0
+	endFrame.RequestID = reqID
+	endFrame.Payload = nil
+	err := endFrame.write(c.conn)
+	putFrame(endFrame)
+	return err
 }
 
 func (c *baseClient) receiveChunkedResponse(reqID uuid.UUID) (io.Reader, error) {
@@ -164,28 +176,37 @@ func (c *baseClient) receiveChunkedResponse(reqID uuid.UUID) (io.Reader, error) 
 		return nil, errors.New("unexpected frame type")
 	}
 
-	// Pre-allocate with estimated capacity to reduce reallocations
-	payload := make([]byte, 0, maxFrameSize)
+	// Use buffer pool for response assembly
+	buf := getBuffer()
+	payload := (*buf)[:0]
+	
 	for {
 		f, err := newFrame(c.conn)
 		if err != nil {
+			putBuffer(buf)
 			return nil, err
 		}
 		if f.RequestID != reqID {
+			putBuffer(buf)
 			return nil, ErrRequestIDMismatch
 		}
 		switch f.Type {
 		case ResponseChunkFrame:
 			payload = append(payload, f.Payload...)
 		case ResponseEndFrame:
-			return bytes.NewReader(payload), nil
+			result := make([]byte, len(payload))
+			copy(result, payload)
+			putBuffer(buf)
+			return bytes.NewReader(result), nil
 		case ErrorFrame:
+			putBuffer(buf)
 			errorMsg := f.Payload
 			if len(errorMsg) >= 32 {
 				errorMsg = errorMsg[32:]
 			}
 			return nil, errors.New(string(errorMsg))
 		default:
+			putBuffer(buf)
 			return nil, errors.New("unexpected response frame type in chunk stream")
 		}
 	}

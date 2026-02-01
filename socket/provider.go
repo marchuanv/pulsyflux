@@ -54,8 +54,8 @@ func NewProvider(addr string, channelID uuid.UUID) (*provider, error) {
 }
 
 func (p *provider) listen() {
-	streamReqs := make(map[uuid.UUID][]byte)       // Stores request payload
-	routingInfo := make(map[uuid.UUID][]byte)      // Stores routing info per request
+	streamReqs := make(map[uuid.UUID]*bytes.Buffer)  // Use buffer for efficient appending
+	routingInfo := make(map[uuid.UUID][]byte)        // Stores routing info per request
 
 	for {
 		select {
@@ -80,37 +80,40 @@ func (p *provider) listen() {
 		switch f.Type {
 		case StartFrame:
 			if len(f.Payload) < 32 {
-				panic("provider received invalid StartFrame with payload < 32 bytes")
+				putFrame(f)
+				continue // Skip invalid frames instead of panic
 			}
-			// Extract and store routing info separately
 			routingInfo[f.RequestID] = f.Payload[0:32]
-			// Initialize empty payload for this request
-			streamReqs[f.RequestID] = []byte{}
+			streamReqs[f.RequestID] = bytes.NewBuffer(make([]byte, 0, 1024))
+			putFrame(f)
 
 		case ChunkFrame:
-			// Append chunk data to payload
-			payload := streamReqs[f.RequestID]
-			if payload == nil {
-				// ChunkFrame arrived without StartFrame
-				panic("provider received ChunkFrame without StartFrame")
+			buf := streamReqs[f.RequestID]
+			if buf == nil {
+				putFrame(f)
+				continue // Skip instead of panic
 			}
-			streamReqs[f.RequestID] = append(payload, f.Payload...)
+			buf.Write(f.Payload)
+			putFrame(f)
 
 		case EndFrame:
-			requestPayload := streamReqs[f.RequestID]
+			buf := streamReqs[f.RequestID]
 			routing := routingInfo[f.RequestID]
 			delete(streamReqs, f.RequestID)
 			delete(routingInfo, f.RequestID)
+			putFrame(f)
 
-			// Store routing info for response
+			if buf == nil {
+				continue
+			}
+
 			p.routingMu.Lock()
 			p.routingInfo[f.RequestID] = routing
 			p.routingMu.Unlock()
 
-			// Send request to channel for user to process
 			req := &providerRequest{
 				ID:     f.RequestID,
-				Reader: bytes.NewReader(requestPayload),
+				Reader: bytes.NewReader(buf.Bytes()),
 			}
 
 			select {
@@ -141,13 +144,13 @@ func (p *provider) writeResponses() {
 
 			if resp.Err != nil {
 				errorPayload := append(routing, []byte(resp.Err.Error())...)
-				errFrame := frame{
-					Version:   Version1,
-					Type:      ErrorFrame,
-					RequestID: resp.ID,
-					Payload:   errorPayload,
-				}
+				errFrame := getFrame()
+				errFrame.Version = Version1
+				errFrame.Type = ErrorFrame
+				errFrame.RequestID = resp.ID
+				errFrame.Payload = errorPayload
 				errFrame.write(p.conn)
+				putFrame(errFrame)
 				p.connMu.Unlock()
 				continue
 			}

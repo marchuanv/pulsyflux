@@ -47,30 +47,33 @@ func (c *consumer) Send(r io.Reader, reqTimeout time.Duration) (io.Reader, error
 		timeoutMs = uint64(defaultTimeout.Milliseconds())
 	}
 
-	startFrame := frame{
-		Version:   Version1,
-		Type:      StartFrame,
-		Flags:     0, // Request flag (not registration)
-		RequestID: reqID,
-		Payload:   c.buildMetadataPayload(timeoutMs),
-	}
+	startFrame := getFrame()
+	startFrame.Version = Version1
+	startFrame.Type = StartFrame
+	startFrame.Flags = 0
+	startFrame.RequestID = reqID
+	startFrame.Payload = c.buildMetadataPayload(timeoutMs)
 	if err := startFrame.write(c.conn); err != nil {
+		putFrame(startFrame)
 		return nil, err
 	}
+	putFrame(startFrame)
 
 	if err := c.sendChunkedRequest(reqID, r); err != nil {
 		return nil, err
 	}
 
-	endFrame := frame{
-		Version:   Version1,
-		Type:      EndFrame,
-		Flags:     0,
-		RequestID: reqID,
-	}
+	endFrame := getFrame()
+	endFrame.Version = Version1
+	endFrame.Type = EndFrame
+	endFrame.Flags = 0
+	endFrame.RequestID = reqID
+	endFrame.Payload = nil
 	if err := endFrame.write(c.conn); err != nil {
+		putFrame(endFrame)
 		return nil, err
 	}
+	putFrame(endFrame)
 
 	ctx, cancel := context.WithTimeout(context.Background(), reqTimeout+time.Second)
 	defer cancel()

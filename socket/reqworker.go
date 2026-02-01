@@ -8,6 +8,7 @@ type requestWorker struct {
 	workerID       uint64
 	clientRegistry *clientRegistry
 	handler        *requestHandler
+	routingBuf     [32]byte // Reuse buffer for routing info
 }
 
 func newRequestWorker(workerID uint64, clientRegistry *clientRegistry, handler *requestHandler) *requestWorker {
@@ -41,14 +42,11 @@ func (rw *requestWorker) handle(reqCh chan *request, wg *sync.WaitGroup) {
 		// Forward frame based on type
 		switch req.frame.Type {
 		case StartFrame:
-			// Send only routing info in StartFrame, not the original metadata
-			routingInfo := make([]byte, 32)
-			copy(routingInfo[0:16], req.clientID[:])
-			copy(routingInfo[16:32], req.channelID[:])
-
-			startFrame := *req.frame
-			startFrame.Payload = routingInfo
-			if !peerCtx.send(&startFrame) {
+			// Reuse worker's routing buffer
+			copy(rw.routingBuf[0:16], req.clientID[:])
+			copy(rw.routingBuf[16:32], req.channelID[:])
+			req.frame.Payload = rw.routingBuf[:]
+			if !peerCtx.send(req.frame) {
 				req.connctx.send(newErrorFrame(req.requestID, "failed to send start to peer"))
 				req.cancel()
 				continue

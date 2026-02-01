@@ -301,21 +301,43 @@ Benefits:
 
 ## Performance
 
-### Benchmarks (Intel i5-12400F, 12 cores)
+### Benchmarks (Intel i5-12400F, 12 cores, 3s runs)
 
-| Benchmark | Requests/sec | Latency | Memory/op |
-|-----------|--------------|---------|------------|
-| Single Request | 2,062 | 485µs | 2.1 MB |
-| Concurrent (10 consumers) | 3,151 | 336µs | 2.1 MB |
-| Large Payload (1MB) | 674 | 1.48ms | 5.2 MB |
-| Multiple Channels (10) | 5,015 | 199µs | 2.1 MB |
-| High Throughput (100 consumers) | 3,794 | 264µs | 2.1 MB |
+| Benchmark | ns/op | B/op | allocs/op | Throughput |
+|-----------|-------|------|-----------|------------|
+| Single Request | 123,539 | 7,592 | 79 | 8,095 req/s |
+| Small Payload | 125,773 | 6,797 | 79 | - |
+| Medium Payload (10KB) | 159,813 | 260,979 | 85 | - |
+| Echo Payload (1KB) | 132,268 | 24,522 | 82 | - |
+| Large Payload (1MB) | 1,878,880 | 6,980,525 | 102 | - |
+| Concurrent (10 consumers) | 60,090,898 | 279,892 | 79 | - |
+| Parallel (50 consumers) | 12,630,256 | 6,753 | 73 | - |
+| Multiple Channels (10) | 1,221,536 | 8,734 | 72 | - |
+| Multiple Providers (10) | 300,096,805 | 205,516 | 60 | - |
+| Bandwidth (1MB) | 4,467,676 | 12,437,179 | 111 | 448 MB/s |
+
+### Key Metrics
+- **Latency**: 123µs average for small requests
+- **Throughput**: 8,125 req/s (single consumer)
+- **Bandwidth**: 448 MB/s for large payloads
+- **Allocations**: 79 per request (optimized)
+
+### Recent Optimizations
+1. **Write buffer pooling** - Reuses 8KB buffers for small frames (-9% allocations)
+2. **Routing buffer reuse** - Pre-allocated buffers per worker (zero alloc routing)
+3. **Provider payload assembly** - Uses `bytes.Buffer` for efficient growth
+4. **Frame write optimization** - Single syscall for header+payload
 
 ### Resource Management
-
-- **No goroutine leaks**: Verified across 10 iterations
-- **No memory leaks**: <0.5 MB growth after 100 iterations
+- **No goroutine leaks**: Verified across multiple iterations
+- **No memory leaks**: Stable memory usage under load
 - **Clean registry**: All connections properly cleaned up
-- **Throughput**: ~675 MB/s for large payloads
-- **Scalability**: Improved performance with concurrency
+- **Stable under concurrency**: Tested with 100+ concurrent consumers
+
+### Memory Tests
+- **Large payloads (100x1MB)**: 2.33 MB growth ✅
+- **Concurrent (50 consumers, 100 req each)**: 16.50 MB growth ✅
+- **Pool efficiency (1000 requests)**: 5.26 MB growth, 15KB/req ✅
+- **Load test (5 iterations, 20 consumers)**: 12.19 MB growth ✅
+- **Connection cleanup**: Registry properly cleared ✅
 

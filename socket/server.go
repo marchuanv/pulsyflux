@@ -36,10 +36,10 @@ func (s *server) Start() error {
 			return conn.Control(func(fd uintptr) {
 				// Set SO_REUSEADDR to allow quick rebinding
 				syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
-				// Increase socket receive buffer
-				syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, 512*1024)
-				// Increase socket send buffer
-				syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_SNDBUF, 512*1024)
+				// Increase socket receive buffer to 2MB
+				syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, 2*1024*1024)
+				// Increase socket send buffer to 2MB
+				syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_SNDBUF, 2*1024*1024)
 			})
 		},
 	}

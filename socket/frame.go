@@ -54,30 +54,33 @@ func newFrame(conn net.Conn) (*frame, error) {
 		return nil, errors.New("frame payload too large")
 	}
 
-	payload := make([]byte, payloadLen)
-	if _, err := io.ReadFull(conn, payload); err != nil {
-		return nil, err
-	}
-
-	f := &frame{
-		Version: header[0],
-		Type:    header[1],
-		Flags:   binary.BigEndian.Uint16(header[2:4]),
-		Payload: payload,
-	}
+	f := getFrame()
+	f.Version = header[0]
+	f.Type = header[1]
+	f.Flags = binary.BigEndian.Uint16(header[2:4])
 	copy(f.RequestID[:], header[4:20])
+	
+	if payloadLen > 0 {
+		f.Payload = make([]byte, payloadLen)
+		if _, err := io.ReadFull(conn, f.Payload); err != nil {
+			putFrame(f)
+			return nil, err
+		}
+	} else {
+		f.Payload = nil
+	}
 
 	return f, nil
 }
 
 // newErrorFrame constructs an error frame with the given message
 func newErrorFrame(reqID uuid.UUID, msg string) *frame {
-	return &frame{
-		Version:   Version1,
-		Type:      ErrorFrame,
-		RequestID: reqID,
-		Payload:   []byte(msg),
-	}
+	f := getFrame()
+	f.Version = Version1
+	f.Type = ErrorFrame
+	f.RequestID = reqID
+	f.Payload = []byte(msg)
+	return f
 }
 
 // write writes the frame to a net.Conn
@@ -91,10 +94,25 @@ func (f *frame) write(conn net.Conn) error {
 	copy(header[4:20], f.RequestID[:])
 	binary.BigEndian.PutUint32(header[20:24], uint32(len(f.Payload)))
 
-	if _, err := conn.Write(header[:]); err != nil {
+	// Single write for header+payload reduces syscalls
+	if len(f.Payload) > 0 {
+		// Use buffer pool for small payloads
+		if len(f.Payload) <= 8192 {
+			buf := getWriteBuffer()
+			defer putWriteBuffer(buf)
+			copy((*buf)[:frameHeaderSize], header[:])
+			copy((*buf)[frameHeaderSize:], f.Payload)
+			_, err := conn.Write((*buf)[:frameHeaderSize+len(f.Payload)])
+			return err
+		}
+		// Large payloads: allocate once
+		buf := make([]byte, frameHeaderSize+len(f.Payload))
+		copy(buf, header[:])
+		copy(buf[frameHeaderSize:], f.Payload)
+		_, err := conn.Write(buf)
 		return err
 	}
 
-	_, err := conn.Write(f.Payload)
+	_, err := conn.Write(header[:])
 	return err
 }
