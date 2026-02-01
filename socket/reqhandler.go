@@ -2,6 +2,7 @@ package socket
 
 import (
 	"sync"
+	"time"
 )
 
 type requestHandler struct {
@@ -30,7 +31,7 @@ func (rh *requestHandler) handle(req *request) bool {
 	select {
 	case rh.requests[workerID] <- req:
 		return true
-	default:
+	case <-time.After(workerQueueTimeout):
 		return false
 	}
 }
