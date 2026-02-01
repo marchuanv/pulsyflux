@@ -173,10 +173,10 @@ func (p *provider) Receive() (uuid.UUID, io.Reader, bool) {
 	}
 }
 
-func (p *provider) Respond(reqID uuid.UUID, data []byte, err error) {
+func (p *provider) Respond(reqID uuid.UUID, r io.Reader, err error) {
 	resp := &providerResponse{
 		ID:     reqID,
-		Reader: bytes.NewReader(data),
+		Reader: r,
 		Err:    err,
 	}
 	select {

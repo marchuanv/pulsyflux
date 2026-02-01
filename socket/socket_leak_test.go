@@ -31,7 +31,7 @@ func TestNoGoroutineLeak(t *testing.T) {
 				if !ok {
 					break
 				}
-				provider.Respond(reqID, []byte("ok"), nil)
+				provider.Respond(reqID, strings.NewReader("ok"), nil)
 			}
 		}()
 
@@ -89,7 +89,7 @@ func TestNoMemoryLeak(t *testing.T) {
 				if !ok {
 					break
 				}
-				provider.Respond(reqID, []byte("ok"), nil)
+				provider.Respond(reqID, strings.NewReader("ok"), nil)
 			}
 		}()
 
@@ -151,7 +151,7 @@ func TestConnectionCleanup(t *testing.T) {
 				if !ok {
 					break
 				}
-				provider.Respond(reqID, []byte("ok"), nil)
+				provider.Respond(reqID, strings.NewReader("ok"), nil)
 			}
 		}()
 		

@@ -139,7 +139,7 @@ Consumer → Server → Provider
 ### 3. Provider (`provider.go`)
 - Channel-based API for receiving requests and sending responses
 - `Receive()` returns `(uuid.UUID, io.Reader, bool)` for getting requests
-- `Respond(reqID uuid.UUID, data []byte, err error)` for sending responses
+- `Respond(reqID uuid.UUID, r io.Reader, err error)` for sending responses
 - Listens for incoming requests in a goroutine
 - Sends chunked responses back through the server
 - Maintains routing info for response delivery
@@ -226,13 +226,13 @@ Consumer → Server → Provider
 
 ```go
 // Start server
-server := NewServer("9090")
+server := socket.NewServer("9090")
 server.Start()
 defer server.Stop()
 
 // Create provider
 channelID := uuid.New()
-provider, _ := NewProvider("127.0.0.1:9090", channelID)
+provider, _ := socket.NewProvider("127.0.0.1:9090", channelID)
 defer provider.Close()
 
 // Handle requests in background
@@ -243,12 +243,12 @@ go func() {
             break
         }
         data, _ := io.ReadAll(r)
-        provider.Respond(reqID, []byte("processed: "+string(data)), nil)
+        provider.Respond(reqID, bytes.NewReader([]byte("processed: "+string(data))), nil)
     }
 }()
 
 // Create consumer
-consumer, _ := NewConsumer("127.0.0.1:9090", channelID)
+consumer, _ := socket.NewConsumer("127.0.0.1:9090", channelID)
 defer consumer.Close()
 
 // Send request

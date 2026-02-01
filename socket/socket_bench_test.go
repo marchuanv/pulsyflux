@@ -1,6 +1,7 @@
 package socket
 
 import (
+	"bytes"
 	"io"
 	"strings"
 	"sync"
@@ -27,7 +28,7 @@ func BenchmarkSingleRequest(b *testing.B) {
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, []byte("ok"), nil)
+			provider.Respond(reqID, strings.NewReader("ok"), nil)
 		}
 	}()
 
@@ -59,7 +60,7 @@ func BenchmarkConcurrentRequests(b *testing.B) {
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, []byte("ok"), nil)
+			provider.Respond(reqID, strings.NewReader("ok"), nil)
 		}
 	}()
 
@@ -100,7 +101,7 @@ func BenchmarkLargePayload(b *testing.B) {
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, []byte("ok"), nil)
+			provider.Respond(reqID, strings.NewReader("ok"), nil)
 		}
 	}()
 
@@ -140,7 +141,7 @@ func BenchmarkMultipleChannels(b *testing.B) {
 				if !ok {
 					break
 				}
-				p.Respond(reqID, []byte("ok"), nil)
+				p.Respond(reqID, strings.NewReader("ok"), nil)
 			}
 		}(providers[i])
 	}
@@ -181,7 +182,7 @@ func BenchmarkThroughput(b *testing.B) {
 				break
 			}
 			data, _ := io.ReadAll(r)
-			provider.Respond(reqID, data, nil)
+			provider.Respond(reqID, bytes.NewReader(data), nil)
 		}
 	}()
 

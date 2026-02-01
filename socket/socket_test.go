@@ -1,6 +1,7 @@
 package socket
 
 import (
+	"bytes"
 	"io"
 	"strings"
 	"sync"
@@ -36,7 +37,7 @@ func TestConsumerProviderBidirectional(t *testing.T) {
 				break
 			}
 			data, _ := io.ReadAll(r)
-			provider.Respond(reqID, []byte("echo: "+string(data)), nil)
+			provider.Respond(reqID, bytes.NewReader([]byte("echo: "+string(data))), nil)
 		}
 	}()
 
@@ -82,7 +83,7 @@ func TestMultipleConsumersOneProvider(t *testing.T) {
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, []byte("processed"), nil)
+			provider.Respond(reqID, strings.NewReader("processed"), nil)
 		}
 	}()
 
@@ -157,7 +158,7 @@ func TestLargePayload(t *testing.T) {
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, []byte("received"), nil)
+			provider.Respond(reqID, strings.NewReader("received"), nil)
 		}
 	}()
 
@@ -204,7 +205,7 @@ func TestConcurrentChannels(t *testing.T) {
 					if !ok {
 						break
 					}
-					provider.Respond(reqID, []byte("ok"), nil)
+					provider.Respond(reqID, strings.NewReader("ok"), nil)
 				}
 			}()
 
