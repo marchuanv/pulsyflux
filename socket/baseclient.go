@@ -1,8 +1,10 @@
 package socket
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 	"net"
 	"sync"
 
@@ -69,7 +71,95 @@ func (c *baseClient) register() error {
 	return endFrame.write(c.conn)
 }
 
-func (c *baseClient) assembleChunks(reqID uuid.UUID) ([]byte, error) {
+func (c *baseClient) sendChunkedRequest(reqID uuid.UUID, r io.Reader) error {
+	buf := make([]byte, maxFrameSize)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			chunk := frame{
+				Version:   Version1,
+				Type:      ChunkFrame,
+				Flags:     0,
+				RequestID: reqID,
+				Payload:   buf[:n],
+			}
+			if err := chunk.write(c.conn); err != nil {
+				return err
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *baseClient) sendChunkedResponse(reqID uuid.UUID, r io.Reader, routing []byte, frameType byte) error {
+	startFrame := frame{
+		Version:   Version1,
+		Type:      frameType,
+		Flags:     0,
+		RequestID: reqID,
+		Payload:   routing,
+	}
+	if err := startFrame.write(c.conn); err != nil {
+		return err
+	}
+
+	buf := make([]byte, maxFrameSize)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			chunk := frame{
+				Version:   Version1,
+				Type:      ResponseChunkFrame,
+				Flags:     0,
+				RequestID: reqID,
+				Payload:   buf[:n],
+			}
+			if err := chunk.write(c.conn); err != nil {
+				return err
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	endFrame := frame{
+		Version:   Version1,
+		Type:      ResponseEndFrame,
+		Flags:     0,
+		RequestID: reqID,
+	}
+	return endFrame.write(c.conn)
+}
+
+func (c *baseClient) receiveChunkedResponse(reqID uuid.UUID) (io.Reader, error) {
+	resp, err := newFrame(c.conn)
+	if err != nil {
+		return nil, err
+	}
+	if resp.RequestID != reqID {
+		return nil, ErrRequestIDMismatch
+	}
+	if resp.Type == ErrorFrame {
+		errorMsg := resp.Payload
+		if len(errorMsg) >= 32 {
+			errorMsg = errorMsg[32:]
+		}
+		return nil, errors.New(string(errorMsg))
+	}
+	if resp.Type != ResponseStartFrame {
+		return nil, errors.New("unexpected frame type")
+	}
+
 	var payload []byte
 	for {
 		f, err := newFrame(c.conn)
@@ -80,14 +170,18 @@ func (c *baseClient) assembleChunks(reqID uuid.UUID) ([]byte, error) {
 			return nil, ErrRequestIDMismatch
 		}
 		switch f.Type {
-		case ChunkFrame:
+		case ResponseChunkFrame:
 			payload = append(payload, f.Payload...)
-		case EndFrame:
-			return payload, nil
+		case ResponseEndFrame:
+			return bytes.NewReader(payload), nil
 		case ErrorFrame:
-			return nil, errors.New(string(f.Payload))
+			errorMsg := f.Payload
+			if len(errorMsg) >= 32 {
+				errorMsg = errorMsg[32:]
+			}
+			return nil, errors.New(string(errorMsg))
 		default:
-			return nil, errors.New("unexpected frame type")
+			return nil, errors.New("unexpected response frame type in chunk stream")
 		}
 	}
 }

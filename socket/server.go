@@ -95,6 +95,7 @@ func (s *server) handle(conn net.Conn) {
 	go ctx.startWriter()
 
 	streamReqs := make(map[uuid.UUID]*request)
+	responseRouting := make(map[uuid.UUID]*connctx)
 
 	var registeredRole ClientRole
 	var registeredClientID uuid.UUID
@@ -171,7 +172,7 @@ func (s *server) handle(conn net.Conn) {
 			streamReqs[f.RequestID] = req
 
 			isClientRegistered := s.clientRegistry.hasClient(role, channelID, clientID)
-			
+
 			if !isClientRegistered {
 				s.clientRegistry.addClient(role, channelID, clientID, ctx)
 				clientRegistered = true
@@ -210,6 +211,40 @@ func (s *server) handle(conn net.Conn) {
 					ctx.send(newErrorFrame(f.RequestID, "server overloaded"))
 				}
 			}
+
+		case ResponseStartFrame:
+			if len(f.Payload) < 32 {
+				continue
+			}
+
+			var clientID uuid.UUID
+			copy(clientID[:], f.Payload[0:16])
+
+			var channelID uuid.UUID
+			copy(channelID[:], f.Payload[16:32])
+
+			consumerCtx, ok := s.clientRegistry.getClient(RoleConsumer, channelID, clientID)
+			if !ok {
+				continue
+			}
+
+			responseRouting[f.RequestID] = consumerCtx
+			consumerCtx.send(f)
+
+		case ResponseChunkFrame:
+			consumerCtx, ok := responseRouting[f.RequestID]
+			if !ok {
+				continue
+			}
+			consumerCtx.send(f)
+
+		case ResponseEndFrame:
+			consumerCtx, ok := responseRouting[f.RequestID]
+			delete(responseRouting, f.RequestID)
+			if !ok {
+				continue
+			}
+			consumerCtx.send(f)
 
 		case ResponseFrame:
 			// Extract consumer's clientID and channelID from response payload
@@ -252,34 +287,6 @@ func (s *server) handle(conn net.Conn) {
 
 		default:
 			ctx.send(newErrorFrame(f.RequestID, "invalid message type"))
-		}
-	}
-}
-
-func waitForChannelPeer(
-	registry *clientRegistry,
-	role ClientRole,
-	channelID uuid.UUID,
-	timeout time.Duration,
-) bool {
-	if registry.hasPeerForChannel(role, channelID) {
-		return true
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-ticker.C:
-			if registry.hasPeerForChannel(role, channelID) {
-				return true
-			}
 		}
 	}
 }

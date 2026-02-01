@@ -18,6 +18,9 @@ const (
 	StartFrame               byte   = 0x04
 	ChunkFrame               byte   = 0x05
 	EndFrame                 byte   = 0x06
+	ResponseStartFrame       byte   = 0x07
+	ResponseChunkFrame       byte   = 0x08
+	ResponseEndFrame         byte   = 0x09
 	frameHeaderSize                 = 24
 	maxFrameSize                    = 1024 * 1024
 	defaultFrameReadTimeout         = 2 * time.Minute

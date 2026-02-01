@@ -1,6 +1,7 @@
 package socket
 
 import (
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -17,10 +18,18 @@ func BenchmarkSingleRequest(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9095", channelID, func(payload []byte) ([]byte, error) {
-		return []byte("ok"), nil
-	})
+	provider, _ := NewProvider("127.0.0.1:9095", channelID)
 	defer provider.Close()
+
+	go func() {
+		for {
+			reqID, _, ok := provider.Receive()
+			if !ok {
+				break
+			}
+			provider.Respond(reqID, []byte("ok"), nil)
+		}
+	}()
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -41,15 +50,23 @@ func BenchmarkConcurrentRequests(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9096", channelID, func(payload []byte) ([]byte, error) {
-		return []byte("ok"), nil
-	})
+	provider, _ := NewProvider("127.0.0.1:9096", channelID)
 	defer provider.Close()
+
+	go func() {
+		for {
+			reqID, _, ok := provider.Receive()
+			if !ok {
+				break
+			}
+			provider.Respond(reqID, []byte("ok"), nil)
+		}
+	}()
 
 	time.Sleep(50 * time.Millisecond)
 
 	numConsumers := 10
-	consumers := make([]*Consumer, numConsumers)
+	consumers := make([]*consumer, numConsumers)
 	for i := 0; i < numConsumers; i++ {
 		consumers[i], _ = NewConsumer("127.0.0.1:9096", channelID)
 		defer consumers[i].Close()
@@ -74,10 +91,18 @@ func BenchmarkLargePayload(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9097", channelID, func(payload []byte) ([]byte, error) {
-		return []byte("ok"), nil
-	})
+	provider, _ := NewProvider("127.0.0.1:9097", channelID)
 	defer provider.Close()
+
+	go func() {
+		for {
+			reqID, _, ok := provider.Receive()
+			if !ok {
+				break
+			}
+			provider.Respond(reqID, []byte("ok"), nil)
+		}
+	}()
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -101,15 +126,23 @@ func BenchmarkMultipleChannels(b *testing.B) {
 
 	numChannels := 10
 	channels := make([]uuid.UUID, numChannels)
-	providers := make([]*Provider, numChannels)
-	consumers := make([]*Consumer, numChannels)
+	providers := make([]*provider, numChannels)
+	consumers := make([]*consumer, numChannels)
 
 	for i := 0; i < numChannels; i++ {
 		channels[i] = uuid.New()
-		providers[i], _ = NewProvider("127.0.0.1:9098", channels[i], func(payload []byte) ([]byte, error) {
-			return []byte("ok"), nil
-		})
+		providers[i], _ = NewProvider("127.0.0.1:9098", channels[i])
 		defer providers[i].Close()
+
+		go func(p *provider) {
+			for {
+				reqID, _, ok := p.Receive()
+				if !ok {
+					break
+				}
+				p.Respond(reqID, []byte("ok"), nil)
+			}
+		}(providers[i])
 	}
 
 	time.Sleep(50 * time.Millisecond)
@@ -138,15 +171,24 @@ func BenchmarkThroughput(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9099", channelID, func(payload []byte) ([]byte, error) {
-		return payload, nil
-	})
+	provider, _ := NewProvider("127.0.0.1:9099", channelID)
 	defer provider.Close()
+
+	go func() {
+		for {
+			reqID, r, ok := provider.Receive()
+			if !ok {
+				break
+			}
+			data, _ := io.ReadAll(r)
+			provider.Respond(reqID, data, nil)
+		}
+	}()
 
 	time.Sleep(50 * time.Millisecond)
 
 	numConsumers := 100
-	consumers := make([]*Consumer, numConsumers)
+	consumers := make([]*consumer, numConsumers)
 	for i := 0; i < numConsumers; i++ {
 		consumers[i], _ = NewConsumer("127.0.0.1:9099", channelID)
 		defer consumers[i].Close()

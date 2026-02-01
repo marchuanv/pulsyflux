@@ -23,9 +23,17 @@ func TestNoGoroutineLeak(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		channelID := uuid.New()
-		provider, _ := NewProvider("127.0.0.1:9100", channelID, func(payload []byte) ([]byte, error) {
-			return []byte("ok"), nil
-		})
+		provider, _ := NewProvider("127.0.0.1:9100", channelID)
+
+		go func() {
+			for {
+				reqID, _, ok := provider.Receive()
+				if !ok {
+					break
+				}
+				provider.Respond(reqID, []byte("ok"), nil)
+			}
+		}()
 
 		time.Sleep(50 * time.Millisecond)
 
@@ -73,9 +81,17 @@ func TestNoMemoryLeak(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 
 		channelID := uuid.New()
-		provider, _ := NewProvider("127.0.0.1:9101", channelID, func(payload []byte) ([]byte, error) {
-			return []byte("ok"), nil
-		})
+		provider, _ := NewProvider("127.0.0.1:9101", channelID)
+
+		go func() {
+			for {
+				reqID, _, ok := provider.Receive()
+				if !ok {
+					break
+				}
+				provider.Respond(reqID, []byte("ok"), nil)
+			}
+		}()
 
 		time.Sleep(10 * time.Millisecond)
 
@@ -127,9 +143,17 @@ func TestConnectionCleanup(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		channelID := uuid.New()
 		
-		provider, _ := NewProvider("127.0.0.1:9102", channelID, func(payload []byte) ([]byte, error) {
-			return []byte("ok"), nil
-		})
+		provider, _ := NewProvider("127.0.0.1:9102", channelID)
+		
+		go func() {
+			for {
+				reqID, _, ok := provider.Receive()
+				if !ok {
+					break
+				}
+				provider.Respond(reqID, []byte("ok"), nil)
+			}
+		}()
 		
 		time.Sleep(10 * time.Millisecond)
 		

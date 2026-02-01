@@ -69,27 +69,46 @@ Consumer → Server → Provider
        │                                  │                                  │ 14. Process Request
        │                                  │                                  │     handler(payload)
        │                                  │                                  │
-       │                                  │ 15. Send Response                │
+       │                                  │ 15. Send ResponseStartFrame      │
        │                                  │<─────────────────────────────────┤
-       │                                  │   ResponseFrame                  │
-       │                                  │   (routing info + response)      │
+       │                                  │   (routing info in payload)      │
        │                                  │                                  │
-       │                                  │ 16. Extract routing info         │
-       │                                  │     Lookup consumer in registry  │
+       │                                  │ 16. Extract routing, track       │
+       │                                  │     consumer for RequestID       │
        │                                  │                                  │
-       │ 17. Deliver Response             │                                  │
+       │                                  │ 17. Send ResponseChunkFrame(s)   │
+       │                                  │<─────────────────────────────────┤
+       │                                  │   (response data chunks)         │
+       │                                  │                                  │
+       │                                  │ 18. Forward chunks to consumer   │
+       │                                  │     using tracked connection     │
+       │                                  │                                  │
+       │                                  │ 19. Send ResponseEndFrame        │
+       │                                  │<─────────────────────────────────┤
+       │                                  │                                  │
+       │                                  │ 20. Forward end, cleanup         │
+       │                                  │     RequestID tracking           │
+       │                                  │                                  │
+       │ 21. Receive ResponseStartFrame   │                                  │
        │<─────────────────────────────────┤                                  │
-       │   ResponseFrame                  │                                  │
        │                                  │                                  │
-       │ 18. Close                        │                                  │
+       │ 22. Receive ResponseChunkFrame(s)│                                  │
+       │<─────────────────────────────────┤                                  │
+       │   Assemble payload               │                                  │
+       │                                  │                                  │
+       │ 23. Receive ResponseEndFrame     │                                  │
+       │<─────────────────────────────────┤                                  │
+       │   Return complete io.Reader      │                                  │
+       │                                  │                                  │
+       │ 24. Close                        │                                  │
        ├─────────────────────────────────>│                                  │
        │                                  │                                  │
-       │                                  │ 19. Remove from Registry         │
+       │                                  │ 25. Remove from Registry         │
        │                                  │                                  │
-       │                                  │ 20. Close                        │
+       │                                  │ 26. Close                        │
        │                                  │<─────────────────────────────────┤
        │                                  │                                  │
-       │                                  │ 21. Remove from Registry         │
+       │                                  │ 27. Remove from Registry         │
        │                                  │                                  │
 ```
 
@@ -97,7 +116,8 @@ Consumer → Server → Provider
 - Steps 6, 9, 12: RequestID hashing ensures same worker processes all frames
 - Steps 7, 10, 13: Frames forwarded in order by single worker
 - Step 14: Provider processes complete request after receiving all frames
-- Steps 16-17: Routing info enables response delivery back to correct consumer
+- Steps 15-20: Provider sends chunked response, server tracks consumer connection
+- Steps 21-23: Consumer receives and assembles chunked response
 
 ## Key Components
 
@@ -111,14 +131,17 @@ Consumer → Server → Provider
 
 ### 2. Consumer (`consumer.go`)
 - Sends requests to providers via the server
+- `Send(r io.Reader, timeout time.Duration)` returns `(io.Reader, error)`
 - Blocks waiting for response with configurable timeout
-- Uses streaming chunks for large payloads
+- Uses streaming chunks for large payloads (both request and response)
 - Auto-generates unique client ID per instance
 
 ### 3. Provider (`provider.go`)
-- Registers a handler function to process requests
+- Channel-based API for receiving requests and sending responses
+- `Receive()` returns `(uuid.UUID, io.Reader, bool)` for getting requests
+- `Respond(reqID uuid.UUID, data []byte, err error)` for sending responses
 - Listens for incoming requests in a goroutine
-- Sends responses back through the server
+- Sends chunked responses back through the server
 - Maintains routing info for response delivery
 
 ### 4. Frame Protocol (`frame.go`)
@@ -128,7 +151,10 @@ Consumer → Server → Provider
   - Flags (2 bytes)
   - RequestID (16 bytes UUID)
   - Payload length (4 bytes)
-- Frame types: `StartFrame`, `ChunkFrame`, `EndFrame`, `ResponseFrame`, `ErrorFrame`
+- Frame types:
+  - **Request frames**: `StartFrame`, `ChunkFrame`, `EndFrame`
+  - **Response frames**: `ResponseStartFrame`, `ResponseChunkFrame`, `ResponseEndFrame`
+  - **Other**: `ResponseFrame` (legacy), `ErrorFrame`
 - Max frame size: 1MB
 - Read timeout: 2 minutes
 - Write timeout: 5 seconds
@@ -159,16 +185,24 @@ Consumer → Server → Provider
 - Shared functionality for Consumer and Provider
 - Handles connection dialing and registration
 - Builds metadata payloads
-- Assembles chunked responses
+- `sendChunkedRequest()` - sends request chunks
+- `sendChunkedResponse()` - sends response chunks with routing info
+- `receiveChunkedResponse()` - assembles chunked responses
 
 ## Message Flow
 
+### Request Flow (Consumer → Provider)
 1. **Connection**: Consumer/Provider connects and sends `StartFrame` with metadata (role, timeout, clientID, channelID)
 2. **Registration**: Server registers client in registry
 3. **Request**: Consumer sends `StartFrame` → `ChunkFrame(s)` → `EndFrame`
-4. **Routing**: Server forwards to matching provider on same channelID
-5. **Processing**: Provider processes request and sends `ResponseFrame`/`ErrorFrame`
-6. **Response**: Server routes response back to consumer using routing info
+4. **Routing**: Server forwards to matching provider on same channelID with routing info prepended
+5. **Processing**: Provider receives request via `Receive()` and processes it
+
+### Response Flow (Provider → Consumer)
+1. **Response**: Provider calls `Respond()` with data or error
+2. **Chunking**: Provider sends `ResponseStartFrame` (with routing info) → `ResponseChunkFrame(s)` → `ResponseEndFrame`
+3. **Routing**: Server tracks consumer connection from `ResponseStartFrame` and forwards chunks
+4. **Assembly**: Consumer assembles chunks and returns complete response as `io.Reader`
 
 ## Routing Info Format
 
@@ -198,10 +232,20 @@ defer server.Stop()
 
 // Create provider
 channelID := uuid.New()
-provider, _ := NewProvider("127.0.0.1:9090", channelID, func(payload []byte) ([]byte, error) {
-    return []byte("processed: " + string(payload)), nil
-})
+provider, _ := NewProvider("127.0.0.1:9090", channelID)
 defer provider.Close()
+
+// Handle requests in background
+go func() {
+    for {
+        reqID, r, ok := provider.Receive()
+        if !ok {
+            break
+        }
+        data, _ := io.ReadAll(r)
+        provider.Respond(reqID, []byte("processed: "+string(data)), nil)
+    }
+}()
 
 // Create consumer
 consumer, _ := NewConsumer("127.0.0.1:9090", channelID)
@@ -209,7 +253,8 @@ defer consumer.Close()
 
 // Send request
 response, _ := consumer.Send(strings.NewReader("hello"), 5*time.Second)
-fmt.Println(string(response)) // "processed: hello"
+data, _ := io.ReadAll(response)
+fmt.Println(string(data)) // "processed: hello"
 ```
 
 ## Configuration
@@ -240,22 +285,37 @@ This design allows:
 - **Parallel processing** of different requests across workers
 - **No race conditions** between frames of the same request
 
+### Chunked Responses
+
+Responses are also chunked for efficient large payload handling:
+
+1. **Provider sends**: ResponseStartFrame (with routing info) → ResponseChunkFrame(s) → ResponseEndFrame
+2. **Server tracks**: Extracts routing from ResponseStartFrame, stores consumer connection per RequestID
+3. **Server forwards**: Routes ResponseChunkFrame and ResponseEndFrame to correct consumer
+4. **Consumer assembles**: Collects all chunks and returns complete payload as io.Reader
+
+Benefits:
+- Symmetric chunking for both requests and responses
+- No single-frame size limits for responses
+- Efficient memory usage with streaming
+
 ## Performance
 
 ### Benchmarks (Intel i5-12400F, 12 cores)
 
 | Benchmark | Requests/sec | Latency | Memory/op |
 |-----------|--------------|---------|------------|
-| Single Request | 3,333 | 300µs | 1.0 MB |
-| Concurrent (10 consumers) | 8,680 | 115µs | 1.0 MB |
-| Large Payload (1MB) | 860 | 1.16ms | 4.0 MB |
-| Multiple Channels (10) | 9,916 | 100µs | 1.0 MB |
-| High Throughput (100 consumers) | 11,560 | 86µs | 1.0 MB |
+| Single Request | 2,062 | 485µs | 2.1 MB |
+| Concurrent (10 consumers) | 3,151 | 336µs | 2.1 MB |
+| Large Payload (1MB) | 674 | 1.48ms | 5.2 MB |
+| Multiple Channels (10) | 5,015 | 199µs | 2.1 MB |
+| High Throughput (100 consumers) | 3,794 | 264µs | 2.1 MB |
 
 ### Resource Management
 
 - **No goroutine leaks**: Verified across 10 iterations
 - **No memory leaks**: <0.5 MB growth after 100 iterations
 - **Clean registry**: All connections properly cleaned up
-- **Throughput**: ~860 MB/s for large payloads
-- **Scalability**: 2.6x performance improvement with concurrency
+- **Throughput**: ~675 MB/s for large payloads
+- **Scalability**: Improved performance with concurrency
+

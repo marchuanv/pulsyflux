@@ -1,27 +1,45 @@
 package socket
 
 import (
+	"bytes"
+	"io"
+	"sync"
+
 	"github.com/google/uuid"
 )
 
-type RequestHandler func(payload []byte) ([]byte, error)
-
-type Provider struct {
-	baseClient
-	handler RequestHandler
-	done    chan struct{}
+type providerRequest struct {
+	ID     uuid.UUID
+	Reader io.Reader
 }
 
-func NewProvider(addr string, channelID uuid.UUID, handler RequestHandler) (*Provider, error) {
-	p := &Provider{
+type providerResponse struct {
+	ID     uuid.UUID
+	Reader io.Reader
+	Err    error
+}
+
+type provider struct {
+	baseClient
+	requests    chan *providerRequest
+	responses   chan *providerResponse
+	routingInfo map[uuid.UUID][]byte
+	routingMu   sync.Mutex
+	done        chan struct{}
+}
+
+func NewProvider(addr string, channelID uuid.UUID) (*provider, error) {
+	p := &provider{
 		baseClient: baseClient{
 			addr:      addr,
 			clientID:  uuid.New(),
 			channelID: channelID,
 			role:      RoleProvider,
 		},
-		handler: handler,
-		done:    make(chan struct{}),
+		requests:    make(chan *providerRequest, 100),
+		responses:   make(chan *providerResponse, 100),
+		routingInfo: make(map[uuid.UUID][]byte),
+		done:        make(chan struct{}),
 	}
 	if err := p.dial(); err != nil {
 		return nil, err
@@ -31,10 +49,11 @@ func NewProvider(addr string, channelID uuid.UUID, handler RequestHandler) (*Pro
 		return nil, err
 	}
 	go p.listen()
+	go p.writeResponses()
 	return p, nil
 }
 
-func (p *Provider) listen() {
+func (p *provider) listen() {
 	streamReqs := make(map[uuid.UUID][]byte)       // Stores request payload
 	routingInfo := make(map[uuid.UUID][]byte)      // Stores routing info per request
 
@@ -83,41 +102,93 @@ func (p *Provider) listen() {
 			delete(streamReqs, f.RequestID)
 			delete(routingInfo, f.RequestID)
 
-			response, err := p.handler(requestPayload)
+			// Store routing info for response
+			p.routingMu.Lock()
+			p.routingInfo[f.RequestID] = routing
+			p.routingMu.Unlock()
 
-			var respFrame frame
-			if err != nil {
-				errorPayload := append(routing, []byte(err.Error())...)
-				respFrame = frame{
-					Version:   Version1,
-					Type:      ErrorFrame,
-					RequestID: f.RequestID,
-					Payload:   errorPayload,
-				}
-			} else {
-				responsePayload := append(routing, response...)
-				respFrame = frame{
-					Version:   Version1,
-					Type:      ResponseFrame,
-					RequestID: f.RequestID,
-					Payload:   responsePayload,
-				}
+			// Send request to channel for user to process
+			req := &providerRequest{
+				ID:     f.RequestID,
+				Reader: bytes.NewReader(requestPayload),
 			}
 
+			select {
+			case p.requests <- req:
+			case <-p.done:
+				return
+			}
+		}
+	}
+}
+
+func (p *provider) writeResponses() {
+	for {
+		select {
+		case <-p.done:
+			return
+		case resp := <-p.responses:
+			p.routingMu.Lock()
+			routing := p.routingInfo[resp.ID]
+			delete(p.routingInfo, resp.ID)
+			p.routingMu.Unlock()
+
 			p.connMu.Lock()
-			conn := p.conn
-			if conn != nil {
-				if err := respFrame.write(conn); err != nil {
-					// Failed to send response
+			if p.conn == nil {
+				p.connMu.Unlock()
+				continue
+			}
+
+			if resp.Err != nil {
+				errorPayload := append(routing, []byte(resp.Err.Error())...)
+				errFrame := frame{
+					Version:   Version1,
+					Type:      ErrorFrame,
+					RequestID: resp.ID,
+					Payload:   errorPayload,
 				}
+				errFrame.write(p.conn)
+				p.connMu.Unlock()
+				continue
+			}
+
+			if err := p.sendChunkedResponse(resp.ID, resp.Reader, routing, ResponseStartFrame); err != nil {
+				p.connMu.Unlock()
+				continue
 			}
 			p.connMu.Unlock()
 		}
 	}
 }
 
-func (p *Provider) Close() error {
+func (p *provider) Receive() (uuid.UUID, io.Reader, bool) {
+	select {
+	case req, ok := <-p.requests:
+		if !ok {
+			return uuid.Nil, nil, false
+		}
+		return req.ID, req.Reader, true
+	case <-p.done:
+		return uuid.Nil, nil, false
+	}
+}
+
+func (p *provider) Respond(reqID uuid.UUID, data []byte, err error) {
+	resp := &providerResponse{
+		ID:     reqID,
+		Reader: bytes.NewReader(data),
+		Err:    err,
+	}
+	select {
+	case p.responses <- resp:
+	case <-p.done:
+	}
+}
+
+func (p *provider) Close() error {
 	close(p.done)
+	close(p.requests)
+	close(p.responses)
 	p.connMu.Lock()
 	defer p.connMu.Unlock()
 	return p.close()

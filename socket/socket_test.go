@@ -1,6 +1,7 @@
 package socket
 
 import (
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -21,13 +22,23 @@ func TestConsumerProviderBidirectional(t *testing.T) {
 	channelID := uuid.New()
 
 	// Create provider that echoes back the request
-	provider, err := NewProvider("127.0.0.1:9090", channelID, func(payload []byte) ([]byte, error) {
-		return []byte("echo: " + string(payload)), nil
-	})
+	provider, err := NewProvider("127.0.0.1:9090", channelID)
 	if err != nil {
 		t.Fatalf("Failed to create provider: %v", err)
 	}
 	defer provider.Close()
+
+	// Handle requests in background
+	go func() {
+		for {
+			reqID, r, ok := provider.Receive()
+			if !ok {
+				break
+			}
+			data, _ := io.ReadAll(r)
+			provider.Respond(reqID, []byte("echo: "+string(data)), nil)
+		}
+	}()
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -44,9 +55,10 @@ func TestConsumerProviderBidirectional(t *testing.T) {
 		t.Fatalf("Consumer send failed: %v", err)
 	}
 
+	data, _ := io.ReadAll(response)
 	expected := "echo: hello"
-	if string(response) != expected {
-		t.Errorf("Expected %q, got %q", expected, string(response))
+	if string(data) != expected {
+		t.Errorf("Expected %q, got %q", expected, string(data))
 	}
 }
 
@@ -61,10 +73,18 @@ func TestMultipleConsumersOneProvider(t *testing.T) {
 
 	channelID := uuid.New()
 
-	provider, _ := NewProvider("127.0.0.1:9091", channelID, func(payload []byte) ([]byte, error) {
-		return []byte("processed"), nil
-	})
+	provider, _ := NewProvider("127.0.0.1:9091", channelID)
 	defer provider.Close()
+
+	go func() {
+		for {
+			reqID, _, ok := provider.Receive()
+			if !ok {
+				break
+			}
+			provider.Respond(reqID, []byte("processed"), nil)
+		}
+	}()
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -81,8 +101,9 @@ func TestMultipleConsumersOneProvider(t *testing.T) {
 				t.Errorf("Consumer %d error: %v", id, err)
 				return
 			}
-			if string(resp) != "processed" {
-				t.Errorf("Consumer %d: expected 'processed', got %q", id, string(resp))
+			data, _ := io.ReadAll(resp)
+			if string(data) != "processed" {
+				t.Errorf("Consumer %d: expected 'processed', got %q", id, string(data))
 			}
 		}(i)
 	}
@@ -127,10 +148,18 @@ func TestLargePayload(t *testing.T) {
 
 	channelID := uuid.New()
 
-	provider, _ := NewProvider("127.0.0.1:9093", channelID, func(payload []byte) ([]byte, error) {
-		return []byte("received"), nil
-	})
+	provider, _ := NewProvider("127.0.0.1:9093", channelID)
 	defer provider.Close()
+
+	go func() {
+		for {
+			reqID, _, ok := provider.Receive()
+			if !ok {
+				break
+			}
+			provider.Respond(reqID, []byte("received"), nil)
+		}
+	}()
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -142,8 +171,9 @@ func TestLargePayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Large payload failed: %v", err)
 	}
-	if string(resp) != "received" {
-		t.Errorf("Expected 'received', got %q", string(resp))
+	data, _ := io.ReadAll(resp)
+	if string(data) != "received" {
+		t.Errorf("Expected 'received', got %q", string(data))
 	}
 }
 
@@ -165,10 +195,18 @@ func TestConcurrentChannels(t *testing.T) {
 			defer wg.Done()
 			channelID := uuid.New()
 
-			provider, _ := NewProvider("127.0.0.1:9094", channelID, func(payload []byte) ([]byte, error) {
-				return []byte("ok"), nil
-			})
+			provider, _ := NewProvider("127.0.0.1:9094", channelID)
 			defer provider.Close()
+
+			go func() {
+				for {
+					reqID, _, ok := provider.Receive()
+					if !ok {
+						break
+					}
+					provider.Respond(reqID, []byte("ok"), nil)
+				}
+			}()
 
 			time.Sleep(50 * time.Millisecond)
 
@@ -180,8 +218,9 @@ func TestConcurrentChannels(t *testing.T) {
 				t.Errorf("Channel %d error: %v", id, err)
 				return
 			}
-			if string(resp) != "ok" {
-				t.Errorf("Channel %d: expected 'ok', got %q", id, string(resp))
+			data, _ := io.ReadAll(resp)
+			if string(data) != "ok" {
+				t.Errorf("Channel %d: expected 'ok', got %q", id, string(data))
 			}
 		}(i)
 	}
