@@ -1,25 +1,17 @@
 {
   "name": "pulsyflux-socket",
   "version": "1.0.0",
-  "description": "Node.js bindings for PulsyFlux socket package",
-  "main": "socket.js",
-  "scripts": {
-    "build": "build.bat",
-    "test": "jasmine"
-  },
+  "type": "module",
+  "main": "socket.mjs",
   "dependencies": {
     "ffi-napi": "^4.0.3",
     "ref-napi": "^3.0.3",
     "uuid": "^9.0.0"
   },
   "devDependencies": {
-    "jasmine": "^5.13.0"
+    "jest": "^29.0.0"
   },
-  "keywords": [
-    "socket",
-    "rpc",
-    "messaging"
-  ],
-  "author": "",
-  "license": "MIT"
+  "scripts": {
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+  }
 }

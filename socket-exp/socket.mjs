@@ -1,5 +1,6 @@
-const ffi = require('ffi-napi');
-const ref = require('ref-napi');
+import ffi from 'ffi-napi';
+import ref from 'ref-napi';
+import { EventEmitter } from 'events';
 
 const stringPtr = ref.refType('string');
 const intPtr = ref.refType('int');
@@ -13,6 +14,7 @@ const socketLib = ffi.Library('./build/socket_lib', {
   'ProviderRespond': ['int', ['int', 'string', 'string', 'int', 'string']],
   'ProviderClose': ['int', ['int']],
   'ServerNew': ['int', ['string']],
+  'ServerStart': ['int', ['int']],
   'ServerStop': ['int', ['int']],
   'FreeString': ['void', ['string']]
 });
@@ -26,7 +28,7 @@ class Consumer {
   }
 
   send(data, timeoutMs = 5000) {
-    const buffer = Buffer.from(data);
+    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
     const result = socketLib.ConsumerSend(this.id, buffer, buffer.length, timeoutMs);
     if (result === null) {
       throw new Error('Send failed');
@@ -42,8 +44,9 @@ class Consumer {
   }
 }
 
-class Provider {
+class Provider extends EventEmitter {
   constructor(address, channelID) {
+    super();
     this.id = socketLib.ProviderNew(address, channelID);
     if (this.id < 0) {
       throw new Error('Failed to create provider');
@@ -55,19 +58,32 @@ class Provider {
     const data = ref.alloc(stringPtr);
     const dataLen = ref.alloc('int');
 
-    const result = socketLib.ProviderReceive(this.id, reqID, data, dataLen);
-    if (result < 0) {
-      return null; // No request available or error
-    }
+    try {
+      const result = socketLib.ProviderReceive(this.id, reqID, data, dataLen);
+      if (result !== 0) {  // 0 = success, -1 = error, -2 = no request
+        return null;
+      }
 
-    return {
-      requestID: reqID.deref(),
-      data: data.deref()
-    };
+      const reqIDStr = reqID.deref();
+      const dataPtr = data.deref();
+      const dataLenVal = dataLen.deref();
+
+      if (!reqIDStr || !dataPtr) {
+        return null;
+      }
+
+      return {
+        requestID: reqIDStr,
+        data: ref.readCString(dataPtr, 0, dataLenVal)
+      };
+    } catch (error) {
+      console.error('ProviderReceive error:', error);
+      return null;
+    }
   }
 
   respond(requestID, data, error = null) {
-    const buffer = data ? Buffer.from(data) : null;
+    const buffer = data ? (Buffer.isBuffer(data) ? data : Buffer.from(data)) : null;
     const result = socketLib.ProviderRespond(
       this.id,
       requestID,
@@ -94,6 +110,15 @@ class Server {
     }
   }
 
+  start() {
+    if (this.id >= 0) {
+      const result = socketLib.ServerStart(this.id);
+      if (result < 0) {
+        throw new Error('Failed to start server');
+      }
+    }
+  }
+
   stop() {
     if (this.id >= 0) {
       socketLib.ServerStop(this.id);
@@ -102,4 +127,4 @@ class Server {
   }
 }
 
-module.exports = { Consumer, Provider, Server };
+export { Consumer, Provider, Server };

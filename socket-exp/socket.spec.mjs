@@ -1,5 +1,5 @@
-const { Consumer, Provider, Server } = require('./socket');
-const { v4: uuidv4 } = require('uuid');
+import { Consumer, Provider, Server } from './socket.mjs';
+import { v4 as uuidv4 } from 'uuid';
 
 describe('Socket Library', () => {
   const SERVER_ADDR = '127.0.0.1:9090';
@@ -11,6 +11,9 @@ describe('Socket Library', () => {
 
   beforeAll(() => {
     server = new Server('9090');
+    if (server) {
+      server.start();
+    }
   });
 
   afterAll(() => {
@@ -47,7 +50,7 @@ describe('Socket Library', () => {
     it('should send and receive a message', (done) => {
       provider = new Provider(SERVER_ADDR, channelID);
       consumer = new Consumer(SERVER_ADDR, channelID);
-      
+
       const interval = setInterval(() => {
         const req = provider.receive();
         if (req) {
@@ -66,7 +69,7 @@ describe('Socket Library', () => {
 
     it('should handle timeout', (done) => {
       consumer = new Consumer(SERVER_ADDR, channelID);
-      
+
       try {
         consumer.send('test', 100);
         done.fail('Should have thrown');
@@ -131,7 +134,7 @@ describe('Socket Library', () => {
         expect(r1).toContain('response-');
         expect(r2).toContain('response-');
         expect(r3).toContain('response-');
-        
+
         done();
       }, 100);
     }, 5000);
