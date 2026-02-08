@@ -5,6 +5,7 @@
   "main": "messagebus.mjs",
   "type": "module",
   "scripts": {
+    "postinstall": "build.bat",
     "build": "build.bat",
     "test": "jasmine"
   },

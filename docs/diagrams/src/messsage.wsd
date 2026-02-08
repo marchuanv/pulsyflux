@@ -1,3 +1,0 @@
-@startuml ConsumerSubscription
-Message -> MessageBus: refute Verify Address
-@enduml
