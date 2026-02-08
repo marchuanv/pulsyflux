@@ -1,19 +1,8 @@
 {
 	"folders": [
 		{
-			"path": "docs"
-		},
-		{
-			"path": "sliceext"
-		},
-		{
-			"path": "socket"
-		},
-		{
-			"path": "socket-exp"
+			"path": "."
 		}
-
-
 	],
 	"settings": {
 		"emeraldwalk.runonsave": {
