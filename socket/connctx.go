@@ -11,6 +11,13 @@ import (
 	"github.com/google/uuid"
 )
 
+type clientRole byte
+
+const (
+	roleConsumer clientRole = 0x01
+	roleProvider clientRole = 0x02
+)
+
 const version1 byte = 1
 
 const (
