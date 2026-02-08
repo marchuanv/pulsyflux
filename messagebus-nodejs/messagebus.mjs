@@ -4,12 +4,14 @@ import ref from 'ref-napi';
 const stringPtr = ref.refType('string');
 const intPtr = ref.refType('int');
 const longlongPtr = ref.refType('longlong');
+const voidPtr = ref.refType(ref.types.void);
+const voidPtrPtr = ref.refType(voidPtr);
 
 const lib = ffi.Library('./messagebus_lib', {
   'BusNew': ['int', ['string', 'string']],
   'BusPublish': ['int', ['int', 'string', 'string', 'int', 'string', 'int']],
   'BusSubscribe': ['int', ['int', 'string']],
-  'BusReceive': ['int', ['int', stringPtr, stringPtr, stringPtr, intPtr, stringPtr, longlongPtr]],
+  'BusReceive': ['int', ['int', stringPtr, stringPtr, voidPtrPtr, intPtr, stringPtr, longlongPtr]],
   'BusUnsubscribe': ['int', ['int', 'string']],
   'BusClose': ['int', ['int']],
   'SubscriptionClose': ['int', ['int']],
@@ -99,7 +101,7 @@ export class Subscription {
   receive() {
     const msgID = ref.alloc(stringPtr);
     const topic = ref.alloc(stringPtr);
-    const payload = ref.alloc(stringPtr);
+    const payload = ref.alloc(voidPtrPtr);
     const payloadLen = ref.alloc('int');
     const headers = ref.alloc(stringPtr);
     const timestamp = ref.alloc('longlong');
@@ -122,18 +124,25 @@ export class Subscription {
       return null; // Channel closed or error
     }
 
+    const len = payloadLen.deref();
+    const payloadPtr = payload.deref();
+    const payloadBuf = ref.reinterpret(payloadPtr, len, 0);
+
     const msg = {
-      id: msgID.deref(),
-      topic: topic.deref(),
-      payload: Buffer.from(payload.deref(), payloadLen.deref()),
+      id: ref.readCString(msgID.deref(), 0),
+      topic: ref.readCString(topic.deref(), 0),
+      payload: payloadBuf,
       timestamp: new Date(Number(timestamp.deref()) * 1000),
       headers: null
     };
 
-    const headersStr = headers.deref();
-    if (headersStr && headersStr.length > 0) {
+    const headersPtr = headers.deref();
+    if (headersPtr && !headersPtr.isNull()) {
       try {
-        msg.headers = JSON.parse(headersStr);
+        const headersStr = ref.readCString(headersPtr, 0);
+        if (headersStr && headersStr.length > 0) {
+          msg.headers = JSON.parse(headersStr);
+        }
       } catch (e) {
         msg.headers = null;
       }
