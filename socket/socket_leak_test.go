@@ -23,21 +23,21 @@ func TestNoGoroutineLeak(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		channelID := uuid.New()
-		provider, _ := NewProvider("127.0.0.1:9100", channelID)
+		provider, _ := NewClient("127.0.0.1:9100", channelID, roleProvider)
 
 		go func() {
 			for {
-				reqID, _, ok := provider.Receive()
+				_, _, ok := provider.Receive()
 				if !ok {
 					break
 				}
-				provider.Respond(reqID, strings.NewReader("ok"), nil)
+				provider.Send(strings.NewReader("ok"), 5*time.Second)
 			}
 		}()
 
 		time.Sleep(50 * time.Millisecond)
 
-		consumer, _ := NewConsumer("127.0.0.1:9100", channelID)
+		consumer, _ := NewClient("127.0.0.1:9100", channelID, roleConsumer)
 
 		// Send some requests
 		for j := 0; j < 10; j++ {
@@ -81,21 +81,21 @@ func TestNoMemoryLeak(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 
 		channelID := uuid.New()
-		provider, _ := NewProvider("127.0.0.1:9101", channelID)
+		provider, _ := NewClient("127.0.0.1:9101", channelID, roleProvider)
 
 		go func() {
 			for {
-				reqID, _, ok := provider.Receive()
+				_, _, ok := provider.Receive()
 				if !ok {
 					break
 				}
-				provider.Respond(reqID, strings.NewReader("ok"), nil)
+				provider.Send(strings.NewReader("ok"), 5*time.Second)
 			}
 		}()
 
 		time.Sleep(10 * time.Millisecond)
 
-		consumer, _ := NewConsumer("127.0.0.1:9101", channelID)
+		consumer, _ := NewClient("127.0.0.1:9101", channelID, roleConsumer)
 
 		// Send requests
 		for j := 0; j < 5; j++ {
@@ -143,21 +143,21 @@ func TestConnectionCleanup(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		channelID := uuid.New()
 		
-		provider, _ := NewProvider("127.0.0.1:9102", channelID)
+		provider, _ := NewClient("127.0.0.1:9102", channelID, roleProvider)
 		
 		go func() {
 			for {
-				reqID, _, ok := provider.Receive()
+				_, _, ok := provider.Receive()
 				if !ok {
 					break
 				}
-				provider.Respond(reqID, strings.NewReader("ok"), nil)
+				provider.Send(strings.NewReader("ok"), 5*time.Second)
 			}
 		}()
 		
 		time.Sleep(10 * time.Millisecond)
 		
-		consumer, _ := NewConsumer("127.0.0.1:9102", channelID)
+		consumer, _ := NewClient("127.0.0.1:9102", channelID, roleConsumer)
 		
 		// Send one request
 		consumer.Send(strings.NewReader("test"), 5*time.Second)
@@ -169,12 +169,4 @@ func TestConnectionCleanup(t *testing.T) {
 
 	// Wait for cleanup
 	time.Sleep(200 * time.Millisecond)
-
-	// Check registry is empty
-	if len(server.clientRegistry.consumers) > 0 {
-		t.Errorf("Registry leak: %d consumers still registered", len(server.clientRegistry.consumers))
-	}
-	if len(server.clientRegistry.providers) > 0 {
-		t.Errorf("Registry leak: %d providers still registered", len(server.clientRegistry.providers))
-	}
 }

@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestConsumerProviderBidirectional(t *testing.T) {
+func TestClientBidirectional(t *testing.T) {
 	server := NewServer("9090")
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
@@ -22,8 +22,8 @@ func TestConsumerProviderBidirectional(t *testing.T) {
 
 	channelID := uuid.New()
 
-	// Create provider that echoes back the request
-	provider, err := NewProvider("127.0.0.1:9090", channelID)
+	// Create provider client
+	provider, err := NewClient("127.0.0.1:9090", channelID, roleProvider)
 	if err != nil {
 		t.Fatalf("Failed to create provider: %v", err)
 	}
@@ -32,19 +32,19 @@ func TestConsumerProviderBidirectional(t *testing.T) {
 	// Handle requests in background
 	go func() {
 		for {
-			reqID, r, ok := provider.Receive()
+			_, r, ok := provider.Receive()
 			if !ok {
 				break
 			}
 			data, _ := io.ReadAll(r)
-			provider.Respond(reqID, bytes.NewReader([]byte("echo: "+string(data))), nil)
+			provider.Send(bytes.NewReader([]byte("echo: "+string(data))), 5*time.Second)
 		}
 	}()
 
 	time.Sleep(100 * time.Millisecond)
 
-	// Create consumer
-	consumer, err := NewConsumer("127.0.0.1:9090", channelID)
+	// Create consumer client
+	consumer, err := NewClient("127.0.0.1:9090", channelID, roleConsumer)
 	if err != nil {
 		t.Fatalf("Failed to create consumer: %v", err)
 	}
@@ -74,16 +74,16 @@ func TestMultipleConsumersOneProvider(t *testing.T) {
 
 	channelID := uuid.New()
 
-	provider, _ := NewProvider("127.0.0.1:9091", channelID)
+	provider, _ := NewClient("127.0.0.1:9091", channelID, roleProvider)
 	defer provider.Close()
 
 	go func() {
 		for {
-			reqID, _, ok := provider.Receive()
+			_, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, strings.NewReader("processed"), nil)
+			provider.Send(strings.NewReader("processed"), 5*time.Second)
 		}
 	}()
 
@@ -94,7 +94,7 @@ func TestMultipleConsumersOneProvider(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			consumer, _ := NewConsumer("127.0.0.1:9091", channelID)
+			consumer, _ := NewClient("127.0.0.1:9091", channelID, roleConsumer)
 			defer consumer.Close()
 
 			resp, err := consumer.Send(strings.NewReader("request"), 2*time.Second)
@@ -123,18 +123,10 @@ func TestNoPeerAvailable(t *testing.T) {
 
 	channelID := uuid.New()
 
-	consumer, err := NewConsumer("127.0.0.1:9092", channelID)
-	if err != nil {
-		t.Fatalf("Failed to create consumer: %v", err)
-	}
-	defer consumer.Close()
-
-	_, err = consumer.Send(strings.NewReader("no peer"), 1*time.Second)
+	consumer, err := NewClient("127.0.0.1:9092", channelID, roleConsumer)
 	if err == nil {
-		t.Fatal("Expected error when no peer available")
-	}
-	if !strings.Contains(err.Error(), "peer disappeared") {
-		t.Fatalf("Expected 'peer disappeared' error, got: %v", err)
+		consumer.Close()
+		t.Fatal("Expected handshake to fail when no peer available")
 	}
 }
 
@@ -149,22 +141,22 @@ func TestLargePayload(t *testing.T) {
 
 	channelID := uuid.New()
 
-	provider, _ := NewProvider("127.0.0.1:9093", channelID)
+	provider, _ := NewClient("127.0.0.1:9093", channelID, roleProvider)
 	defer provider.Close()
 
 	go func() {
 		for {
-			reqID, _, ok := provider.Receive()
+			_, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, strings.NewReader("received"), nil)
+			provider.Send(strings.NewReader("received"), 5*time.Second)
 		}
 	}()
 
 	time.Sleep(50 * time.Millisecond)
 
-	consumer, _ := NewConsumer("127.0.0.1:9093", channelID)
+	consumer, _ := NewClient("127.0.0.1:9093", channelID, roleConsumer)
 	defer consumer.Close()
 
 	largeData := strings.Repeat("X", 2*1024*1024)
@@ -196,22 +188,22 @@ func TestConcurrentChannels(t *testing.T) {
 			defer wg.Done()
 			channelID := uuid.New()
 
-			provider, _ := NewProvider("127.0.0.1:9094", channelID)
+			provider, _ := NewClient("127.0.0.1:9094", channelID, roleProvider)
 			defer provider.Close()
 
 			go func() {
 				for {
-					reqID, _, ok := provider.Receive()
+					_, _, ok := provider.Receive()
 					if !ok {
 						break
 					}
-					provider.Respond(reqID, strings.NewReader("ok"), nil)
+					provider.Send(strings.NewReader("ok"), 5*time.Second)
 				}
 			}()
 
 			time.Sleep(50 * time.Millisecond)
 
-			consumer, _ := NewConsumer("127.0.0.1:9094", channelID)
+			consumer, _ := NewClient("127.0.0.1:9094", channelID, roleConsumer)
 			defer consumer.Close()
 
 			resp, err := consumer.Send(strings.NewReader("test"), 2*time.Second)

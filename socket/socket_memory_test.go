@@ -23,22 +23,22 @@ func TestMemoryStressLargePayloads(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9200", channelID)
+	provider, _ := NewClient("127.0.0.1:9200", channelID, roleProvider)
 	defer provider.Close()
 
 	go func() {
 		for {
-			reqID, r, ok := provider.Receive()
+			_, r, ok := provider.Receive()
 			if !ok {
 				break
 			}
 			data, _ := io.ReadAll(r)
-			provider.Respond(reqID, bytes.NewReader(bytes.Repeat([]byte("X"), len(data))), nil)
+			provider.Send(bytes.NewReader(bytes.Repeat([]byte("X"), len(data))), 10*time.Second)
 		}
 	}()
 
 	time.Sleep(50 * time.Millisecond)
-	consumer, _ := NewConsumer("127.0.0.1:9200", channelID)
+	consumer, _ := NewClient("127.0.0.1:9200", channelID, roleConsumer)
 	defer consumer.Close()
 
 	// Send 100 large payloads (1MB each)
@@ -73,32 +73,32 @@ func TestMemoryStressConcurrent(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9201", channelID)
+	provider, _ := NewClient("127.0.0.1:9201", channelID, roleProvider)
 	defer provider.Close()
 
 	go func() {
 		for {
-			reqID, _, ok := provider.Receive()
+			_, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, strings.NewReader("ok"), nil)
+			provider.Send(strings.NewReader("ok"), 5*time.Second)
 		}
 	}()
 
 	time.Sleep(50 * time.Millisecond)
 
 	// Create 50 concurrent consumers
-	consumers := make([]*Consumer, 50)
+	consumers := make([]*Client, 50)
 	for i := 0; i < 50; i++ {
-		consumers[i], _ = NewConsumer("127.0.0.1:9201", channelID)
+		consumers[i], _ = NewClient("127.0.0.1:9201", channelID, roleConsumer)
 		defer consumers[i].Close()
 	}
 
 	// Each consumer sends 100 requests
 	done := make(chan bool, 50)
 	for i := 0; i < 50; i++ {
-		go func(c *Consumer) {
+		go func(c *Client) {
 			for j := 0; j < 100; j++ {
 				c.Send(strings.NewReader("test"), 5*time.Second)
 			}
@@ -136,21 +136,21 @@ func TestMemoryPoolEfficiency(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9202", channelID)
+	provider, _ := NewClient("127.0.0.1:9202", channelID, roleProvider)
 	defer provider.Close()
 
 	go func() {
 		for {
-			reqID, _, ok := provider.Receive()
+			_, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, strings.NewReader("ok"), nil)
+			provider.Send(strings.NewReader("ok"), 5*time.Second)
 		}
 	}()
 
 	time.Sleep(50 * time.Millisecond)
-	consumer, _ := NewConsumer("127.0.0.1:9202", channelID)
+	consumer, _ := NewClient("127.0.0.1:9202", channelID, roleConsumer)
 	defer consumer.Close()
 
 	// Send 1000 small requests to test pool reuse
@@ -187,29 +187,29 @@ func TestMemoryLeakUnderLoad(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		channelID := uuid.New()
-		provider, _ := NewProvider("127.0.0.1:9203", channelID)
+		provider, _ := NewClient("127.0.0.1:9203", channelID, roleProvider)
 
 		go func() {
 			for {
-				reqID, _, ok := provider.Receive()
+				_, _, ok := provider.Receive()
 				if !ok {
 					break
 				}
-				provider.Respond(reqID, strings.NewReader("ok"), nil)
+				provider.Send(strings.NewReader("ok"), 5*time.Second)
 			}
 		}()
 
 		time.Sleep(50 * time.Millisecond)
 
 		// 20 consumers, 50 requests each
-		consumers := make([]*Consumer, 20)
+		consumers := make([]*Client, 20)
 		for i := 0; i < 20; i++ {
-			consumers[i], _ = NewConsumer("127.0.0.1:9203", channelID)
+			consumers[i], _ = NewClient("127.0.0.1:9203", channelID, roleConsumer)
 		}
 
 		done := make(chan bool, 20)
 		for i := 0; i < 20; i++ {
-			go func(c *Consumer) {
+			go func(c *Client) {
 				for j := 0; j < 50; j++ {
 					c.Send(strings.NewReader("test"), 5*time.Second)
 				}

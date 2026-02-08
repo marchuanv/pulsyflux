@@ -18,12 +18,12 @@ func TestConsumerTimeout(t *testing.T) {
 	channelID := uuid.New()
 
 	// Create provider but don't handle requests (will timeout)
-	provider, _ := NewProvider("127.0.0.1:9200", channelID)
+	provider, _ := NewClient("127.0.0.1:9200", channelID, roleProvider)
 	defer provider.Close()
 
 	time.Sleep(50 * time.Millisecond)
 
-	consumer, _ := NewConsumer("127.0.0.1:9200", channelID)
+	consumer, _ := NewClient("127.0.0.1:9200", channelID, roleConsumer)
 	defer consumer.Close()
 
 	// Send request with short timeout
@@ -31,7 +31,7 @@ func TestConsumerTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected timeout error")
 	}
-	if !strings.Contains(err.Error(), "context deadline exceeded") {
+	if !strings.Contains(err.Error(), "timeout") {
 		t.Errorf("Expected timeout error, got: %v", err)
 	}
 }

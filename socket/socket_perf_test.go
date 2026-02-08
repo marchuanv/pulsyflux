@@ -20,22 +20,22 @@ func BenchmarkSmallPayload(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9300", channelID)
+	provider, _ := NewClient("127.0.0.1:9300", channelID, roleProvider)
 	defer provider.Close()
 
 	go func() {
 		for {
-			reqID, _, ok := provider.Receive()
+			_, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, strings.NewReader("ok"), nil)
+			provider.Send(strings.NewReader("ok"), 5*time.Second)
 		}
 	}()
 
 	time.Sleep(50 * time.Millisecond)
 
-	consumer, _ := NewConsumer("127.0.0.1:9300", channelID)
+	consumer, _ := NewClient("127.0.0.1:9300", channelID, roleConsumer)
 	defer consumer.Close()
 
 	b.ResetTimer()
@@ -52,24 +52,24 @@ func BenchmarkMediumPayload(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9301", channelID)
+	provider, _ := NewClient("127.0.0.1:9301", channelID, roleProvider)
 	defer provider.Close()
 
 	mediumData := strings.Repeat("X", 10*1024) // 10KB
 
 	go func() {
 		for {
-			reqID, _, ok := provider.Receive()
+			_, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, strings.NewReader(mediumData), nil)
+			provider.Send(strings.NewReader(mediumData), 5*time.Second)
 		}
 	}()
 
 	time.Sleep(50 * time.Millisecond)
 
-	consumer, _ := NewConsumer("127.0.0.1:9301", channelID)
+	consumer, _ := NewClient("127.0.0.1:9301", channelID, roleConsumer)
 	defer consumer.Close()
 
 	b.ResetTimer()
@@ -86,23 +86,23 @@ func BenchmarkEchoPayload(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9302", channelID)
+	provider, _ := NewClient("127.0.0.1:9302", channelID, roleProvider)
 	defer provider.Close()
 
 	go func() {
 		for {
-			reqID, r, ok := provider.Receive()
+			_, r, ok := provider.Receive()
 			if !ok {
 				break
 			}
 			data, _ := io.ReadAll(r)
-			provider.Respond(reqID, bytes.NewReader(data), nil)
+			provider.Send(bytes.NewReader(data), 5*time.Second)
 		}
 	}()
 
 	time.Sleep(50 * time.Millisecond)
 
-	consumer, _ := NewConsumer("127.0.0.1:9302", channelID)
+	consumer, _ := NewClient("127.0.0.1:9302", channelID, roleConsumer)
 	defer consumer.Close()
 
 	payload := strings.Repeat("X", 1024) // 1KB
@@ -121,25 +121,25 @@ func BenchmarkParallelConsumers(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9303", channelID)
+	provider, _ := NewClient("127.0.0.1:9303", channelID, roleProvider)
 	defer provider.Close()
 
 	go func() {
 		for {
-			reqID, _, ok := provider.Receive()
+			_, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, strings.NewReader("ok"), nil)
+			provider.Send(strings.NewReader("ok"), 5*time.Second)
 		}
 	}()
 
 	time.Sleep(50 * time.Millisecond)
 
 	numConsumers := 50
-	consumers := make([]*Consumer, numConsumers)
+	consumers := make([]*Client, numConsumers)
 	for i := 0; i < numConsumers; i++ {
-		consumers[i], _ = NewConsumer("127.0.0.1:9303", channelID)
+		consumers[i], _ = NewClient("127.0.0.1:9303", channelID, roleConsumer)
 		defer consumers[i].Close()
 	}
 
@@ -162,25 +162,25 @@ func BenchmarkRequestsPerSecond(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9304", channelID)
+	provider, _ := NewClient("127.0.0.1:9304", channelID, roleProvider)
 	defer provider.Close()
 
 	var processed atomic.Int64
 
 	go func() {
 		for {
-			reqID, _, ok := provider.Receive()
+			_, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, strings.NewReader("ok"), nil)
+			provider.Send(strings.NewReader("ok"), 5*time.Second)
 			processed.Add(1)
 		}
 	}()
 
 	time.Sleep(50 * time.Millisecond)
 
-	consumer, _ := NewConsumer("127.0.0.1:9304", channelID)
+	consumer, _ := NewClient("127.0.0.1:9304", channelID, roleConsumer)
 	defer consumer.Close()
 
 	start := time.Now()
@@ -203,24 +203,24 @@ func BenchmarkBandwidth(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9305", channelID)
+	provider, _ := NewClient("127.0.0.1:9305", channelID, roleProvider)
 	defer provider.Close()
 
 	largeData := strings.Repeat("X", 1024*1024) // 1MB
 
 	go func() {
 		for {
-			reqID, _, ok := provider.Receive()
+			_, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, strings.NewReader(largeData), nil)
+			provider.Send(strings.NewReader(largeData), 5*time.Second)
 		}
 	}()
 
 	time.Sleep(50 * time.Millisecond)
 
-	consumer, _ := NewConsumer("127.0.0.1:9305", channelID)
+	consumer, _ := NewClient("127.0.0.1:9305", channelID, roleConsumer)
 	defer consumer.Close()
 
 	start := time.Now()
@@ -245,19 +245,19 @@ func BenchmarkMultipleProviders(b *testing.B) {
 
 	numProviders := 10
 	channelID := uuid.New()
-	providers := make([]*Provider, numProviders)
+	providers := make([]*Client, numProviders)
 
 	for i := 0; i < numProviders; i++ {
-		providers[i], _ = NewProvider("127.0.0.1:9306", channelID)
+		providers[i], _ = NewClient("127.0.0.1:9306", channelID, roleProvider)
 		defer providers[i].Close()
 
-		go func(p *Provider) {
+		go func(p *Client) {
 			for {
-				reqID, _, ok := p.Receive()
+				_, _, ok := p.Receive()
 				if !ok {
 					break
 				}
-				p.Respond(reqID, strings.NewReader("ok"), nil)
+				p.Send(strings.NewReader("ok"), 5*time.Second)
 			}
 		}(providers[i])
 	}
@@ -265,9 +265,9 @@ func BenchmarkMultipleProviders(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	numConsumers := 20
-	consumers := make([]*Consumer, numConsumers)
+	consumers := make([]*Client, numConsumers)
 	for i := 0; i < numConsumers; i++ {
-		consumers[i], _ = NewConsumer("127.0.0.1:9306", channelID)
+		consumers[i], _ = NewClient("127.0.0.1:9306", channelID, roleConsumer)
 		defer consumers[i].Close()
 	}
 
@@ -293,22 +293,22 @@ func BenchmarkLatency(b *testing.B) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	provider, _ := NewProvider("127.0.0.1:9307", channelID)
+	provider, _ := NewClient("127.0.0.1:9307", channelID, roleProvider)
 	defer provider.Close()
 
 	go func() {
 		for {
-			reqID, _, ok := provider.Receive()
+			_, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, strings.NewReader("ok"), nil)
+			provider.Send(strings.NewReader("ok"), 5*time.Second)
 		}
 	}()
 
 	time.Sleep(50 * time.Millisecond)
 
-	consumer, _ := NewConsumer("127.0.0.1:9307", channelID)
+	consumer, _ := NewClient("127.0.0.1:9307", channelID, roleConsumer)
 	defer consumer.Close()
 
 	var totalLatency time.Duration
