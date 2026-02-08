@@ -28,6 +28,20 @@ type Broker struct {
 	consumers    map[uuid.UUID]*socket.Consumer // channelID -> Consumer
 	mu           sync.RWMutex
 	done         chan struct{}
+	wg           sync.WaitGroup
+}
+
+func (b *Broker) ConnectionCount() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	// 2 broker connections + 2 per subscriber
+	return 2 + (2 * len(b.subscribers))
+}
+
+func (b *Broker) SubscriberCount() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.subscribers)
 }
 
 func NewBroker(serverAddr string, brokerChanID uuid.UUID) (*Broker, error) {
@@ -70,11 +84,13 @@ func (b *Broker) run() {
 			return
 		}
 
+		b.wg.Add(1)
 		go b.handleMessage(reqID, r)
 	}
 }
 
 func (b *Broker) handleMessage(reqID uuid.UUID, r io.Reader) {
+	defer b.wg.Done()
 	data, err := io.ReadAll(r)
 	if err != nil {
 		b.provider.Respond(reqID, nil, err)
@@ -101,6 +117,7 @@ func (b *Broker) handleMessage(reqID uuid.UUID, r io.Reader) {
 		b.mu.RUnlock()
 
 		if consumer != nil {
+			// Ignore errors - subscriber may have closed
 			consumer.Send(bytes.NewReader(data), 5*time.Second)
 		}
 	}
@@ -151,7 +168,7 @@ func (b *Broker) Subscribe(topic string) (<-chan *Message, error) {
 	// Start receiver goroutine
 	go func() {
 		for {
-			_, r, ok := provider.Receive()
+			reqID, r, ok := provider.Receive()
 			if !ok {
 				close(ch)
 				return
@@ -159,13 +176,18 @@ func (b *Broker) Subscribe(topic string) (<-chan *Message, error) {
 
 			data, err := io.ReadAll(r)
 			if err != nil {
+				provider.Respond(reqID, nil, err)
 				continue
 			}
 
 			var msg Message
 			if err := json.Unmarshal(data, &msg); err != nil {
+				provider.Respond(reqID, nil, err)
 				continue
 			}
+
+			// Respond to broker
+			provider.Respond(reqID, bytes.NewReader([]byte("ok")), nil)
 
 			select {
 			case ch <- &msg:
@@ -200,6 +222,9 @@ func (b *Broker) Unsubscribe(topic string) {
 
 func (b *Broker) Close() error {
 	close(b.done)
+
+	// Wait for all handleMessage goroutines to finish
+	b.wg.Wait()
 
 	b.mu.Lock()
 	for _, provider := range b.subscribers {
