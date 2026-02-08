@@ -10,12 +10,16 @@
 # Go build cache
 socket-exp/build/
 socket-exp/.cache/
+messagebus-nodejs/build/
+messagebus-nodejs/.cache/
 
 # C headers (generated)
 socket-exp/socket_lib.h
+messagebus-nodejs/messagebus_lib.h
 
 # Node modules
 socket-exp/node_modules/
+messagebus-nodejs/node_modules/
 
 # Go workspace
 go.work

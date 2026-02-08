@@ -1,0 +1,19 @@
+{
+  "name": "pulsyflux-messagebus",
+  "version": "1.0.0",
+  "description": "Node.js bindings for PulsyFlux MessageBus package",
+  "main": "messagebus.mjs",
+  "type": "module",
+  "scripts": {
+    "build": "build.bat",
+    "test": "node example.mjs"
+  },
+  "dependencies": {
+    "ffi-napi": "^4.0.3",
+    "ref-napi": "^3.0.3",
+    "uuid": "^9.0.0"
+  },
+  "keywords": ["messagebus", "pubsub", "messaging", "events"],
+  "author": "",
+  "license": "MIT"
+}
