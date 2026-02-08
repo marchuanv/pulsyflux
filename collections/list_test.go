@@ -1,4 +1,4 @@
-package sliceext
+package collections
 
 import (
 	"testing"
@@ -9,7 +9,6 @@ type testType struct {
 }
 
 func TestList(test *testing.T) {
-
 	test1 := testType{1}
 	test2 := testType{2}
 	test3 := testType{3}
@@ -25,19 +24,18 @@ func TestList(test *testing.T) {
 	list.Delete(test2)
 
 	if !list.Has(test1) {
-		test.Fail()
+		test.Error("Expected list to contain test1")
 	}
 
 	if list.Has(test2) {
-		test.Fail()
+		test.Error("Expected list to not contain test2 after deletion")
 	}
 
 	if !list.Has(test3) {
-		test.Fail()
+		test.Error("Expected list to contain test3")
 	}
 
-	if !list.Has(test3) {
-		test.Fail()
+	if !list.Has(test4) {
+		test.Error("Expected list to contain test4")
 	}
-
 }
