@@ -21,7 +21,7 @@ const (
 	responseStartFrame       byte   = 0x07
 	responseChunkFrame       byte   = 0x08
 	responseEndFrame         byte   = 0x09
-	frameHeaderSize                 = 24
+	frameHeaderSize                 = 40
 	maxFrameSize                    = 1024 * 1024
 	defaultFrameReadTimeout         = 2 * time.Minute
 	defaultFrameWriteTimeout        = 5 * time.Second
@@ -33,6 +33,7 @@ type frame struct {
 	Type      byte
 	Flags     uint16
 	RequestID uuid.UUID // 16-byte UUID
+	ClientID  uuid.UUID // 16-byte UUID
 	Payload   []byte
 }
 
@@ -49,7 +50,7 @@ func newFrame(conn net.Conn) (*frame, error) {
 		return nil, errors.New("unsupported protocol version")
 	}
 
-	payloadLen := binary.BigEndian.Uint32(header[20:24])
+	payloadLen := binary.BigEndian.Uint32(header[36:40])
 	if payloadLen > maxFrameSize {
 		return nil, errors.New("frame payload too large")
 	}
@@ -59,7 +60,8 @@ func newFrame(conn net.Conn) (*frame, error) {
 	f.Type = header[1]
 	f.Flags = binary.BigEndian.Uint16(header[2:4])
 	copy(f.RequestID[:], header[4:20])
-	
+	copy(f.ClientID[:], header[20:36])
+
 	if payloadLen > 0 {
 		f.Payload = make([]byte, payloadLen)
 		if _, err := io.ReadFull(conn, f.Payload); err != nil {
@@ -74,11 +76,12 @@ func newFrame(conn net.Conn) (*frame, error) {
 }
 
 // newErrorFrame constructs an error frame with the given message
-func newErrorFrame(reqID uuid.UUID, msg string) *frame {
+func newErrorFrame(reqID uuid.UUID, clientID uuid.UUID, msg string) *frame {
 	f := getFrame()
 	f.Version = version1
 	f.Type = errorFrame
 	f.RequestID = reqID
+	f.ClientID = clientID
 	f.Payload = []byte(msg)
 	return f
 }
@@ -92,7 +95,8 @@ func (f *frame) write(conn net.Conn) error {
 	header[1] = f.Type
 	binary.BigEndian.PutUint16(header[2:4], f.Flags)
 	copy(header[4:20], f.RequestID[:])
-	binary.BigEndian.PutUint32(header[20:24], uint32(len(f.Payload)))
+	copy(header[20:36], f.ClientID[:])
+	binary.BigEndian.PutUint32(header[36:40], uint32(len(f.Payload)))
 
 	// Single write for header+payload reduces syscalls
 	if len(f.Payload) > 0 {
