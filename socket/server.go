@@ -2,7 +2,6 @@ package socket
 
 import (
 	"context"
-	"encoding/binary"
 	"net"
 	"sync"
 	"syscall"
@@ -18,7 +17,7 @@ type Server struct {
 	cancel         context.CancelFunc
 	conns          sync.WaitGroup
 	requestHandler *requestHandler
-	clientRegistry *clientRegistry
+	peers          *peers
 }
 
 func NewServer(port string) *Server {
@@ -27,6 +26,7 @@ func NewServer(port string) *Server {
 		port:   port,
 		ctx:    ctx,
 		cancel: cancel,
+		peers:  newPeers(),
 	}
 }
 
@@ -48,9 +48,7 @@ func (s *Server) Start() error {
 		return err
 	}
 	s.ln = ln
-	registry := newClientRegistry()
-	s.clientRegistry = registry
-	s.requestHandler = newRequestHandler(64, 8192, registry)
+	s.requestHandler = newRequestHandler(64, 8192, s.peers) // Increased worker pool and queue size for better concurrency
 	go s.acceptLoop()
 	return nil
 }
@@ -60,6 +58,7 @@ func (s *Server) Stop() error {
 	s.ln.Close()
 	s.conns.Wait()
 	s.requestHandler.stop()
+	s.peers = nil
 	return nil
 }
 
@@ -95,12 +94,8 @@ func (s *Server) handle(conn net.Conn) {
 	go ctx.startWriter()
 
 	streamReqs := make(map[uuid.UUID]*request)
-	responseRouting := make(map[uuid.UUID]*connctx)
 
-	var registeredRole clientRole
-	var registeredClientID uuid.UUID
-	var registeredChannelID uuid.UUID
-	var clientRegistered bool
+	var currentClientID uuid.UUID
 
 	defer func() {
 		// Cancel all pending requests
@@ -109,10 +104,7 @@ func (s *Server) handle(conn net.Conn) {
 				req.cancel()
 			}
 		}
-		// Remove client from registry if registered
-		if clientRegistered {
-			s.clientRegistry.removeClient(registeredRole, registeredChannelID, registeredClientID)
-		}
+		s.peers.delete(currentClientID)
 		close(ctx.writes)
 		close(ctx.errors)
 		ctx.wg.Wait()
@@ -126,167 +118,57 @@ func (s *Server) handle(conn net.Conn) {
 		default:
 		}
 
-		f, err := newFrame(conn)
+		f, err := ctx.readFrame()
 		if err != nil {
 			return
 		}
 
+		currentClientID = f.ClientID
+		s.peers.set(currentClientID, ctx) // Register client connection
+
 		switch f.Type {
 		case startFrame:
-			// Validate payload length
-			if len(f.Payload) != 41 {
-				ctx.send(newErrorFrame(f.RequestID, "invalid start frame payload length"))
-				continue
-			}
-
-			// Extract fields from payload
-			role := clientRole(f.Payload[0])
-			if role != roleConsumer && role != roleProvider {
-				ctx.send(newErrorFrame(f.RequestID, "invalid client role"))
-				continue
-			}
-
-			timeoutMs := binary.BigEndian.Uint64(f.Payload[1:9])
-			timeout := time.Duration(timeoutMs) * time.Millisecond
-
-			var clientID uuid.UUID
-			copy(clientID[:], f.Payload[9:25])
-
-			var channelID uuid.UUID
-			copy(channelID[:], f.Payload[25:41])
-
-			isRegistration := f.Flags&flagRegistration != 0
+			timeout := time.Duration(f.ClientTimeoutMs) * time.Millisecond
 			reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
 			req := &request{
-				connctx:        ctx,
-				frame:          f,
-				requestID:      f.RequestID,
-				clientID:       clientID,
-				channelID:      channelID,
-				timeout:        timeout,
-				role:           role,
-				ctx:            reqCtx,
-				cancel:         cancel,
-				isRegistration: isRegistration,
+				connctx:      ctx,
+				frame:        f,
+				requestID:    f.RequestID,
+				clientID:     currentClientID,
+				peerClientID: f.PeerClientID,
+				timeout:      timeout,
+				ctx:          reqCtx,
+				cancel:       cancel,
 			}
 			streamReqs[f.RequestID] = req
-
-			isClientRegistered := s.clientRegistry.hasClient(role, channelID, clientID)
-
-			if !isClientRegistered {
-				s.clientRegistry.addClient(role, channelID, clientID, ctx)
-				clientRegistered = true
-				registeredRole = role
-				registeredClientID = clientID
-				registeredChannelID = channelID
-			}
-
-			if !isRegistration {
-				if !s.requestHandler.handle(req) {
-					req.cancel()
-					ctx.send(newErrorFrame(f.RequestID, "server overloaded"))
-				}
+			if !s.requestHandler.handle(req) {
+				req.cancel()
+				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded"))
 			}
 
 		case chunkFrame:
 			req := streamReqs[f.RequestID]
-			if req != nil && !req.isRegistration {
-				reqCopy := *req
-				reqCopy.frame = f
-				if !s.requestHandler.handle(&reqCopy) {
-					reqCopy.cancel()
-					ctx.send(newErrorFrame(f.RequestID, "server overloaded"))
-				}
+			reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
+			req.cancel = cancel
+			req.ctx = reqCtx
+			if !s.requestHandler.handle(req) {
+				cancel()
+				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded"))
 			}
 
 		case endFrame:
 			req := streamReqs[f.RequestID]
 			delete(streamReqs, f.RequestID)
-
-			if req != nil && !req.isRegistration {
-				reqCopy := *req
-				reqCopy.frame = f
-				if !s.requestHandler.handle(&reqCopy) {
-					reqCopy.cancel()
-					ctx.send(newErrorFrame(f.RequestID, "server overloaded"))
-				}
+			reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
+			req.cancel = cancel
+			req.ctx = reqCtx
+			if !s.requestHandler.handle(req) {
+				cancel()
+				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded"))
 			}
-
-		case responseStartFrame:
-			if len(f.Payload) < 32 {
-				continue
-			}
-
-			var clientID uuid.UUID
-			copy(clientID[:], f.Payload[0:16])
-
-			var channelID uuid.UUID
-			copy(channelID[:], f.Payload[16:32])
-
-			consumerCtx, ok := s.clientRegistry.getClient(roleConsumer, channelID, clientID)
-			if !ok {
-				continue
-			}
-
-			responseRouting[f.RequestID] = consumerCtx
-			consumerCtx.send(f)
-
-		case responseChunkFrame:
-			consumerCtx, ok := responseRouting[f.RequestID]
-			if !ok {
-				continue
-			}
-			consumerCtx.send(f)
-
-		case responseEndFrame:
-			consumerCtx, ok := responseRouting[f.RequestID]
-			delete(responseRouting, f.RequestID)
-			if !ok {
-				continue
-			}
-			consumerCtx.send(f)
-
-		case responseFrame:
-			// Extract consumer's clientID and channelID from response payload
-			if len(f.Payload) < 32 {
-				continue
-			}
-
-			var clientID uuid.UUID
-			copy(clientID[:], f.Payload[0:16])
-
-			var channelID uuid.UUID
-			copy(channelID[:], f.Payload[16:32])
-
-			// Get the consumer's connection
-			consumerCtx, ok := s.clientRegistry.getClient(roleConsumer, channelID, clientID)
-			if !ok {
-				continue
-			}
-
-			// Send response back to consumer
-			consumerCtx.send(f)
-
-		case errorFrame:
-			// Check if error payload contains routing info
-			if len(f.Payload) >= 32 {
-				var clientID uuid.UUID
-				copy(clientID[:], f.Payload[0:16])
-
-				var channelID uuid.UUID
-				copy(channelID[:], f.Payload[16:32])
-
-				consumerCtx, ok := s.clientRegistry.getClient(roleConsumer, channelID, clientID)
-				if ok {
-					consumerCtx.send(f)
-					continue
-				}
-			}
-			// If no routing info or consumer not found, error is for current connection
-			ctx.send(f)
 
 		default:
-			ctx.send(newErrorFrame(f.RequestID, "invalid message type"))
+			ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "invalid frame type"))
 		}
 	}
 }

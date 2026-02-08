@@ -6,19 +6,21 @@ import (
 )
 
 type requestHandler struct {
-	requests      []chan *request // One queue per worker
-	wg            sync.WaitGroup
-	numWorkers    int
+	requests   []chan *request // One queue per worker
+	wg         sync.WaitGroup
+	numWorkers int
+	peers      *peers
 }
 
-func newRequestHandler(noHandlers, handlerQueueSize int, clientRegistry *clientRegistry) *requestHandler {
+func newRequestHandler(noHandlers, handlerQueueSize int, peers *peers) *requestHandler {
 	rh := &requestHandler{
 		requests:   make([]chan *request, noHandlers),
 		numWorkers: noHandlers,
+		peers:      peers,
 	}
 	for i := 0; i < noHandlers; i++ {
 		rh.requests[i] = make(chan *request, handlerQueueSize/noHandlers)
-		rw := newRequestWorker(uint64(i), clientRegistry, rh)
+		rw := newRequestWorker(uint64(i), rh, peers)
 		rh.wg.Add(1)
 		go rw.handle(rh.requests[i], &rh.wg)
 	}
