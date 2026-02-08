@@ -21,7 +21,6 @@ func newRequestWorker(workerID uint64, handler *requestHandler, peers *peers) *r
 
 func (rw *requestWorker) handle(reqCh chan *request, wg *sync.WaitGroup) {
 	defer wg.Done()
-
 	for req := range reqCh {
 		select {
 		case <-req.ctx.Done():
@@ -38,5 +37,6 @@ func (rw *requestWorker) handle(reqCh chan *request, wg *sync.WaitGroup) {
 		if !peerCtx.enqueue(req.frame) {
 			req.connctx.enqueue(newErrorFrame(req.requestID, req.clientID, "failed to send frame to peer"))
 		}
+		req.cancel()
 	}
 }

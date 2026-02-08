@@ -58,7 +58,6 @@ func (s *Server) Stop() error {
 	s.ln.Close()
 	s.conns.Wait()
 	s.requestHandler.stop()
-	s.peers = nil
 	return nil
 }
 
@@ -123,11 +122,11 @@ func (s *Server) handle(conn net.Conn) {
 			return
 		}
 
-		currentClientID = f.ClientID
-		s.peers.set(currentClientID, ctx) // Register client connection
-
 		switch f.Type {
 		case startFrame:
+			currentClientID = f.ClientID
+			s.peers.set(currentClientID, ctx) // Register client connection
+
 			timeout := time.Duration(f.ClientTimeoutMs) * time.Millisecond
 			reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
 			req := &request{
@@ -148,17 +147,18 @@ func (s *Server) handle(conn net.Conn) {
 
 		case chunkFrame:
 			req := streamReqs[f.RequestID]
-			reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
-			req.cancel = cancel
-			req.ctx = reqCtx
+			req.frame = f
 			if !s.requestHandler.handle(req) {
-				cancel()
+				req.cancel()
 				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded"))
 			}
 
 		case endFrame:
 			req := streamReqs[f.RequestID]
+			req.frame = f
 			delete(streamReqs, f.RequestID)
+			// Cancel old context before creating new one
+			req.cancel()
 			reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
 			req.cancel = cancel
 			req.ctx = reqCtx
