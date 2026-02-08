@@ -22,7 +22,7 @@ type messageBus struct {
 	done       chan struct{}
 }
 
-// NewBus creates a new message bus
+// NewBus creates a new message bus that can both publish and subscribe
 func NewBus(serverAddr string, channelID uuid.UUID) (Bus, error) {
 	consumer, err := socket.NewConsumer(serverAddr, channelID)
 	if err != nil {
@@ -48,7 +48,7 @@ func NewBus(serverAddr string, channelID uuid.UUID) (Bus, error) {
 	return bus, nil
 }
 
-// Publish sends a message to a topic
+// Publish sends a message to all subscribers on the channel
 func (b *messageBus) Publish(ctx context.Context, topic string, payload []byte, headers map[string]string) error {
 	msg := &Message{
 		ID:        uuid.New(),
@@ -136,17 +136,12 @@ func (b *messageBus) handleMessage(reqID uuid.UUID, r io.Reader) {
 	channels := b.channels[msg.Topic]
 	b.mu.RUnlock()
 
-	if len(channels) == 0 {
-		b.provider.Respond(reqID, bytes.NewReader([]byte("ok")), nil)
-		return
-	}
-
-	// Send to all subscribers
-	for _, ch := range channels {
-		select {
-		case ch <- &msg:
-		default:
-			// Channel full, skip
+	if len(channels) > 0 {
+		for _, ch := range channels {
+			select {
+			case ch <- &msg:
+			default:
+			}
 		}
 	}
 

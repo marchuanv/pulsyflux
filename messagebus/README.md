@@ -11,13 +11,19 @@ MessageBus provides a simple, efficient pub/sub messaging pattern for Go applica
 ```
 ┌─────────────┐         ┌─────────────┐         ┌─────────────┐
 │ Publisher   │         │   Server    │         │ Subscriber  │
-│             │         │             │         │             │
-│ Publish()   ├────────>│   Broker    ├────────>│ Handler()   │
-│             │         │             │         │             │
+│   Bus       │         │   (Broker)  │         │    Bus      │
+│ Consumer────┼────────>│             ├────────>│──Provider   │
+│             │         │   Routes    │         │             │
 └─────────────┘         └─────────────┘         └─────────────┘
-       │                                               │
-       └───────────────── Same Bus ───────────────────┘
+     Same Channel ID                                Same Channel ID
 ```
+
+**Key Points:**
+- Each Bus has both Consumer (publish) and Provider (subscribe)
+- Publisher uses Consumer.Send() to send messages to server
+- Server routes to all Providers on same channel
+- Subscribers receive via Provider.Receive()
+- Multiple buses on same channel = pub/sub broadcast
 
 **Layers:**
 ```
@@ -132,13 +138,18 @@ func main() {
     server.Start()
     defer server.Stop()
 
-    // Create bus
     channelID := uuid.New()
-    bus, _ := messagebus.NewBus("127.0.0.1:9090", channelID)
-    defer bus.Close()
+
+    // Create publisher bus
+    pubBus, _ := messagebus.NewBus("127.0.0.1:9090", channelID)
+    defer pubBus.Close()
+
+    // Create subscriber bus
+    subBus, _ := messagebus.NewBus("127.0.0.1:9090", channelID)
+    defer subBus.Close()
 
     // Subscribe
-    ch, _ := bus.Subscribe("events")
+    ch, _ := subBus.Subscribe("events")
     go func() {
         for msg := range ch {
             log.Printf("Received: %s", string(msg.Payload))
@@ -147,20 +158,25 @@ func main() {
 
     // Publish
     ctx := context.Background()
-    bus.Publish(ctx, "events", []byte("Hello World"), nil)
+    pubBus.Publish(ctx, "events", []byte("Hello World"), nil)
 }
 ```
 
 ### Multiple Subscribers
 
 ```go
-// Multiple channels receive same message
-ch1, _ := bus.Subscribe("orders")
-ch2, _ := bus.Subscribe("orders")
-ch3, _ := bus.Subscribe("orders")
+// Multiple buses on same channel receive same message
+channelID := uuid.New()
 
-bus.Publish(ctx, "orders", data, nil)
-// All 3 channels receive the message
+pubBus, _ := messagebus.NewBus(addr, channelID)
+sub1, _ := messagebus.NewBus(addr, channelID)
+sub2, _ := messagebus.NewBus(addr, channelID)
+
+ch1, _ := sub1.Subscribe("orders")
+ch2, _ := sub2.Subscribe("orders")
+
+pubBus.Publish(ctx, "orders", data, nil)
+// Both ch1 and ch2 receive the message
 ```
 
 ### With Headers

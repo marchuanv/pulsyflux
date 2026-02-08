@@ -18,21 +18,31 @@ func TestPubSub(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	bus, err := NewBus("127.0.0.1:9091", channelID)
+	
+	// Create two separate buses on same channel
+	bus1, err := NewBus("127.0.0.1:9091", channelID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer bus.Close()
+	defer bus1.Close()
 
-	ch, err := bus.Subscribe("test.topic")
+	bus2, err := NewBus("127.0.0.1:9091", channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bus2.Close()
+
+	// Subscribe on bus2
+	ch, err := bus2.Subscribe("test.topic")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
+	// Publish from bus1
 	ctx := context.Background()
-	err = bus.Publish(ctx, "test.topic", []byte("hello"), map[string]string{"key": "value"})
+	err = bus1.Publish(ctx, "test.topic", []byte("hello"), map[string]string{"key": "value"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,19 +73,34 @@ func TestMultipleSubscribers(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	bus, err := NewBus("127.0.0.1:9092", channelID)
+	
+	// Publisher bus
+	pubBus, err := NewBus("127.0.0.1:9092", channelID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer bus.Close()
+	defer pubBus.Close()
 
-	ch1, _ := bus.Subscribe("test.topic")
-	ch2, _ := bus.Subscribe("test.topic")
+	// Two subscriber buses
+	sub1, err := NewBus("127.0.0.1:9092", channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub1.Close()
+
+	sub2, err := NewBus("127.0.0.1:9092", channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub2.Close()
+
+	ch1, _ := sub1.Subscribe("test.topic")
+	ch2, _ := sub2.Subscribe("test.topic")
 
 	time.Sleep(50 * time.Millisecond)
 
 	ctx := context.Background()
-	bus.Publish(ctx, "test.topic", []byte("test"), nil)
+	pubBus.Publish(ctx, "test.topic", []byte("test"), nil)
 
 	count := 0
 	timeout := time.After(1 * time.Second)
@@ -101,28 +126,33 @@ func TestUnsubscribe(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	channelID := uuid.New()
-	bus, err := NewBus("127.0.0.1:9093", channelID)
+	
+	pubBus, err := NewBus("127.0.0.1:9093", channelID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer bus.Close()
+	defer pubBus.Close()
 
-	ch, _ := bus.Subscribe("test.topic")
+	subBus, err := NewBus("127.0.0.1:9093", channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subBus.Close()
+
+	ch, _ := subBus.Subscribe("test.topic")
 
 	time.Sleep(50 * time.Millisecond)
 
-	bus.Unsubscribe("test.topic")
+	subBus.Unsubscribe("test.topic")
 
 	ctx := context.Background()
-	bus.Publish(ctx, "test.topic", []byte("test"), nil)
+	pubBus.Publish(ctx, "test.topic", []byte("test"), nil)
 
 	select {
 	case _, ok := <-ch:
 		if ok {
 			t.Fatal("Should not receive message after unsubscribe")
 		}
-		// Channel closed, expected
 	case <-time.After(500 * time.Millisecond):
-		// No message, also acceptable
 	}
 }
