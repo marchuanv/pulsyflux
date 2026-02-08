@@ -168,7 +168,13 @@ func (s *Server) handle(conn net.Conn) {
 			}
 
 		default:
-			ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "invalid frame type"))
+			// Route all other frame types directly to peer
+			peerCtx, ok := s.peers.get(f.PeerClientID)
+			if !ok {
+				ctx.enqueue(newErrorFrame(f.RequestID, f.ClientID, "peer not found"))
+				continue
+			}
+			peerCtx.enqueue(f)
 		}
 	}
 }
