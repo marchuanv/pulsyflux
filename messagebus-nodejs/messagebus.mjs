@@ -5,7 +5,7 @@ const stringPtr = ref.refType('string');
 const intPtr = ref.refType('int');
 const longlongPtr = ref.refType('longlong');
 
-const lib = ffi.Library('./build/messagebus_lib', {
+const lib = ffi.Library('./messagebus_lib', {
   'BusNew': ['int', ['string', 'string']],
   'BusPublish': ['int', ['int', 'string', 'string', 'int', 'string', 'int']],
   'BusSubscribe': ['int', ['int', 'string']],
@@ -131,8 +131,12 @@ export class Subscription {
     };
 
     const headersStr = headers.deref();
-    if (headersStr) {
-      msg.headers = JSON.parse(headersStr);
+    if (headersStr && headersStr.length > 0) {
+      try {
+        msg.headers = JSON.parse(headersStr);
+      } catch (e) {
+        msg.headers = null;
+      }
     }
 
     return msg;

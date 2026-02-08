@@ -6,14 +6,22 @@
   "type": "module",
   "scripts": {
     "build": "build.bat",
-    "test": "node example.mjs"
+    "test": "jasmine"
   },
   "dependencies": {
     "ffi-napi": "^4.0.3",
     "ref-napi": "^3.0.3",
     "uuid": "^9.0.0"
   },
-  "keywords": ["messagebus", "pubsub", "messaging", "events"],
+  "devDependencies": {
+    "jasmine": "^5.13.0"
+  },
+  "keywords": [
+    "messagebus",
+    "pubsub",
+    "messaging",
+    "events"
+  ],
   "author": "",
   "license": "MIT"
 }
