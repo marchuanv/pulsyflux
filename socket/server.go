@@ -138,9 +138,10 @@ func (s *Server) handle(conn net.Conn) {
 					cancel:       cancel,
 				}
 
+				currentClientID = f.ClientID
+
 				if f.Flags == flagRegistration {
 					log.Printf("[Server] Registering client %s for channel %s", f.ClientID, uuid.UUID(f.Payload[:16]))
-					currentClientID = f.ClientID
 					s.peers.set(currentClientID, ctx) // Register client connection
 				} else {
 					streamReqs[f.RequestID] = req
