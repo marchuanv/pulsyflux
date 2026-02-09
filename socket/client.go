@@ -55,11 +55,6 @@ func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, erro
 
 	go func() {
 		defer c.ctx.wg.Done()
-		if c.role == roleConsumer {
-			time.Sleep(50 * time.Millisecond)
-		} else {
-			time.Sleep(150 * time.Millisecond)
-		}
 		handshakeReqID := uuid.New()
 		timeoutMs := uint64(defaultTimeout.Milliseconds())
 		c.sendStartFrame(handshakeReqID, timeoutMs, 0)
@@ -80,13 +75,12 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int)
 		startF.RequestID = reqID
 		startF.ClientID = c.clientID
 		startF.PeerClientID = c.peerID
+		startF.ChannelID = c.channelID
+		startF.Role = c.role
 		startF.ClientTimeoutMs = timeoutMs
 		if c.peerID == uuid.Nil {
 			startF.Flags = flagRegistration
 		}
-		startF.Payload = make([]byte, 17)
-		copy(startF.Payload[:16], c.channelID[:])
-		startF.Payload[16] = byte(c.role)
 		log.Printf("[Client %s] Sending START frame [seq=%d] for request %s (retry=%d)", c.clientID, frameSeq, reqID, retry)
 		select {
 		case c.ctx.writes <- startF:
@@ -111,18 +105,13 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int)
 					}
 					if f.Type == startFrame {
 						if c.peerID == uuid.Nil {
-							if len(f.Payload) >= 17 {
-								var bufChannelID uuid.UUID
-								copy(bufChannelID[:], f.Payload[:16])
-								peerRole := clientRole(f.Payload[16])
-								if bufChannelID == c.channelID && peerRole != c.role {
-									c.peerID = f.ClientID
-									log.Printf("[Client %s] Set peer ID to %s", c.clientID, c.peerID)
-								} else if peerRole == c.role {
-									log.Printf("[Client %s] ERROR: Role mismatch, peer has same role", c.clientID)
-									putFrame(f)
-									return errPeerError
-								}
+							if f.ChannelID == c.channelID && f.Role != c.role {
+								c.peerID = f.ClientID
+								log.Printf("[Client %s] Set peer ID to %s", c.clientID, c.peerID)
+							} else if f.Role == c.role {
+								log.Printf("[Client %s] ERROR: Role mismatch, peer has same role", c.clientID)
+								putFrame(f)
+								return errPeerError
 							}
 						} else if c.peerID != f.ClientID {
 							log.Printf("[Client %s] ERROR: Peer ID mismatch, expected %s, got %s", c.clientID, c.peerID, f.ClientID)
@@ -151,6 +140,8 @@ func (c *Client) sendChunkFrame(reqID uuid.UUID, payload []byte, frameSeq int) (
 	chunk.RequestID = reqID
 	chunk.ClientID = c.clientID
 	chunk.PeerClientID = c.peerID
+	chunk.ChannelID = c.channelID
+	chunk.Role = c.role
 	chunk.Payload = make([]byte, len(payload))
 	copy(chunk.Payload, payload)
 	log.Printf("[Client %s] Sending CHUNK frame [seq=%d] for request %s (size=%d)", c.clientID, frameSeq, reqID, len(payload))
@@ -191,6 +182,8 @@ func (c *Client) sendEndFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int) (
 	endF.RequestID = reqID
 	endF.ClientID = c.clientID
 	endF.PeerClientID = c.peerID
+	endF.ChannelID = c.channelID
+	endF.Role = c.role
 	endF.ClientTimeoutMs = timeoutMs
 	log.Printf("[Client %s] Sending END frame [seq=%d] for request %s", c.clientID, frameSeq, reqID)
 	select {

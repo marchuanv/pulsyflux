@@ -129,29 +129,23 @@ func (s *Server) handle(conn net.Conn) {
 				reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
 				currentClientID = f.ClientID
 				if f.Flags == flagRegistration {
-					if len(f.Payload) >= 17 {
-						channelID := uuid.UUID(f.Payload[:16])
-						role := clientRole(f.Payload[16])
-						log.Printf("[Server] Registering client %s for channel %s with role %d", f.ClientID, channelID, role)
-						s.peers.set(currentClientID, ctx, role, channelID)
-						pairClientID := s.peers.pair(currentClientID, role, channelID)
-						if pairClientID == uuid.Nil {
-							log.Printf("[Server] No peer available for client %s", currentClientID)
-							ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "no peer client available", flagPeerNotAvailable))
-						} else {
-							log.Printf("[Server] Found peer %s for client %s", pairClientID, currentClientID)
-							registrationFrame := getFrame()
-							registrationFrame.Version = version1
-							registrationFrame.Type = startFrame
-							registrationFrame.RequestID = f.RequestID
-							registrationFrame.ClientID = pairClientID
-							registrationFrame.PeerClientID = f.ClientID
-							registrationFrame.Payload = f.Payload
-							ctx.enqueue(registrationFrame)
-						}
+					log.Printf("[Server] Registering client %s for channel %s with role %d", f.ClientID, f.ChannelID, f.Role)
+					s.peers.set(currentClientID, ctx, f.Role, f.ChannelID)
+					peer := s.peers.pair(currentClientID, f.Role, f.ChannelID)
+					if peer == nil {
+						log.Printf("[Server] No peer available for client %s", currentClientID)
+						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "no peer client available", flagPeerNotAvailable))
 					} else {
-						log.Printf("[Server] ERROR: Invalid START frame payload from client %s", f.ClientID)
-						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "invalid START frame payload", 0))
+						log.Printf("[Server] Found peer %s for client %s", peer.clientID, currentClientID)
+						pairFrame := getFrame()
+						pairFrame.Version = version1
+						pairFrame.Type = startFrame
+						pairFrame.RequestID = f.RequestID
+						pairFrame.ClientID = peer.clientID
+						pairFrame.PeerClientID = f.ClientID
+						pairFrame.ChannelID = peer.channelID
+						pairFrame.Role = peer.role
+						ctx.enqueue(pairFrame)
 					}
 					cancel()
 				} else {

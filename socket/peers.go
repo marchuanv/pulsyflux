@@ -54,13 +54,13 @@ func (r *peers) delete(clientID uuid.UUID) {
 	}
 }
 
-func (r *peers) pair(clientID uuid.UUID, role clientRole, channelId uuid.UUID) uuid.UUID {
+func (r *peers) pair(clientID uuid.UUID, role clientRole, channelId uuid.UUID) *peer {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for otherID, peer := range r.clients {
+	for _, peer := range r.clients {
 		if peer.channelID == channelId && peer.role != role && peer.clientID != clientID {
-			return otherID
+			return peer
 		}
 	}
-	return uuid.Nil
+	return nil
 }
