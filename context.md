@@ -96,7 +96,7 @@ All communication follows: **send start → send chunks → send end → receive
 ### Client Unification
 - Removed separate Provider and Consumer types
 - Created unified Client with role parameter
-- Handshake mechanism validates channelID and role compatibility
+- **Handshake removed from socket layer** - needs to be implemented at application layer or server needs channel-based routing
 
 ### Frame Exchange Simplification
 - Removed premature frame consumption (waitForStartFrame, waitForChunks)
@@ -107,6 +107,15 @@ All communication follows: **send start → send chunks → send end → receive
 - startFrame captures peerClientID
 - chunkFrames accumulate into buffer
 - endFrame triggers final assembly and return
+
+### Known Issues
+- **Handshake requires server support**: Handshake uses flagRegistration but server needs to route these frames by channelID instead of PeerClientID
+- **Workaround**: Application layer must handle peer discovery:
+  1. Both clients connect to server
+  2. Use out-of-band mechanism to exchange clientIDs
+  3. Manually set peerID on each client
+  4. Then use normal Send/Receive
+- **Alternative**: Implement server-side channel registry to route registration frames (requires server changes)
 
 ## Critical Notes
 
@@ -129,3 +138,22 @@ All communication follows: **send start → send chunks → send end → receive
 - Implement higher-level message bus on top of socket layer
 - Add comprehensive error handling and recovery
 - Performance testing and optimization
+
+
+## Current Implementation Status
+
+### Handshake Implementation
+- Handshake has been removed from the socket layer as it requires server-side channel registry
+- Clients automatically send a discovery startFrame on connection
+- Clients capture peerID from the first startFrame they receive
+- **LIMITATION**: Server routes frames by PeerClientID, so clients cannot discover each other without knowing clientIDs in advance
+
+### Test Status
+- Tests are currently failing because they expect automatic peer discovery
+- This functionality requires server changes to support channel-based routing or broadcast
+- **SOLUTION NEEDED**: Either modify server to support channel registry, or update tests to manually exchange clientIDs
+
+### Recommended Fix
+Option 1: Add channel registry to server (requires server.go changes - not allowed)
+Option 2: Add SetPeerID() method and update tests to manually set peer IDs after both clients connect
+Option 3: Use out-of-band mechanism (e.g., external service) for peer discovery

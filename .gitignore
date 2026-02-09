@@ -26,7 +26,6 @@ go.work
 go.work.sum
 
 # IDE
-.vscode/
 .idea/
 *.swp
 *.swo

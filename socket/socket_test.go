@@ -29,26 +29,26 @@ func TestClientBidirectional(t *testing.T) {
 	}
 	defer provider.Close()
 
-	// Handle requests in background
-	go func() {
-		for {
-			_, r, ok := provider.Receive()
-			if !ok {
-				break
-			}
-			data, _ := io.ReadAll(r)
-			provider.Send(bytes.NewReader([]byte("echo: "+string(data))), 5*time.Second)
-		}
-	}()
-
-	time.Sleep(100 * time.Millisecond)
-
 	// Create consumer client
 	consumer, err := NewClient("127.0.0.1:9090", channelID, roleConsumer)
 	if err != nil {
 		t.Fatalf("Failed to create consumer: %v", err)
 	}
 	defer consumer.Close()
+
+	// Handle requests in background
+	go func() {
+		for {
+			reqID, r, ok := provider.Receive()
+			if !ok {
+				break
+			}
+			data, _ := io.ReadAll(r)
+			provider.Respond(reqID, bytes.NewReader([]byte("echo: "+string(data))), 5*time.Second)
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
 
 	// Send request
 	response, err := consumer.Send(strings.NewReader("hello"), 20*time.Second)
@@ -79,11 +79,11 @@ func TestMultipleConsumersOneProvider(t *testing.T) {
 
 	go func() {
 		for {
-			_, _, ok := provider.Receive()
+			reqID, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Send(strings.NewReader("processed"), 5*time.Second)
+			provider.Respond(reqID, strings.NewReader("processed"), 5*time.Second)
 		}
 	}()
 
@@ -146,11 +146,11 @@ func TestLargePayload(t *testing.T) {
 
 	go func() {
 		for {
-			_, _, ok := provider.Receive()
+			reqID, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Send(strings.NewReader("received"), 5*time.Second)
+			provider.Respond(reqID, strings.NewReader("received"), 5*time.Second)
 		}
 	}()
 
@@ -193,11 +193,11 @@ func TestConcurrentChannels(t *testing.T) {
 
 			go func() {
 				for {
-					_, _, ok := provider.Receive()
+					reqID, _, ok := provider.Receive()
 					if !ok {
 						break
 					}
-					provider.Send(strings.NewReader("ok"), 5*time.Second)
+					provider.Respond(reqID, strings.NewReader("ok"), 5*time.Second)
 				}
 			}()
 

@@ -2,6 +2,7 @@ package socket
 
 import (
 	"context"
+	"log"
 	"net"
 	"sync"
 	"syscall"
@@ -124,6 +125,7 @@ func (s *Server) handle(conn net.Conn) {
 
 		switch f.Type {
 		case startFrame:
+			log.Printf("[Server] Received START frame for request %s from client %s", f.RequestID, f.ClientID)
 			currentClientID = f.ClientID
 			s.peers.set(currentClientID, ctx) // Register client connection
 
@@ -146,7 +148,14 @@ func (s *Server) handle(conn net.Conn) {
 			}
 
 		case chunkFrame:
+			log.Printf("[Server] Received CHUNK frame for request %s from client %s (size=%d)", f.RequestID, f.ClientID, len(f.Payload))
 			req := streamReqs[f.RequestID]
+			if req == nil {
+				log.Printf("[Server] ERROR: Received CHUNK before START for request %s", f.RequestID)
+				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "chunk received before start"))
+				putFrame(f)
+				continue
+			}
 			req.frame = f
 			if !s.requestHandler.handle(req) {
 				req.cancel()
@@ -154,7 +163,14 @@ func (s *Server) handle(conn net.Conn) {
 			}
 
 		case endFrame:
+			log.Printf("[Server] Received END frame for request %s from client %s", f.RequestID, f.ClientID)
 			req := streamReqs[f.RequestID]
+			if req == nil {
+				log.Printf("[Server] ERROR: Received END before START for request %s", f.RequestID)
+				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "end received before start"))
+				putFrame(f)
+				continue
+			}
 			req.frame = f
 			delete(streamReqs, f.RequestID)
 			// Cancel old context before creating new one

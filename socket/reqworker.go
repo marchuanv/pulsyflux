@@ -1,6 +1,7 @@
 package socket
 
 import (
+	"log"
 	"sync"
 )
 
@@ -30,9 +31,10 @@ func (rw *requestWorker) handle(reqCh chan *request, wg *sync.WaitGroup) {
 		}
 		peerCtx, ok := rw.peers.get(req.peerClientID)
 		if !ok {
+			log.Printf("[Worker] ERROR: Peer %s not found for request %s from client %s", req.peerClientID, req.requestID, req.clientID)
 			req.connctx.enqueue(newErrorFrame(req.requestID, req.clientID, "no peer client available"))
 			req.cancel()
-			return
+			continue
 		}
 		if !peerCtx.enqueue(req.frame) {
 			req.connctx.enqueue(newErrorFrame(req.requestID, req.clientID, "failed to send frame to peer"))

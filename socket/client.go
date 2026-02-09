@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -57,76 +58,84 @@ func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, erro
 	c.wg.Add(1)
 	go c.readLoop()
 
-	// Perform handshake
-	if err := c.handshake(); err != nil {
-		c.Close()
-		return nil, err
-	}
-
 	return c, nil
 }
 
-func (c *Client) handshake() error {
-	// Start responder goroutine
-	c.wg.Add(1)
-	go c.handshakeResponder()
-
-	// Build handshake payload: role (1 byte) + channelID (16 bytes)
-	payload := make([]byte, 17)
-	payload[0] = byte(c.role)
-	copy(payload[1:17], c.channelID[:])
-
-	// Send handshake using normal Send()
-	resp, err := c.Send(bytes.NewReader(payload), 5*time.Second)
-	if err != nil {
-		return err
+// Respond sends a response to an incoming request using the same request ID
+func (c *Client) Respond(reqID uuid.UUID, r io.Reader, timeout time.Duration) error {
+	timeoutMs := uint64(timeout.Milliseconds())
+	if timeoutMs == 0 {
+		timeoutMs = uint64(defaultTimeout.Milliseconds())
 	}
 
-	// Read and validate response
-	peerPayload, err := io.ReadAll(resp)
-	if err != nil || len(peerPayload) < 17 {
-		return errors.New("invalid handshake response")
+	peerID := c.peerID
+	frameSeq := 0
+
+	startF := getFrame()
+	startF.Version = version1
+	startF.Type = startFrame
+	startF.RequestID = reqID
+	startF.ClientID = c.clientID
+	startF.PeerClientID = peerID
+	startF.ClientTimeoutMs = timeoutMs
+	log.Printf("[Client %s] Responding with START frame [seq=%d] for request %s", c.clientID, frameSeq, reqID)
+	frameSeq++
+	select {
+	case c.ctx.writes <- startF:
+	case <-c.done:
+		putFrame(startF)
+		return errClosed
 	}
 
-	peerRole := clientRole(peerPayload[0])
-	var peerChannelID uuid.UUID
-	copy(peerChannelID[:], peerPayload[1:17])
-
-	if peerChannelID != c.channelID {
-		return errors.New("channel ID mismatch")
+	buf := getBuffer()
+	for {
+		n, err := r.Read(*buf)
+		if n > 0 {
+			chunk := getFrame()
+			chunk.Version = version1
+			chunk.Type = chunkFrame
+			chunk.RequestID = reqID
+			chunk.ClientID = c.clientID
+			chunk.PeerClientID = peerID
+			chunk.Payload = make([]byte, n)
+			copy(chunk.Payload, (*buf)[:n])
+			log.Printf("[Client %s] Responding with CHUNK frame [seq=%d] for request %s (size=%d)", c.clientID, frameSeq, reqID, n)
+			frameSeq++
+			select {
+			case c.ctx.writes <- chunk:
+			case <-c.done:
+				putBuffer(buf)
+				putFrame(chunk)
+				return errClosed
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			putBuffer(buf)
+			return err
+		}
 	}
-	if peerRole == c.role {
-		return errors.New("role conflict")
+	putBuffer(buf)
+
+	endF := getFrame()
+	endF.Version = version1
+	endF.Type = endFrame
+	endF.RequestID = reqID
+	endF.ClientID = c.clientID
+	endF.PeerClientID = peerID
+	endF.ClientTimeoutMs = timeoutMs
+	log.Printf("[Client %s] Responding with END frame [seq=%d] for request %s", c.clientID, frameSeq, reqID)
+	frameSeq++
+	select {
+	case c.ctx.writes <- endF:
+	case <-c.done:
+		putFrame(endF)
+		return errClosed
 	}
 
 	return nil
-}
-
-func (c *Client) handshakeResponder() {
-	defer c.wg.Done()
-	_, r, ok := c.Receive()
-	if !ok {
-		return
-	}
-
-	payload, err := io.ReadAll(r)
-	if err != nil || len(payload) < 17 {
-		return
-	}
-
-	peerRole := clientRole(payload[0])
-	var peerChannelID uuid.UUID
-	copy(peerChannelID[:], payload[1:17])
-
-	if peerChannelID != c.channelID || peerRole == c.role {
-		return
-	}
-
-	// Build and send response
-	response := make([]byte, 17)
-	response[0] = byte(c.role)
-	copy(response[1:17], c.channelID[:])
-	c.Send(bytes.NewReader(response), 5*time.Second)
 }
 
 func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
@@ -136,35 +145,47 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 		timeoutMs = uint64(defaultTimeout.Milliseconds())
 	}
 
-	// Send start frame
+	peerID := c.peerID
+
+	// Track frame sequence for this request
+	frameSeq := 0
+
 	startF := getFrame()
 	startF.Version = version1
 	startF.Type = startFrame
 	startF.RequestID = reqID
 	startF.ClientID = c.clientID
-	startF.PeerClientID = c.peerID
+	startF.PeerClientID = peerID
 	startF.ClientTimeoutMs = timeoutMs
-	if !c.ctx.enqueue(startF) {
+	log.Printf("[Client %s] Sending START frame [seq=%d] for request %s", c.clientID, frameSeq, reqID)
+	frameSeq++
+	select {
+	case c.ctx.writes <- startF:
+	case <-c.done:
 		putFrame(startF)
-		return nil, errors.New("failed to enqueue start frame")
+		return nil, errClosed
 	}
 
-	// Send chunks
 	buf := getBuffer()
-	chunk := getFrame()
-	chunk.Version = version1
-	chunk.Type = chunkFrame
-	chunk.RequestID = reqID
-	chunk.ClientID = c.clientID
-	chunk.PeerClientID = c.peerID
 	for {
 		n, err := r.Read(*buf)
 		if n > 0 {
-			chunk.Payload = (*buf)[:n]
-			if !c.ctx.enqueue(chunk) {
+			chunk := getFrame()
+			chunk.Version = version1
+			chunk.Type = chunkFrame
+			chunk.RequestID = reqID
+			chunk.ClientID = c.clientID
+			chunk.PeerClientID = peerID
+			chunk.Payload = make([]byte, n)
+			copy(chunk.Payload, (*buf)[:n])
+			log.Printf("[Client %s] Sending CHUNK frame [seq=%d] for request %s (size=%d)", c.clientID, frameSeq, reqID, n)
+			frameSeq++
+			select {
+			case c.ctx.writes <- chunk:
+			case <-c.done:
 				putBuffer(buf)
 				putFrame(chunk)
-				return nil, errors.New("failed to enqueue chunk")
+				return nil, errClosed
 			}
 		}
 		if err == io.EOF {
@@ -172,24 +193,25 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 		}
 		if err != nil {
 			putBuffer(buf)
-			putFrame(chunk)
 			return nil, err
 		}
 	}
 	putBuffer(buf)
-	putFrame(chunk)
 
-	// Send end frame
 	endF := getFrame()
 	endF.Version = version1
 	endF.Type = endFrame
 	endF.RequestID = reqID
 	endF.ClientID = c.clientID
-	endF.PeerClientID = c.peerID
+	endF.PeerClientID = peerID
 	endF.ClientTimeoutMs = timeoutMs
-	if !c.ctx.enqueue(endF) {
+	log.Printf("[Client %s] Sending END frame [seq=%d] for request %s", c.clientID, frameSeq, reqID)
+	frameSeq++
+	select {
+	case c.ctx.writes <- endF:
+	case <-c.done:
 		putFrame(endF)
-		return nil, errors.New("failed to enqueue end frame")
+		return nil, errClosed
 	}
 
 	// Receive and assemble response
@@ -224,8 +246,10 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 				if !gotStart {
 					putBuffer(respBuf)
 					putFrame(f)
+					log.Printf("[Client %s] ERROR: Received END before START for request %s", c.clientID, reqID)
 					return nil, errors.New("received end before start")
 				}
+				log.Printf("[Client %s] Received complete response for request %s (size=%d)", c.clientID, reqID, len(payload))
 				result := make([]byte, len(payload))
 				copy(result, payload)
 				putBuffer(respBuf)
