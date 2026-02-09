@@ -30,6 +30,7 @@ const (
 	defaultFrameReadTimeout         = 2 * time.Minute
 	defaultFrameWriteTimeout        = 5 * time.Second
 	flagRegistration         uint16 = 0x01
+	flagPeerNotAvailable     uint16 = 0x02
 	defaultClientTimeoutMs   uint64 = 30000 // 30 seconds default timeout
 )
 
@@ -53,11 +54,12 @@ type frame struct {
 	Payload         []byte
 }
 
-// newErrorFrame constructs an error frame with the given message
-func newErrorFrame(reqID uuid.UUID, clientID uuid.UUID, msg string) *frame {
+// newErrorFrame constructs an error frame with the given message and flags
+func newErrorFrame(reqID uuid.UUID, clientID uuid.UUID, msg string, flags uint16) *frame {
 	f := getFrame()
 	f.Version = version1
 	f.Type = errorFrame
+	f.Flags = flags
 	f.RequestID = reqID
 	f.ClientID = clientID
 	f.PeerClientID = uuid.Nil

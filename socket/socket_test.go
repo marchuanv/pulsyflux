@@ -39,12 +39,12 @@ func TestClientBidirectional(t *testing.T) {
 	// Handle requests in background
 	go func() {
 		for {
-			reqID, r, ok := provider.Receive()
+			_, r, ok := provider.Receive()
 			if !ok {
 				break
 			}
 			data, _ := io.ReadAll(r)
-			provider.Respond(reqID, bytes.NewReader([]byte("echo: "+string(data))), 5*time.Second)
+			provider.Send(bytes.NewReader([]byte("echo: "+string(data))), 5*time.Second)
 		}
 	}()
 
@@ -79,11 +79,11 @@ func TestMultipleConsumersOneProvider(t *testing.T) {
 
 	go func() {
 		for {
-			reqID, _, ok := provider.Receive()
+			_, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, strings.NewReader("processed"), 5*time.Second)
+			provider.Send(strings.NewReader("processed"), 5*time.Second)
 		}
 	}()
 
@@ -146,11 +146,11 @@ func TestLargePayload(t *testing.T) {
 
 	go func() {
 		for {
-			reqID, _, ok := provider.Receive()
+			_, _, ok := provider.Receive()
 			if !ok {
 				break
 			}
-			provider.Respond(reqID, strings.NewReader("received"), 5*time.Second)
+			provider.Send(strings.NewReader("received"), 5*time.Second)
 		}
 	}()
 
@@ -193,11 +193,11 @@ func TestConcurrentChannels(t *testing.T) {
 
 			go func() {
 				for {
-					reqID, _, ok := provider.Receive()
+					_, _, ok := provider.Receive()
 					if !ok {
 						break
 					}
-					provider.Respond(reqID, strings.NewReader("ok"), 5*time.Second)
+					provider.Send(strings.NewReader("ok"), 5*time.Second)
 				}
 			}()
 

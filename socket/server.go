@@ -143,7 +143,7 @@ func (s *Server) handle(conn net.Conn) {
 			streamReqs[f.RequestID] = req
 			if !s.requestHandler.handle(req) {
 				req.cancel()
-				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded"))
+				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
 			}
 
 			case chunkFrame:
@@ -151,14 +151,14 @@ func (s *Server) handle(conn net.Conn) {
 			req := streamReqs[f.RequestID]
 			if req == nil {
 				log.Printf("[Server] ERROR: Received CHUNK before START for request %s", f.RequestID)
-				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "chunk received before start"))
+				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "chunk received before start", 0))
 				putFrame(f)
 				continue
 			}
 			req.frame = f
 			if !s.requestHandler.handle(req) {
 				req.cancel()
-				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded"))
+				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
 			}
 
 			case endFrame:
@@ -166,7 +166,7 @@ func (s *Server) handle(conn net.Conn) {
 			req := streamReqs[f.RequestID]
 			if req == nil {
 				log.Printf("[Server] ERROR: Received END before START for request %s", f.RequestID)
-				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "end received before start"))
+				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "end received before start", 0))
 				putFrame(f)
 				continue
 			}
@@ -179,14 +179,14 @@ func (s *Server) handle(conn net.Conn) {
 			req.ctx = reqCtx
 			if !s.requestHandler.handle(req) {
 				cancel()
-				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded"))
+				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
 			}
 
 			default:
 				// Route all other frame types directly to peer
 				peerCtx, ok := s.peers.get(f.PeerClientID)
 				if !ok {
-					ctx.enqueue(newErrorFrame(f.RequestID, f.ClientID, "peer not found"))
+					ctx.enqueue(newErrorFrame(f.RequestID, f.ClientID, "peer not found", flagPeerNotAvailable))
 					continue
 				}
 				peerCtx.enqueue(f)
