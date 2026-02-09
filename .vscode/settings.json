@@ -1,5 +1,7 @@
 {
     "go.delveConfig": {
         "debugAdapter": "legacy",
-    }
+    },
+    "go.buildFlags": [],
+    "go.testFlags": []
 }
