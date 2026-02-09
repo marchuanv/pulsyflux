@@ -54,6 +54,12 @@ func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, erro
 	go c.ctx.startReader()
 
 	go func() {
+		defer c.ctx.wg.Done()
+		if c.role == roleConsumer {
+			time.Sleep(50 * time.Millisecond)
+		} else {
+			time.Sleep(150 * time.Millisecond)
+		}
 		handshakeReqID := uuid.New()
 		timeoutMs := uint64(defaultTimeout.Milliseconds())
 		c.sendStartFrame(handshakeReqID, timeoutMs, 0)
