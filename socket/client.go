@@ -51,7 +51,7 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 	c.ctx.wg.Add(3)
 	go c.ctx.startWriter()
 	go c.ctx.startReader()
-	
+
 	go func() {
 		defer c.ctx.wg.Done()
 		select {
@@ -64,76 +64,49 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 }
 
 func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int, flags uint16) error {
-	for retry := 0; retry < 3; retry++ {
-		if retry > 0 {
-			duration := time.Duration(retry) * time.Second
-			time.Sleep(duration)
-		}
 
-		startF := getFrame()
-		startF.Version = version1
-		startF.Type = startFrame
-		startF.RequestID = reqID
-		startF.ClientID = c.clientID
-		startF.PeerClientID = c.peerID
-		startF.ChannelID = c.channelID
-		startF.ClientTimeoutMs = timeoutMs
-		startF.Flags = flags
-		log.Printf("[Client %s] Sending START frame [seq=%d] for request %s (retry=%d)", c.clientID, frameSeq, reqID, retry)
+	startF := getFrame()
+	startF.Version = version1
+	startF.Type = startFrame
+	startF.RequestID = reqID
+	startF.ClientID = c.clientID
+	startF.PeerClientID = c.peerID
+	startF.ChannelID = c.channelID
+	startF.ClientTimeoutMs = timeoutMs
+	startF.Flags = flags
+	log.Printf("[Client %s] Sending START frame [seq=%d] for request %s", c.clientID, frameSeq, reqID)
+	select {
+	case c.ctx.writes <- startF:
+	case <-c.done:
+		putFrame(startF)
+		return errClosed
+	}
+
+	for {
 		select {
-		case c.ctx.writes <- startF:
+		case f := <-c.ctx.reads:
+			switch f.Type {
+			case errorFrame:
+				log.Printf("[Client %s] ERROR: Received error frame during start frame response", c.clientID)
+				putFrame(f)
+				return errPeerError
+			case startFrame:
+				if f.RequestID == reqID {
+					log.Printf("[Client %s] Received start frame response for request %s", c.clientID, reqID)
+					if c.peerID != f.ClientID {
+						log.Printf("[Client %s] ERROR: Peer ID mismatch, expected %s, got %s", c.clientID, c.peerID, f.ClientID)
+						putFrame(f)
+						return errPeerError
+					}
+					putFrame(f)
+					return nil
+				}
+				putFrame(f)
+			}
 		case <-c.done:
-			putFrame(startF)
 			return errClosed
 		}
-
-		for {
-			select {
-			case f := <-c.ctx.reads:
-				switch f.Type {
-				case errorFrame:
-					log.Printf("[Client %s] ERROR: Received error frame during start frame response", c.clientID)
-					if f.Flags&flagPeerNotAvailable != 0 && retry < 2 {
-						log.Printf("[Client %s] No peers available, retrying...", c.clientID)
-						putFrame(f)
-						goto retryLoop
-					}
-					putFrame(f)
-					return errPeerError
-				case startFrame:
-					if f.Flags == flagHandshakeStarted && c.peerID == uuid.Nil {
-						log.Printf("[Client %s] Received start frame response for handshake started from peer client %s", c.clientID, f.ClientID)
-						if f.ChannelID == c.channelID && f.ClientID != c.clientID {
-							c.peerID = f.ClientID
-							log.Printf("[Client %s] Set peer ID to %s", c.clientID, c.peerID)
-							putFrame(f)
-							return nil
-						}
-						putFrame(f)
-						return nil
-					} else if f.Flags == flagHandshakeCompleted && f.RequestID == reqID {
-						log.Printf("[Client %s] Received start frame response for handshake completed from peer client %s", c.clientID, f.ClientID)
-						putFrame(f)
-						return nil
-					} else if f.RequestID == reqID {
-						log.Printf("[Client %s] Received start frame response for request %s", c.clientID, reqID)
-						if c.peerID != f.ClientID {
-							log.Printf("[Client %s] ERROR: Peer ID mismatch, expected %s, got %s", c.clientID, c.peerID, f.ClientID)
-							putFrame(f)
-							return errPeerError
-						}
-						putFrame(f)
-						return nil
-					}
-					putFrame(f)
-				}
-			case <-c.done:
-				return errClosed
-			}
-		}
-	retryLoop:
 	}
-	return errPeerError
 }
 
 func (c *Client) sendChunkFrame(reqID uuid.UUID, payload []byte, frameSeq int) (io.Reader, error) {
@@ -279,7 +252,7 @@ func (c *Client) respondStartFrame(timeoutMs uint64) (uuid.UUID, error) {
 		reqID = f.RequestID
 		flags := f.Flags
 		putFrame(f)
-		
+
 		startF := getFrame()
 		startF.Version = version1
 		startF.Type = startFrame

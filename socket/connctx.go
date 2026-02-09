@@ -18,7 +18,7 @@ const (
 	startFrame               byte   = 0x04
 	chunkFrame               byte   = 0x05
 	endFrame                 byte   = 0x06
-	frameHeaderSize                 = 73
+	frameHeaderSize                 = 80
 	maxFrameSize                    = 1024 * 1024
 	defaultFrameReadTimeout         = 2 * time.Minute
 	defaultFrameWriteTimeout        = 5 * time.Second
@@ -161,7 +161,7 @@ func (ctx *connctx) readFrame() (*frame, error) {
 		return nil, errors.New("unsupported protocol version")
 	}
 
-	payloadLen := binary.BigEndian.Uint32(header[69:73])
+	payloadLen := binary.BigEndian.Uint32(header[76:80])
 	if payloadLen > maxFrameSize {
 		return nil, errors.New("frame payload too large")
 	}
@@ -174,7 +174,7 @@ func (ctx *connctx) readFrame() (*frame, error) {
 	copy(f.ClientID[:], header[20:36])
 	copy(f.PeerClientID[:], header[36:52])
 	copy(f.ChannelID[:], header[52:68])
-	f.ClientTimeoutMs = binary.BigEndian.Uint64(header[60:68])
+	f.ClientTimeoutMs = binary.BigEndian.Uint64(header[68:76])
 
 	if payloadLen > 0 {
 		f.Payload = make([]byte, payloadLen)
@@ -199,8 +199,8 @@ func (ctx *connctx) writeFrame(f *frame) error {
 	copy(header[20:36], f.ClientID[:])
 	copy(header[36:52], f.PeerClientID[:])
 	copy(header[52:68], f.ChannelID[:])
-	binary.BigEndian.PutUint64(header[60:68], f.ClientTimeoutMs)
-	binary.BigEndian.PutUint32(header[69:73], uint32(len(f.Payload)))
+	binary.BigEndian.PutUint64(header[68:76], f.ClientTimeoutMs)
+	binary.BigEndian.PutUint32(header[76:80], uint32(len(f.Payload)))
 	if len(f.Payload) > 0 {
 		if len(f.Payload) <= 8192 {
 			buf := getWriteBuffer()

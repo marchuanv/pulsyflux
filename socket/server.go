@@ -139,7 +139,8 @@ func (s *Server) handle(conn net.Conn) {
 				}
 
 				currentClientID = f.ClientID
-				if f.Flags == flagHandshakeStarted {
+				switch f.Flags {
+				case flagHandshakeStarted:
 					log.Printf("[Server] Handshake started: registering client %s for channel %s", f.ClientID, f.ChannelID)
 					s.peers.set(currentClientID, ctx, f.ChannelID)
 					peer := s.peers.pair(currentClientID, f.ChannelID)
@@ -156,23 +157,7 @@ func (s *Server) handle(conn net.Conn) {
 							ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
 						}
 					}
-				} else if f.Flags == flagHandshakeCompleted {
-					log.Printf("[Server] Handshake completed: request ID mapping service ready for client %s", currentClientID)
-					// Get the peer to build response from peer's context
-					peer, ok := s.peers.get(currentClientID)
-					if ok {
-						responseFrame := getFrame()
-						responseFrame.Version = version1
-						responseFrame.Type = startFrame
-						responseFrame.Flags = flagHandshakeCompleted
-						responseFrame.RequestID = f.RequestID
-						responseFrame.ClientID = peer.clientID
-						responseFrame.PeerClientID = f.PeerClientID
-						responseFrame.ChannelID = peer.channelID
-						responseFrame.ClientTimeoutMs = f.ClientTimeoutMs
-						ctx.enqueue(responseFrame)
-					}
-				} else {
+				default:
 					currentPeer, ok := s.peers.get(currentClientID)
 					if !ok || currentPeer.peerID == uuid.Nil {
 						log.Printf("[Server] No peer established for client %s", currentClientID)
