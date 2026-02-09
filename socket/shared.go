@@ -9,12 +9,13 @@ import (
 )
 
 var (
-	errRequestIDMismatch = errors.New("response ID mismatch")
-	defaultTimeout       = 5 * time.Second
-	errTimeout            = errors.New("timeout")
-	errPeerError          = errors.New("peer error")
-	errClosed             = errors.New("client closed")
-	errHandshakeFailed    = errors.New("handshake failed")
+	errRequestIDMismatch        = errors.New("response ID mismatch")
+	defaultTimeout              = 5 * time.Second
+	errTimeout                  = errors.New("timeout")
+	errPeerError                = errors.New("peer error")
+	errClosed                   = errors.New("client closed")
+	errHandshakeStartedFailed   = errors.New("handshake started failed")
+	errHandshakeCompletedFailed = errors.New("handshake completed failed")
 )
 
 const workerQueueTimeout = 500 * time.Millisecond

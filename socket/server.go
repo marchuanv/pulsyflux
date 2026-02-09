@@ -139,8 +139,8 @@ func (s *Server) handle(conn net.Conn) {
 				}
 
 				currentClientID = f.ClientID
-				if f.Flags == flagRegistration {
-					log.Printf("[Server] Registering client %s for channel %s with role %d", f.ClientID, f.ChannelID, f.Role)
+				if f.Flags == flagHandshakeStarted {
+					log.Printf("[Server] Handshake started: registering client %s for channel %s with role %d", f.ClientID, f.ChannelID, f.Role)
 					s.peers.set(currentClientID, ctx, f.Role, f.ChannelID)
 					peer := s.peers.pair(currentClientID, f.Role, f.ChannelID)
 					if peer == nil {
