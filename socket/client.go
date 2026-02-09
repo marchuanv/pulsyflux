@@ -49,18 +49,20 @@ func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, erro
 		},
 	}
 
-	c.ctx.wg.Add(2)
+	c.ctx.wg.Add(3)
 	go c.ctx.startWriter()
 	go c.ctx.startReader()
+
+	go func() {
+		handshakeReqID := uuid.New()
+		timeoutMs := uint64(defaultTimeout.Milliseconds())
+		c.sendStartFrame(handshakeReqID, timeoutMs, 0)
+	}()
 
 	return c, nil
 }
 
-func (c *Client) ClientID() uuid.UUID {
-	return c.clientID
-}
-
-func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int) (io.Reader, error) {
+func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int) error {
 	for retry := 0; retry < 3; retry++ {
 		if retry > 0 {
 			time.Sleep(time.Second)
@@ -78,7 +80,7 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int)
 		case c.ctx.writes <- startF:
 		case <-c.done:
 			putFrame(startF)
-			return nil, errClosed
+			return errClosed
 		}
 
 		for {
@@ -89,30 +91,40 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int)
 						if f.Flags&flagPeerNotAvailable != 0 && retry < 2 {
 							log.Printf("[Client %s] No peers available, retrying...", c.clientID)
 							putFrame(f)
-							break
+							goto retryLoop
 						}
 						log.Printf("[Client %s] ERROR: Received error frame after START: %s", c.clientID, string(f.Payload))
 						putFrame(f)
-						return nil, errPeerError
+						return errPeerError
 					}
 					if f.Type == startFrame {
 						if c.peerID == uuid.Nil {
-							c.peerID = f.ClientID
-							log.Printf("[Client %s] Set peer ID to %s", c.clientID, c.peerID)
+							if len(f.Payload) >= 16 {
+								var bufChannelID uuid.UUID
+								copy(bufChannelID[:], f.Payload[:16])
+								if bufChannelID == c.channelID {
+									c.peerID = f.ClientID
+									log.Printf("[Client %s] Set peer ID to %s", c.clientID, c.peerID)
+								}
+							}
+						} else if c.peerID != f.ClientID {
+							log.Printf("[Client %s] ERROR: Peer ID mismatch, expected %s, got %s", c.clientID, c.peerID, f.ClientID)
+							putFrame(f)
+							return errPeerError
 						}
 						log.Printf("[Client %s] Received START frame response for request %s", c.clientID, reqID)
-						r := bytes.NewReader(f.Payload)
 						putFrame(f)
-						return r, nil
+						return nil
 					}
 				}
 				putFrame(f)
 			case <-c.done:
-				return nil, errClosed
+				return errClosed
 			}
 		}
+	retryLoop:
 	}
-	return nil, errPeerError
+	return errPeerError
 }
 
 func (c *Client) sendChunkFrame(reqID uuid.UUID, payload []byte, frameSeq int) (io.Reader, error) {
@@ -203,8 +215,7 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 
 	frameSeq := 0
 
-	startResp, err := c.sendStartFrame(reqID, timeoutMs, frameSeq)
-	if err != nil {
+	if err := c.sendStartFrame(reqID, timeoutMs, frameSeq); err != nil {
 		return nil, err
 	}
 	frameSeq++
