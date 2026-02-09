@@ -116,7 +116,7 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int,
 				case startFrame:
 					if f.Flags == flagHandshakeStarted && c.peerID == uuid.Nil {
 						log.Printf("[Client %s] Received start frame response for handshake started from peer client %s", c.clientID, f.ClientID)
-						if f.ChannelID == c.channelID {
+						if f.ChannelID == c.channelID && f.ClientID != c.clientID {
 							c.peerID = f.ClientID
 							log.Printf("[Client %s] Set peer ID to %s", c.clientID, c.peerID)
 							putFrame(f)
