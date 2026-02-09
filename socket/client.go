@@ -75,6 +75,9 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int)
 		startF.ClientID = c.clientID
 		startF.PeerClientID = c.peerID
 		startF.ClientTimeoutMs = timeoutMs
+		startF.Payload = make([]byte, 17)
+		copy(startF.Payload[:16], c.channelID[:])
+		startF.Payload[16] = byte(c.role)
 		log.Printf("[Client %s] Sending START frame [seq=%d] for request %s (retry=%d)", c.clientID, frameSeq, reqID, retry)
 		select {
 		case c.ctx.writes <- startF:
@@ -99,12 +102,17 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int)
 					}
 					if f.Type == startFrame {
 						if c.peerID == uuid.Nil {
-							if len(f.Payload) >= 16 {
+							if len(f.Payload) >= 17 {
 								var bufChannelID uuid.UUID
 								copy(bufChannelID[:], f.Payload[:16])
-								if bufChannelID == c.channelID {
+								peerRole := clientRole(f.Payload[16])
+								if bufChannelID == c.channelID && peerRole != c.role {
 									c.peerID = f.ClientID
 									log.Printf("[Client %s] Set peer ID to %s", c.clientID, c.peerID)
+								} else if peerRole == c.role {
+									log.Printf("[Client %s] ERROR: Role mismatch, peer has same role", c.clientID)
+									putFrame(f)
+									return errPeerError
 								}
 							}
 						} else if c.peerID != f.ClientID {
