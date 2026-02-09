@@ -127,6 +127,17 @@ func (s *Server) handle(conn net.Conn) {
 				log.Printf("[Server] Received START frame for request %s from client %s", f.RequestID, f.ClientID)
 				timeout := time.Duration(f.ClientTimeoutMs) * time.Millisecond
 				reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
+				req := &request{
+					connctx:      ctx,
+					frame:        f,
+					requestID:    f.RequestID,
+					clientID:     f.ClientID,
+					peerClientID: f.PeerClientID,
+					timeout:      timeout,
+					ctx:          reqCtx,
+					cancel:       cancel,
+				}
+
 				currentClientID = f.ClientID
 				if f.Flags == flagRegistration {
 					log.Printf("[Server] Registering client %s for channel %s with role %d", f.ClientID, f.ChannelID, f.Role)
@@ -137,33 +148,14 @@ func (s *Server) handle(conn net.Conn) {
 						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "no peer client available", flagPeerNotAvailable))
 					} else {
 						log.Printf("[Server] Found peer %s for client %s", peer.clientID, currentClientID)
-						pairFrame := getFrame()
-						pairFrame.Version = version1
-						pairFrame.Type = startFrame
-						pairFrame.RequestID = f.RequestID
-						pairFrame.ClientID = peer.clientID
-						pairFrame.PeerClientID = f.ClientID
-						pairFrame.ChannelID = peer.channelID
-						pairFrame.Role = peer.role
-						ctx.enqueue(pairFrame)
+						req.peerClientID = peer.clientID
 					}
-					cancel()
-				} else {
-					req := &request{
-						connctx:      ctx,
-						frame:        f,
-						requestID:    f.RequestID,
-						clientID:     f.ClientID,
-						peerClientID: f.PeerClientID,
-						timeout:      timeout,
-						ctx:          reqCtx,
-						cancel:       cancel,
-					}
-					streamReqs[f.RequestID] = req
-					if !s.requestHandler.handle(req) {
-						req.cancel()
-						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
-					}
+				}
+
+				streamReqs[f.RequestID] = req
+				if !s.requestHandler.handle(req) {
+					req.cancel()
+					ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
 				}
 
 			case chunkFrame:

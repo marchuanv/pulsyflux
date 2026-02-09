@@ -53,11 +53,15 @@ func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, erro
 	go c.ctx.startWriter()
 	go c.ctx.startReader()
 
-	go func() {
+	go func() { //Handshake in background
 		defer c.ctx.wg.Done()
 		handshakeReqID := uuid.New()
 		timeoutMs := uint64(defaultTimeout.Milliseconds())
-		c.sendStartFrame(handshakeReqID, timeoutMs, 0)
+		err := c.sendStartFrame(handshakeReqID, timeoutMs, 0)
+		if err != nil {
+			log.Printf("[Client %s] Handshake failed: %v", c.clientID, err)
+			c.Close()
+		}
 	}()
 
 	return c, nil
@@ -66,7 +70,8 @@ func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, erro
 func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int) error {
 	for retry := 0; retry < 3; retry++ {
 		if retry > 0 {
-			time.Sleep(time.Second)
+			duration := time.Duration(retry) * time.Second
+			time.Sleep(duration)
 		}
 
 		startF := getFrame()
