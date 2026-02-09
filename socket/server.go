@@ -148,6 +148,8 @@ func (s *Server) handle(conn net.Conn) {
 						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "no peer client available", flagPeerNotAvailable))
 					} else {
 						log.Printf("[Server] Found peer %s for client %s", peer.clientID, currentClientID)
+						s.peers.setPeer(currentClientID, peer.clientID)
+						s.peers.setPeer(peer.clientID, currentClientID)
 						req.peerClientID = peer.clientID
 						if !s.requestHandler.handle(req) {
 							req.cancel()
@@ -171,31 +173,26 @@ func (s *Server) handle(conn net.Conn) {
 						ctx.enqueue(responseFrame)
 					}
 				} else {
-					peer := s.peers.pair(currentClientID, f.ChannelID)
-					if peer == nil {
-						log.Printf("[Server] No peer available for client %s", currentClientID)
+					currentPeer, ok := s.peers.get(currentClientID)
+					if !ok || currentPeer.peerID == uuid.Nil {
+						log.Printf("[Server] No peer established for client %s", currentClientID)
 						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "no peer client available", flagPeerNotAvailable))
 					} else {
-						req.peerClientID = peer.clientID
-						currentPeer, currentOk := s.peers.get(currentClientID)
-						if currentOk {
-							if pendingReqID, found := currentPeer.mapper.getPending(); found {
-								currentPeer.mapper.mapRequest(f.RequestID, pendingReqID)
-								peer.mapper.mapRequest(pendingReqID, f.RequestID)
-								log.Printf("[Server] Mapped response %s -> %s", f.RequestID, pendingReqID)
-							} else {
-								currentPeer.mapper.setPending(f.RequestID)
-								log.Printf("[Server] Stored pending request %s from client %s", f.RequestID, currentClientID)
-							}
+						peer, _ := s.peers.get(currentPeer.peerID)
+						req.peerClientID = currentPeer.peerID
+						if pendingReqID, found := currentPeer.mapper.getPending(); found {
+							currentPeer.mapper.mapRequest(f.RequestID, pendingReqID)
+							peer.mapper.mapRequest(pendingReqID, f.RequestID)
+							log.Printf("[Server] Mapped response %s -> %s", f.RequestID, pendingReqID)
+						} else {
+							currentPeer.mapper.setPending(f.RequestID)
+							log.Printf("[Server] Stored pending request %s from client %s", f.RequestID, currentClientID)
 						}
-					}
-				}
-
-				streamReqs[f.RequestID] = req
-				if f.Flags != flagHandshakeStarted && f.Flags != flagHandshakeCompleted {
-					if !s.requestHandler.handle(req) {
-						req.cancel()
-						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
+						streamReqs[f.RequestID] = req
+						if !s.requestHandler.handle(req) {
+							req.cancel()
+							ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
+						}
 					}
 				}
 
