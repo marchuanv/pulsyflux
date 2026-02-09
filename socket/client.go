@@ -75,6 +75,9 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int)
 		startF.ClientID = c.clientID
 		startF.PeerClientID = c.peerID
 		startF.ClientTimeoutMs = timeoutMs
+		if c.peerID == uuid.Nil {
+			startF.Flags = flagRegistration
+		}
 		startF.Payload = make([]byte, 17)
 		copy(startF.Payload[:16], c.channelID[:])
 		startF.Payload[16] = byte(c.role)

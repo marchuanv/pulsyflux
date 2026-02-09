@@ -124,63 +124,67 @@ func (s *Server) handle(conn net.Conn) {
 
 			switch f.Type {
 			case startFrame:
-			log.Printf("[Server] Received START frame for request %s from client %s", f.RequestID, f.ClientID)
-			currentClientID = f.ClientID
-			s.peers.set(currentClientID, ctx) // Register client connection
+				log.Printf("[Server] Received START frame for request %s from client %s", f.RequestID, f.ClientID)
+				timeout := time.Duration(f.ClientTimeoutMs) * time.Millisecond
+				reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
+				req := &request{
+					connctx:      ctx,
+					frame:        f,
+					requestID:    f.RequestID,
+					clientID:     f.ClientID,
+					peerClientID: f.PeerClientID,
+					timeout:      timeout,
+					ctx:          reqCtx,
+					cancel:       cancel,
+				}
 
-			timeout := time.Duration(f.ClientTimeoutMs) * time.Millisecond
-			reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
-			req := &request{
-				connctx:      ctx,
-				frame:        f,
-				requestID:    f.RequestID,
-				clientID:     currentClientID,
-				peerClientID: f.PeerClientID,
-				timeout:      timeout,
-				ctx:          reqCtx,
-				cancel:       cancel,
-			}
-			streamReqs[f.RequestID] = req
-			if !s.requestHandler.handle(req) {
-				req.cancel()
-				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
-			}
+				if f.Flags == flagRegistration {
+					log.Printf("[Server] Registering client %s for channel %s", f.ClientID, uuid.UUID(f.Payload[:16]))
+					currentClientID = f.ClientID
+					s.peers.set(currentClientID, ctx) // Register client connection
+				} else {
+					streamReqs[f.RequestID] = req
+				}
+				if !s.requestHandler.handle(req) {
+					req.cancel()
+					ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
+				}
 
 			case chunkFrame:
-			log.Printf("[Server] Received CHUNK frame for request %s from client %s (size=%d)", f.RequestID, f.ClientID, len(f.Payload))
-			req := streamReqs[f.RequestID]
-			if req == nil {
-				log.Printf("[Server] ERROR: Received CHUNK before START for request %s", f.RequestID)
-				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "chunk received before start", 0))
-				putFrame(f)
-				continue
-			}
-			req.frame = f
-			if !s.requestHandler.handle(req) {
-				req.cancel()
-				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
-			}
+				log.Printf("[Server] Received CHUNK frame for request %s from client %s (size=%d)", f.RequestID, f.ClientID, len(f.Payload))
+				req := streamReqs[f.RequestID]
+				if req == nil {
+					log.Printf("[Server] ERROR: Received CHUNK before START for request %s", f.RequestID)
+					ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "chunk received before start", 0))
+					putFrame(f)
+					continue
+				}
+				req.frame = f
+				if !s.requestHandler.handle(req) {
+					req.cancel()
+					ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
+				}
 
 			case endFrame:
-			log.Printf("[Server] Received END frame for request %s from client %s", f.RequestID, f.ClientID)
-			req := streamReqs[f.RequestID]
-			if req == nil {
-				log.Printf("[Server] ERROR: Received END before START for request %s", f.RequestID)
-				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "end received before start", 0))
-				putFrame(f)
-				continue
-			}
-			req.frame = f
-			delete(streamReqs, f.RequestID)
-			// Cancel old context before creating new one
-			req.cancel()
-			reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
-			req.cancel = cancel
-			req.ctx = reqCtx
-			if !s.requestHandler.handle(req) {
-				cancel()
-				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
-			}
+				log.Printf("[Server] Received END frame for request %s from client %s", f.RequestID, f.ClientID)
+				req := streamReqs[f.RequestID]
+				if req == nil {
+					log.Printf("[Server] ERROR: Received END before START for request %s", f.RequestID)
+					ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "end received before start", 0))
+					putFrame(f)
+					continue
+				}
+				req.frame = f
+				delete(streamReqs, f.RequestID)
+				// Cancel old context before creating new one
+				req.cancel()
+				reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
+				req.cancel = cancel
+				req.ctx = reqCtx
+				if !s.requestHandler.handle(req) {
+					cancel()
+					ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
+				}
 
 			default:
 				// Route all other frame types directly to peer
