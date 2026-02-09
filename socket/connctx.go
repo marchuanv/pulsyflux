@@ -36,6 +36,7 @@ const (
 type connctx struct {
 	conn   net.Conn
 	writes chan *frame
+	reads  chan *frame
 	errors chan *frame // Higher priority for error frames
 	closed chan struct{}
 	wg     *sync.WaitGroup
@@ -91,6 +92,29 @@ func (ctx *connctx) enqueue(f *frame) bool {
 		return false
 	default:
 		return false // drop frame if write buffer full
+	}
+}
+
+func (ctx *connctx) startReader() {
+	defer ctx.wg.Done()
+	for {
+		select {
+		case <-ctx.closed:
+			return
+		default:
+		}
+
+		f, err := ctx.readFrame()
+		if err != nil {
+			return
+		}
+
+		select {
+		case ctx.reads <- f:
+		case <-ctx.closed:
+			putFrame(f)
+			return
+		}
 	}
 }
 

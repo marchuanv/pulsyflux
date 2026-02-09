@@ -21,8 +21,6 @@ type Client struct {
 	channelID uuid.UUID
 	role      clientRole
 	done      chan struct{}
-	incoming  chan *frame
-	wg        sync.WaitGroup
 }
 
 func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, error) {
@@ -42,21 +40,19 @@ func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, erro
 		channelID: channelID,
 		role:      role,
 		done:      make(chan struct{}),
-		incoming:  make(chan *frame, 100),
 		ctx: &connctx{
 			conn:   conn,
 			writes: make(chan *frame, 1024),
+			reads:  make(chan *frame, 100),
 			errors: make(chan *frame, 256),
 			closed: make(chan struct{}),
 			wg:     &sync.WaitGroup{},
 		},
 	}
 
-	c.ctx.wg.Add(1)
+	c.ctx.wg.Add(2)
 	go c.ctx.startWriter()
-
-	c.wg.Add(1)
-	go c.readLoop()
+	go c.ctx.startReader()
 
 	return c, nil
 }
@@ -225,13 +221,9 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 		case <-deadline:
 			putBuffer(respBuf)
 			return nil, errTimeout
-		case f := <-c.incoming:
+		case f := <-c.ctx.reads:
 			if f.RequestID != reqID {
-				select {
-				case c.incoming <- f:
-				default:
-					putFrame(f)
-				}
+				putFrame(f)
 				continue
 			}
 
@@ -267,35 +259,12 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 	}
 }
 
-func (c *Client) readLoop() {
-	defer c.wg.Done()
-	for {
-		select {
-		case <-c.done:
-			return
-		default:
-		}
-
-		f, err := c.ctx.readFrame()
-		if err != nil {
-			return
-		}
-
-		select {
-		case c.incoming <- f:
-		case <-c.done:
-			putFrame(f)
-			return
-		}
-	}
-}
-
 func (c *Client) Receive() (uuid.UUID, io.Reader, bool) {
 	streamReqs := make(map[uuid.UUID]*bytes.Buffer)
 
 	for {
 		select {
-		case f, ok := <-c.incoming:
+		case f, ok := <-c.ctx.reads:
 			if !ok {
 				return uuid.Nil, nil, false
 			}
@@ -332,9 +301,8 @@ func (c *Client) Receive() (uuid.UUID, io.Reader, bool) {
 }
 
 func (c *Client) Close() error {
+	log.Printf("[Client %s] Closing client", c.clientID)
 	close(c.done)
-	c.wg.Wait()
-	close(c.incoming)
 
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
