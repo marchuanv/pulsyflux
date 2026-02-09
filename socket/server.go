@@ -86,12 +86,14 @@ func (s *Server) handle(conn net.Conn) {
 	ctx := &connctx{
 		conn:   conn,
 		writes: make(chan *frame, 8192), // Increased from 2048 to handle more concurrent writes
+		reads:  make(chan *frame, 100),
 		errors: make(chan *frame, 2048), // Increased from 512 for better error delivery
 		closed: make(chan struct{}),
 		wg:     &sync.WaitGroup{},
 	}
-	ctx.wg.Add(1)
+	ctx.wg.Add(2)
 	go ctx.startWriter()
+	go ctx.startReader()
 
 	streamReqs := make(map[uuid.UUID]*request)
 
@@ -115,16 +117,13 @@ func (s *Server) handle(conn net.Conn) {
 		select {
 		case <-s.ctx.Done():
 			return
-		default:
-		}
+		case f, ok := <-ctx.reads:
+			if !ok {
+				return
+			}
 
-		f, err := ctx.readFrame()
-		if err != nil {
-			return
-		}
-
-		switch f.Type {
-		case startFrame:
+			switch f.Type {
+			case startFrame:
 			log.Printf("[Server] Received START frame for request %s from client %s", f.RequestID, f.ClientID)
 			currentClientID = f.ClientID
 			s.peers.set(currentClientID, ctx) // Register client connection
@@ -147,7 +146,7 @@ func (s *Server) handle(conn net.Conn) {
 				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded"))
 			}
 
-		case chunkFrame:
+			case chunkFrame:
 			log.Printf("[Server] Received CHUNK frame for request %s from client %s (size=%d)", f.RequestID, f.ClientID, len(f.Payload))
 			req := streamReqs[f.RequestID]
 			if req == nil {
@@ -162,7 +161,7 @@ func (s *Server) handle(conn net.Conn) {
 				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded"))
 			}
 
-		case endFrame:
+			case endFrame:
 			log.Printf("[Server] Received END frame for request %s from client %s", f.RequestID, f.ClientID)
 			req := streamReqs[f.RequestID]
 			if req == nil {
@@ -183,14 +182,15 @@ func (s *Server) handle(conn net.Conn) {
 				ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded"))
 			}
 
-		default:
-			// Route all other frame types directly to peer
-			peerCtx, ok := s.peers.get(f.PeerClientID)
-			if !ok {
-				ctx.enqueue(newErrorFrame(f.RequestID, f.ClientID, "peer not found"))
-				continue
+			default:
+				// Route all other frame types directly to peer
+				peerCtx, ok := s.peers.get(f.PeerClientID)
+				if !ok {
+					ctx.enqueue(newErrorFrame(f.RequestID, f.ClientID, "peer not found"))
+					continue
+				}
+				peerCtx.enqueue(f)
 			}
-			peerCtx.enqueue(f)
 		}
 	}
 }
