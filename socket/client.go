@@ -12,14 +12,9 @@ import (
 )
 
 type Client struct {
-	addr      string
-	ctx       *connctx
-	connMu    sync.Mutex
-	clientID  uuid.UUID
-	peerID    uuid.UUID
-	channelID uuid.UUID
-	done      chan struct{}
-	handshake chan struct{}
+	handshakeClient
+	addr   string
+	connMu sync.Mutex
 }
 
 func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
@@ -34,24 +29,36 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 	}
 
 	c := &Client{
-		addr:      addr,
-		clientID:  uuid.New(),
-		channelID: channelID,
-		done:      make(chan struct{}),
-		handshake: make(chan struct{}),
-		ctx: &connctx{
-			conn:   conn,
-			writes: make(chan *frame, 1024),
-			reads:  make(chan *frame, 100),
-			errors: make(chan *frame, 256),
-			closed: make(chan struct{}),
-			wg:     &sync.WaitGroup{},
+		addr: addr,
+		handshakeClient: handshakeClient{
+			clientID:  uuid.New(),
+			peerID:    uuid.Nil,
+			channelID: channelID,
+			done:      make(chan struct{}),
+			handshake: make(chan struct{}),
+			paired:    make(chan struct{}),
+			ctx: &connctx{
+				conn:   conn,
+				writes: make(chan *frame, 1024),
+				reads:  make(chan *frame, 100),
+				errors: make(chan *frame, 256),
+				closed: make(chan struct{}),
+				wg:     &sync.WaitGroup{},
+			},
 		},
 	}
 
-	c.ctx.wg.Add(2)
+	c.ctx.wg.Add(3)
 	go c.ctx.startWriter()
 	go c.ctx.startReader()
+	
+	go func() {
+		defer c.ctx.wg.Done()
+		select {
+		case <-c.done:
+		case <-c.paired:
+		}
+	}()
 
 	return c, nil
 }
@@ -210,26 +217,6 @@ func (c *Client) sendEndFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int) (
 	}
 }
 
-func (c *Client) doHandshake() error {
-	select {
-	case <-c.handshake:
-		return nil
-	default:
-	}
-
-	timeoutMs := uint64(defaultTimeout.Milliseconds())
-	handshakeStartedReqID := uuid.New()
-	if err := c.sendStartFrame(handshakeStartedReqID, timeoutMs, 0, flagHandshakeStarted); err != nil {
-		return err
-	}
-	handshakeCompletedReqID := uuid.New()
-	if err := c.sendStartFrame(handshakeCompletedReqID, timeoutMs, 0, flagHandshakeCompleted); err != nil {
-		return err
-	}
-	close(c.handshake)
-	return nil
-}
-
 func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 	if err := c.doHandshake(); err != nil {
 		return nil, err
@@ -289,34 +276,29 @@ func (c *Client) respondStartFrame(timeoutMs uint64) (uuid.UUID, error) {
 			putFrame(f)
 			return uuid.Nil, errPeerError
 		}
-		if f.Flags == flagHandshakeStarted && c.peerID == uuid.Nil {
-			if f.ChannelID == c.channelID && f.ClientID != c.clientID {
-				c.peerID = f.ClientID
-				log.Printf("[Client %s] Set peer ID to %s", c.clientID, c.peerID)
-			}
-		}
 		reqID = f.RequestID
+		flags := f.Flags
 		putFrame(f)
+		
+		startF := getFrame()
+		startF.Version = version1
+		startF.Type = startFrame
+		startF.RequestID = reqID
+		startF.ClientID = c.clientID
+		startF.PeerClientID = c.peerID
+		startF.ChannelID = c.channelID
+		startF.ClientTimeoutMs = timeoutMs
+		startF.Flags = flags
+		select {
+		case c.ctx.writes <- startF:
+		case <-c.done:
+			putFrame(startF)
+			return uuid.Nil, errClosed
+		}
+		return reqID, nil
 	case <-c.done:
 		return uuid.Nil, errClosed
 	}
-
-	startF := getFrame()
-	startF.Version = version1
-	startF.Type = startFrame
-	startF.RequestID = reqID
-	startF.ClientID = c.clientID
-	startF.PeerClientID = c.peerID
-	startF.ChannelID = c.channelID
-	startF.ClientTimeoutMs = timeoutMs
-	startF.Flags = flagNone
-	select {
-	case c.ctx.writes <- startF:
-	case <-c.done:
-		putFrame(startF)
-		return uuid.Nil, errClosed
-	}
-	return reqID, nil
 }
 
 func (c *Client) respondChunkFrame(reqID uuid.UUID, r io.Reader, buf *[]byte) error {
@@ -386,25 +368,8 @@ func (c *Client) respondEndFrame(reqID uuid.UUID, timeoutMs uint64) error {
 }
 
 func (c *Client) Respond(r io.Reader, timeout time.Duration) error {
-	select {
-	case <-c.handshake:
-	default:
-		timeoutMs := uint64(timeout.Milliseconds())
-		if timeoutMs == 0 {
-			timeoutMs = uint64(defaultTimeout.Milliseconds())
-		}
-		
-		// Handshake: wait for handshake started
-		reqID, err := c.respondStartFrame(timeoutMs)
-		if err != nil {
-			return err
-		}
-		// Handshake: wait for handshake completed
-		reqID, err = c.respondStartFrame(timeoutMs)
-		if err != nil {
-			return err
-		}
-		close(c.handshake)
+	if err := c.doHandshake(); err != nil {
+		return err
 	}
 	timeoutMs := uint64(timeout.Milliseconds())
 	if timeoutMs == 0 {
