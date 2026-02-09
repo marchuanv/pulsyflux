@@ -127,28 +127,49 @@ func (s *Server) handle(conn net.Conn) {
 				log.Printf("[Server] Received START frame for request %s from client %s", f.RequestID, f.ClientID)
 				timeout := time.Duration(f.ClientTimeoutMs) * time.Millisecond
 				reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
-				req := &request{
-					connctx:      ctx,
-					frame:        f,
-					requestID:    f.RequestID,
-					clientID:     f.ClientID,
-					peerClientID: f.PeerClientID,
-					timeout:      timeout,
-					ctx:          reqCtx,
-					cancel:       cancel,
-				}
-
 				currentClientID = f.ClientID
-
 				if f.Flags == flagRegistration {
-					log.Printf("[Server] Registering client %s for channel %s", f.ClientID, uuid.UUID(f.Payload[:16]))
-					s.peers.set(currentClientID, ctx) // Register client connection
+					if len(f.Payload) >= 17 {
+						channelID := uuid.UUID(f.Payload[:16])
+						role := clientRole(f.Payload[16])
+						log.Printf("[Server] Registering client %s for channel %s with role %d", f.ClientID, channelID, role)
+						s.peers.set(currentClientID, ctx, role, channelID)
+						pairClientID := s.peers.pair(currentClientID, role, channelID)
+						if pairClientID == uuid.Nil {
+							log.Printf("[Server] No peer available for client %s", currentClientID)
+							ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "no peer client available", flagPeerNotAvailable))
+						} else {
+							log.Printf("[Server] Found peer %s for client %s", pairClientID, currentClientID)
+							registrationFrame := getFrame()
+							registrationFrame.Version = version1
+							registrationFrame.Type = startFrame
+							registrationFrame.RequestID = f.RequestID
+							registrationFrame.ClientID = pairClientID
+							registrationFrame.PeerClientID = f.ClientID
+							registrationFrame.Payload = f.Payload
+							ctx.enqueue(registrationFrame)
+						}
+					} else {
+						log.Printf("[Server] ERROR: Invalid START frame payload from client %s", f.ClientID)
+						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "invalid START frame payload", 0))
+					}
+					cancel()
 				} else {
+					req := &request{
+						connctx:      ctx,
+						frame:        f,
+						requestID:    f.RequestID,
+						clientID:     f.ClientID,
+						peerClientID: f.PeerClientID,
+						timeout:      timeout,
+						ctx:          reqCtx,
+						cancel:       cancel,
+					}
 					streamReqs[f.RequestID] = req
-				}
-				if !s.requestHandler.handle(req) {
-					req.cancel()
-					ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
+					if !s.requestHandler.handle(req) {
+						req.cancel()
+						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
+					}
 				}
 
 			case chunkFrame:
