@@ -14,6 +14,7 @@ var (
 	errTimeout            = errors.New("timeout")
 	errPeerError          = errors.New("peer error")
 	errClosed             = errors.New("client closed")
+	errHandshakeFailed    = errors.New("handshake failed")
 )
 
 const workerQueueTimeout = 500 * time.Millisecond

@@ -20,6 +20,7 @@ type Client struct {
 	channelID uuid.UUID
 	role      clientRole
 	done      chan struct{}
+	handshake chan error
 }
 
 func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, error) {
@@ -39,6 +40,7 @@ func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, erro
 		channelID: channelID,
 		role:      role,
 		done:      make(chan struct{}),
+		handshake: make(chan error, 1),
 		ctx: &connctx{
 			conn:   conn,
 			writes: make(chan *frame, 1024),
@@ -60,7 +62,10 @@ func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, erro
 		err := c.sendStartFrame(handshakeReqID, timeoutMs, 0)
 		if err != nil {
 			log.Printf("[Client %s] Handshake failed: %v", c.clientID, err)
-			c.Close()
+			c.handshake <- errHandshakeFailed
+		} else {
+			log.Printf("[Client %s] Handshake successful with peer %s", c.clientID, c.peerID)
+			c.handshake <- nil
 		}
 	}()
 
@@ -97,38 +102,46 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int)
 		for {
 			select {
 			case f := <-c.ctx.reads:
-				if f.RequestID == reqID {
-					if f.Type == errorFrame {
-						if f.Flags&flagPeerNotAvailable != 0 && retry < 2 {
-							log.Printf("[Client %s] No peers available, retrying...", c.clientID)
-							putFrame(f)
-							goto retryLoop
-						}
-						log.Printf("[Client %s] ERROR: Received error frame after START: %s", c.clientID, string(f.Payload))
+				switch f.Type {
+				case errorFrame:
+					log.Printf("[Client %s] ERROR: Received error frame during start frame response", c.clientID)
+					if f.Flags&flagPeerNotAvailable != 0 && retry < 2 {
+						log.Printf("[Client %s] No peers available, retrying...", c.clientID)
 						putFrame(f)
-						return errPeerError
+						goto retryLoop
 					}
-					if f.Type == startFrame {
-						if c.peerID == uuid.Nil {
-							if f.ChannelID == c.channelID && f.Role != c.role {
-								c.peerID = f.ClientID
-								log.Printf("[Client %s] Set peer ID to %s", c.clientID, c.peerID)
-							} else if f.Role == c.role {
-								log.Printf("[Client %s] ERROR: Role mismatch, peer has same role", c.clientID)
-								putFrame(f)
-								return errPeerError
-							}
-						} else if c.peerID != f.ClientID {
+					putFrame(f)
+					return errPeerError
+				case startFrame:
+					if f.Flags == flagRegistration && c.peerID == uuid.Nil {
+						log.Printf("[Client %s] Received start frame response for handshake from peer client %s", c.clientID, f.ClientID)
+						if f.ChannelID == c.channelID && f.Role != c.role {
+							c.peerID = f.ClientID
+							log.Printf("[Client %s] Set peer ID to %s", c.clientID, c.peerID)
+							putFrame(f)
+							return nil
+						} else if f.Role == c.role {
+							log.Printf("[Client %s] ERROR: Role mismatch, peer has same role", c.clientID)
+							putFrame(f)
+							return errPeerError
+						}
+						putFrame(f)
+						return nil
+					} else if f.RequestID == reqID {
+						log.Printf("[Client %s] Received start frame response for request %s", c.clientID, reqID)
+						if c.peerID != f.ClientID {
 							log.Printf("[Client %s] ERROR: Peer ID mismatch, expected %s, got %s", c.clientID, c.peerID, f.ClientID)
 							putFrame(f)
 							return errPeerError
 						}
-						log.Printf("[Client %s] Received START frame response for request %s", c.clientID, reqID)
 						putFrame(f)
 						return nil
+					} else {
+						log.Printf("[Client %s] ERROR: Received unexpected start frame with request ID %s", c.clientID, f.RequestID)
+						putFrame(f)
+						return errPeerError
 					}
 				}
-				putFrame(f)
 			case <-c.done:
 				return errClosed
 			}
@@ -222,6 +235,15 @@ func (c *Client) sendEndFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int) (
 }
 
 func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
+	select {
+	case err := <-c.handshake:
+		if err != nil {
+			return nil, err
+		}
+	case <-c.done:
+		return nil, errClosed
+	}
+
 	reqID := uuid.New()
 	timeoutMs := uint64(timeout.Milliseconds())
 	if timeoutMs == 0 {
@@ -269,6 +291,15 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 }
 
 func (c *Client) Receive() (uuid.UUID, io.Reader, bool) {
+	select {
+	case err := <-c.handshake:
+		if err != nil {
+			return uuid.Nil, nil, false
+		}
+	case <-c.done:
+		return uuid.Nil, nil, false
+	}
+
 	streamReqs := make(map[uuid.UUID]*bytes.Buffer)
 
 	for {

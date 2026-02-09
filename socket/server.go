@@ -150,6 +150,12 @@ func (s *Server) handle(conn net.Conn) {
 						log.Printf("[Server] Found peer %s for client %s", peer.clientID, currentClientID)
 						req.peerClientID = peer.clientID
 					}
+				} else {
+					peer := s.peers.pair(currentClientID, f.Role, f.ChannelID)
+					if peer == nil {
+						log.Printf("[Server] No peer available for client %s", currentClientID)
+						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "no peer client available", flagPeerNotAvailable))
+					}
 				}
 
 				streamReqs[f.RequestID] = req
@@ -196,12 +202,12 @@ func (s *Server) handle(conn net.Conn) {
 
 			default:
 				// Route all other frame types directly to peer
-				peerCtx, ok := s.peers.get(f.PeerClientID)
+				peer, ok := s.peers.get(f.PeerClientID)
 				if !ok {
 					ctx.enqueue(newErrorFrame(f.RequestID, f.ClientID, "peer not found", flagPeerNotAvailable))
 					continue
 				}
-				peerCtx.enqueue(f)
+				peer.connctx.enqueue(f)
 			}
 		}
 	}

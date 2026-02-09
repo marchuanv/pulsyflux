@@ -24,14 +24,14 @@ func newPeers() *peers {
 	}
 }
 
-func (r *peers) get(clientID uuid.UUID) (*connctx, bool) {
+func (r *peers) get(clientID uuid.UUID) (*peer, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	ctx, ok := r.clients[clientID]
+	peer, ok := r.clients[clientID]
 	if !ok {
 		return nil, false
 	}
-	return ctx.connctx, true
+	return peer, true
 }
 
 func (r *peers) set(clientID uuid.UUID, ctx *connctx, role clientRole, channelId uuid.UUID) {

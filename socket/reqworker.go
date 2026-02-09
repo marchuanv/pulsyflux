@@ -29,16 +29,17 @@ func (rw *requestWorker) handle(reqCh chan *request, wg *sync.WaitGroup) {
 			continue
 		default:
 		}
-		peerCtx, ok := rw.peers.get(req.peerClientID)
+		peer, ok := rw.peers.get(req.peerClientID)
 		if !ok {
 			log.Printf("[Worker] ERROR: Peer %s not found for request %s from client %s", req.peerClientID, req.requestID, req.clientID)
 			req.connctx.enqueue(newErrorFrame(req.requestID, req.clientID, "no peer client available", flagPeerNotAvailable))
 			req.cancel()
 			continue
 		}
-		if !peerCtx.enqueue(req.frame) {
+		if !peer.connctx.enqueue(req.frame) {
 			req.connctx.enqueue(newErrorFrame(req.requestID, req.clientID, "failed to send frame to peer", 0))
 		}
+		log.Printf("[Worker] Routed request %s from client %s to peer %s", req.requestID, req.clientID, req.peerClientID)
 		req.cancel()
 	}
 }
