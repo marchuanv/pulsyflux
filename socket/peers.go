@@ -11,6 +11,7 @@ type peer struct {
 	channelID uuid.UUID
 	role      clientRole
 	connctx   *connctx
+	mapper    *requestMapper // Maps request IDs between this peer and its paired peer
 }
 
 type peers struct {
@@ -42,6 +43,7 @@ func (r *peers) set(clientID uuid.UUID, ctx *connctx, role clientRole, channelId
 		role:      role,
 		channelID: channelId,
 		connctx:   ctx,
+		mapper:    newRequestMapper(),
 	}
 }
 

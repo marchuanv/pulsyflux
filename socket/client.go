@@ -20,7 +20,7 @@ type Client struct {
 	channelID uuid.UUID
 	role      clientRole
 	done      chan struct{}
-	handshake chan error
+	handshake chan struct{}
 }
 
 func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, error) {
@@ -40,7 +40,7 @@ func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, erro
 		channelID: channelID,
 		role:      role,
 		done:      make(chan struct{}),
-		handshake: make(chan error, 1),
+		handshake: make(chan struct{}),
 		ctx: &connctx{
 			conn:   conn,
 			writes: make(chan *frame, 1024),
@@ -57,20 +57,22 @@ func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, erro
 
 	go func() { //Handshake in background
 		defer c.ctx.wg.Done()
-		handshakeStaratedReqID := uuid.New()
+		handshakeStartedReqID := uuid.New()
 		timeoutMs := uint64(defaultTimeout.Milliseconds())
-		err := c.sendStartFrame(handshakeStaratedReqID, timeoutMs, 0, flagHandshakeStarted)
+		err := c.sendStartFrame(handshakeStartedReqID, timeoutMs, 0, flagHandshakeStarted)
 		if err != nil {
 			log.Printf("[Client %s] Handshake started failed: %v", c.clientID, err)
-			c.handshake <- errHandshakeStartedFailed
+			c.Close()
+			return
 		}
 		handshakeCompletedReqID := uuid.New()
-		timeoutMs = uint64(defaultTimeout.Milliseconds())
 		err = c.sendStartFrame(handshakeCompletedReqID, timeoutMs, 0, flagHandshakeCompleted)
 		if err != nil {
 			log.Printf("[Client %s] Handshake completed failed: %v", c.clientID, err)
-			c.handshake <- errHandshakeCompletedFailed
+			c.Close()
+			return
 		}
+		close(c.handshake)
 	}()
 
 	return c, nil
@@ -129,13 +131,9 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int,
 						}
 						putFrame(f)
 						return nil
-					} else if f.Flags == flagHandshakeCompleted && c.peerID == uuid.Nil {
-						log.Printf("[Client %s] Received start frame response for handshake completed from peer client %s without prior handshake started", c.clientID, f.ClientID)
-						putFrame(f)
-						return errPeerError
-					} else if f.Flags == flagHandshakeCompleted {
+					} else if f.Flags == flagHandshakeCompleted && f.RequestID == reqID {
 						log.Printf("[Client %s] Received start frame response for handshake completed from peer client %s", c.clientID, f.ClientID)
-						c.handshake <- nil
+						putFrame(f)
 						return nil
 					} else if f.RequestID == reqID {
 						log.Printf("[Client %s] Received start frame response for request %s", c.clientID, reqID)
@@ -146,11 +144,8 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int,
 						}
 						putFrame(f)
 						return nil
-					} else {
-						log.Printf("[Client %s] ERROR: Received unexpected start frame with request ID %s", c.clientID, f.RequestID)
-						putFrame(f)
-						return errPeerError
 					}
+					putFrame(f)
 				}
 			case <-c.done:
 				return errClosed
@@ -246,10 +241,7 @@ func (c *Client) sendEndFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int) (
 
 func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 	select {
-	case err := <-c.handshake:
-		if err != nil {
-			return nil, err
-		}
+	case <-c.handshake:
 	case <-c.done:
 		return nil, errClosed
 	}
@@ -302,10 +294,7 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 
 func (c *Client) Receive() (uuid.UUID, io.Reader, bool) {
 	select {
-	case err := <-c.handshake:
-		if err != nil {
-			return uuid.Nil, nil, false
-		}
+	case <-c.handshake:
 	case <-c.done:
 		return uuid.Nil, nil, false
 	}

@@ -149,19 +149,61 @@ func (s *Server) handle(conn net.Conn) {
 					} else {
 						log.Printf("[Server] Found peer %s for client %s", peer.clientID, currentClientID)
 						req.peerClientID = peer.clientID
+						if !s.requestHandler.handle(req) {
+							req.cancel()
+							ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
+						}
+					}
+				} else if f.Flags == flagHandshakeCompleted {
+					log.Printf("[Server] Handshake completed: request ID mapping service ready for client %s", currentClientID)
+					// Get the peer to build response from peer's context
+					peer, ok := s.peers.get(currentClientID)
+					if ok {
+						// Mapper is now ready in the peer struct to correlate provider/consumer request IDs
+						// Send acknowledgment using peer's information
+						responseFrame := getFrame()
+						responseFrame.Version = version1
+						responseFrame.Type = startFrame
+						responseFrame.Flags = flagHandshakeCompleted
+						responseFrame.RequestID = f.RequestID
+						responseFrame.ClientID = peer.clientID
+						responseFrame.PeerClientID = f.PeerClientID
+						responseFrame.ChannelID = peer.channelID
+						responseFrame.Role = peer.role
+						responseFrame.ClientTimeoutMs = f.ClientTimeoutMs
+						ctx.enqueue(responseFrame)
 					}
 				} else {
 					peer := s.peers.pair(currentClientID, f.Role, f.ChannelID)
 					if peer == nil {
 						log.Printf("[Server] No peer available for client %s", currentClientID)
 						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "no peer client available", flagPeerNotAvailable))
+					} else {
+						req.peerClientID = peer.clientID
+						// After handshake: manage request ID mapping
+						currentPeer, currentOk := s.peers.get(currentClientID)
+						if currentOk {
+							// Check if peer has a pending request
+							if pendingReqID, found := peer.mapper.getPending(); found {
+								// This is a response - create bidirectional mapping
+								peer.mapper.mapRequest(pendingReqID, f.RequestID)
+								currentPeer.mapper.mapRequest(f.RequestID, pendingReqID)
+								log.Printf("[Server] Mapped request %s <-> %s", pendingReqID, f.RequestID)
+							} else {
+								// New request - store in peer's mapper
+								peer.mapper.setPending(f.RequestID)
+								log.Printf("[Server] Stored request ID %s for peer %s", f.RequestID, peer.clientID)
+							}
+						}
 					}
 				}
 
 				streamReqs[f.RequestID] = req
-				if !s.requestHandler.handle(req) {
-					req.cancel()
-					ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
+				if f.Flags != flagHandshakeStarted && f.Flags != flagHandshakeCompleted {
+					if !s.requestHandler.handle(req) {
+						req.cancel()
+						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
+					}
 				}
 
 			case chunkFrame:
