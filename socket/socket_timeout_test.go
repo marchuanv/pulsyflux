@@ -18,12 +18,12 @@ func TestConsumerTimeout(t *testing.T) {
 	channelID := uuid.New()
 
 	// Create provider but don't handle requests (will timeout)
-	provider, _ := NewClient("127.0.0.1:9200", channelID, roleProvider)
+	provider, _ := NewClient("127.0.0.1:9200", channelID)
 	defer provider.Close()
 
 	time.Sleep(50 * time.Millisecond)
 
-	consumer, _ := NewClient("127.0.0.1:9200", channelID, roleConsumer)
+	consumer, _ := NewClient("127.0.0.1:9200", channelID)
 	defer consumer.Close()
 
 	// Send request with short timeout
