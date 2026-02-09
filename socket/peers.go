@@ -9,7 +9,6 @@ import (
 type peer struct {
 	clientID  uuid.UUID
 	channelID uuid.UUID
-	peerID    uuid.UUID
 	connctx   *connctx
 	mapper    *requestMapper
 }
@@ -41,7 +40,6 @@ func (r *peers) set(clientID uuid.UUID, ctx *connctx, channelId uuid.UUID) {
 	r.clients[clientID] = &peer{
 		clientID:  clientID,
 		channelID: channelId,
-		peerID:    uuid.Nil,
 		connctx:   ctx,
 		mapper:    newRequestMapper(),
 	}
@@ -65,12 +63,4 @@ func (r *peers) pair(clientID uuid.UUID, channelId uuid.UUID) *peer {
 		}
 	}
 	return nil
-}
-
-func (r *peers) setPeer(clientID uuid.UUID, peerID uuid.UUID) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if p, ok := r.clients[clientID]; ok {
-		p.peerID = peerID
-	}
 }
