@@ -140,9 +140,9 @@ func (s *Server) handle(conn net.Conn) {
 
 				currentClientID = f.ClientID
 				if f.Flags == flagHandshakeStarted {
-					log.Printf("[Server] Handshake started: registering client %s for channel %s with role %d", f.ClientID, f.ChannelID, f.Role)
-					s.peers.set(currentClientID, ctx, f.Role, f.ChannelID)
-					peer := s.peers.pair(currentClientID, f.Role, f.ChannelID)
+					log.Printf("[Server] Handshake started: registering client %s for channel %s", f.ClientID, f.ChannelID)
+					s.peers.set(currentClientID, ctx, f.ChannelID)
+					peer := s.peers.pair(currentClientID, f.ChannelID)
 					if peer == nil {
 						log.Printf("[Server] No peer available for client %s", currentClientID)
 						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "no peer client available", flagPeerNotAvailable))
@@ -159,8 +159,6 @@ func (s *Server) handle(conn net.Conn) {
 					// Get the peer to build response from peer's context
 					peer, ok := s.peers.get(currentClientID)
 					if ok {
-						// Mapper is now ready in the peer struct to correlate provider/consumer request IDs
-						// Send acknowledgment using peer's information
 						responseFrame := getFrame()
 						responseFrame.Version = version1
 						responseFrame.Type = startFrame
@@ -169,30 +167,25 @@ func (s *Server) handle(conn net.Conn) {
 						responseFrame.ClientID = peer.clientID
 						responseFrame.PeerClientID = f.PeerClientID
 						responseFrame.ChannelID = peer.channelID
-						responseFrame.Role = peer.role
 						responseFrame.ClientTimeoutMs = f.ClientTimeoutMs
 						ctx.enqueue(responseFrame)
 					}
 				} else {
-					peer := s.peers.pair(currentClientID, f.Role, f.ChannelID)
+					peer := s.peers.pair(currentClientID, f.ChannelID)
 					if peer == nil {
 						log.Printf("[Server] No peer available for client %s", currentClientID)
 						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "no peer client available", flagPeerNotAvailable))
 					} else {
 						req.peerClientID = peer.clientID
-						// After handshake: manage request ID mapping
 						currentPeer, currentOk := s.peers.get(currentClientID)
 						if currentOk {
-							// Check if peer has a pending request
-							if pendingReqID, found := peer.mapper.getPending(); found {
-								// This is a response - create bidirectional mapping
-								peer.mapper.mapRequest(pendingReqID, f.RequestID)
+							if pendingReqID, found := currentPeer.mapper.getPending(); found {
 								currentPeer.mapper.mapRequest(f.RequestID, pendingReqID)
-								log.Printf("[Server] Mapped request %s <-> %s", pendingReqID, f.RequestID)
+								peer.mapper.mapRequest(pendingReqID, f.RequestID)
+								log.Printf("[Server] Mapped response %s -> %s", f.RequestID, pendingReqID)
 							} else {
-								// New request - store in peer's mapper
-								peer.mapper.setPending(f.RequestID)
-								log.Printf("[Server] Stored request ID %s for peer %s", f.RequestID, peer.clientID)
+								currentPeer.mapper.setPending(f.RequestID)
+								log.Printf("[Server] Stored pending request %s from client %s", f.RequestID, currentClientID)
 							}
 						}
 					}

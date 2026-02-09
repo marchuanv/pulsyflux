@@ -23,14 +23,14 @@ func TestClientBidirectional(t *testing.T) {
 	channelID := uuid.New()
 
 	// Create provider client
-	provider, err := NewClient("127.0.0.1:9090", channelID, roleProvider)
+	provider, err := NewClient("127.0.0.1:9090", channelID)
 	if err != nil {
 		t.Fatalf("Failed to create provider: %v", err)
 	}
 	defer provider.Close()
 
 	// Create consumer client
-	consumer, err := NewClient("127.0.0.1:9090", channelID, roleConsumer)
+	consumer, err := NewClient("127.0.0.1:9090", channelID)
 	if err != nil {
 		t.Fatalf("Failed to create consumer: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestMultipleConsumersOneProvider(t *testing.T) {
 
 	channelID := uuid.New()
 
-	provider, _ := NewClient("127.0.0.1:9091", channelID, roleProvider)
+	provider, _ := NewClient("127.0.0.1:9091", channelID)
 	defer provider.Close()
 
 	go func() {
@@ -94,7 +94,7 @@ func TestMultipleConsumersOneProvider(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			consumer, _ := NewClient("127.0.0.1:9091", channelID, roleConsumer)
+			consumer, _ := NewClient("127.0.0.1:9091", channelID)
 			defer consumer.Close()
 
 			resp, err := consumer.Send(strings.NewReader("request"), 2*time.Second)
@@ -123,7 +123,7 @@ func TestNoPeerAvailable(t *testing.T) {
 
 	channelID := uuid.New()
 
-	consumer, err := NewClient("127.0.0.1:9092", channelID, roleConsumer)
+	consumer, err := NewClient("127.0.0.1:9092", channelID)
 	if err == nil {
 		consumer.Close()
 		t.Fatal("Expected handshake to fail when no peer available")
@@ -141,7 +141,7 @@ func TestLargePayload(t *testing.T) {
 
 	channelID := uuid.New()
 
-	provider, _ := NewClient("127.0.0.1:9093", channelID, roleProvider)
+	provider, _ := NewClient("127.0.0.1:9093", channelID)
 	defer provider.Close()
 
 	go func() {
@@ -156,7 +156,7 @@ func TestLargePayload(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	consumer, _ := NewClient("127.0.0.1:9093", channelID, roleConsumer)
+	consumer, _ := NewClient("127.0.0.1:9093", channelID)
 	defer consumer.Close()
 
 	largeData := strings.Repeat("X", 2*1024*1024)
@@ -188,7 +188,7 @@ func TestConcurrentChannels(t *testing.T) {
 			defer wg.Done()
 			channelID := uuid.New()
 
-			provider, _ := NewClient("127.0.0.1:9094", channelID, roleProvider)
+			provider, _ := NewClient("127.0.0.1:9094", channelID)
 			defer provider.Close()
 
 			go func() {
@@ -203,7 +203,7 @@ func TestConcurrentChannels(t *testing.T) {
 
 			time.Sleep(50 * time.Millisecond)
 
-			consumer, _ := NewClient("127.0.0.1:9094", channelID, roleConsumer)
+			consumer, _ := NewClient("127.0.0.1:9094", channelID)
 			defer consumer.Close()
 
 			resp, err := consumer.Send(strings.NewReader("test"), 2*time.Second)

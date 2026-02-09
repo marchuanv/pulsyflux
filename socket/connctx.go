@@ -11,13 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type clientRole byte
-
-const (
-	roleConsumer clientRole = 0x01
-	roleProvider clientRole = 0x02
-)
-
 const version1 byte = 1
 
 const (
@@ -25,7 +18,7 @@ const (
 	startFrame               byte   = 0x04
 	chunkFrame               byte   = 0x05
 	endFrame                 byte   = 0x06
-	frameHeaderSize                 = 81
+	frameHeaderSize                 = 73
 	maxFrameSize                    = 1024 * 1024
 	defaultFrameReadTimeout         = 2 * time.Minute
 	defaultFrameWriteTimeout        = 5 * time.Second
@@ -33,14 +26,14 @@ const (
 	flagHandshakeStarted     uint16 = 0x01
 	flagHandshakeCompleted   uint16 = 0x02
 	flagPeerNotAvailable     uint16 = 0x03
-	defaultClientTimeoutMs   uint64 = 30000 // 30 seconds default timeout
+	defaultClientTimeoutMs   uint64 = 30000
 )
 
 type connctx struct {
 	conn   net.Conn
 	writes chan *frame
 	reads  chan *frame
-	errors chan *frame // Higher priority for error frames
+	errors chan *frame
 	closed chan struct{}
 	wg     *sync.WaitGroup
 }
@@ -49,16 +42,14 @@ type frame struct {
 	Version         byte
 	Type            byte
 	Flags           uint16
-	RequestID       uuid.UUID // 16-byte UUID
-	ClientID        uuid.UUID // 16-byte UUID
-	PeerClientID    uuid.UUID // 16-byte UUID for peer routing
-	ChannelID       uuid.UUID // 16-byte UUID for channel
-	ClientTimeoutMs uint64    // Added to frame for timeout tracking
-	Role            clientRole
+	RequestID       uuid.UUID
+	ClientID        uuid.UUID
+	PeerClientID    uuid.UUID
+	ChannelID       uuid.UUID
+	ClientTimeoutMs uint64
 	Payload         []byte
 }
 
-// newErrorFrame constructs an error frame with the given message and flags
 func newErrorFrame(reqID uuid.UUID, clientID uuid.UUID, msg string, flags uint16) *frame {
 	f := getFrame()
 	f.Version = version1
@@ -170,7 +161,7 @@ func (ctx *connctx) readFrame() (*frame, error) {
 		return nil, errors.New("unsupported protocol version")
 	}
 
-	payloadLen := binary.BigEndian.Uint32(header[77:81])
+	payloadLen := binary.BigEndian.Uint32(header[69:73])
 	if payloadLen > maxFrameSize {
 		return nil, errors.New("frame payload too large")
 	}
@@ -183,8 +174,7 @@ func (ctx *connctx) readFrame() (*frame, error) {
 	copy(f.ClientID[:], header[20:36])
 	copy(f.PeerClientID[:], header[36:52])
 	copy(f.ChannelID[:], header[52:68])
-	f.ClientTimeoutMs = binary.BigEndian.Uint64(header[68:76])
-	f.Role = clientRole(header[76])
+	f.ClientTimeoutMs = binary.BigEndian.Uint64(header[60:68])
 
 	if payloadLen > 0 {
 		f.Payload = make([]byte, payloadLen)
@@ -209,12 +199,9 @@ func (ctx *connctx) writeFrame(f *frame) error {
 	copy(header[20:36], f.ClientID[:])
 	copy(header[36:52], f.PeerClientID[:])
 	copy(header[52:68], f.ChannelID[:])
-	binary.BigEndian.PutUint64(header[68:76], f.ClientTimeoutMs)
-	header[76] = byte(f.Role)
-	binary.BigEndian.PutUint32(header[77:81], uint32(len(f.Payload)))
-	// Single write for header+payload reduces syscalls
+	binary.BigEndian.PutUint64(header[60:68], f.ClientTimeoutMs)
+	binary.BigEndian.PutUint32(header[69:73], uint32(len(f.Payload)))
 	if len(f.Payload) > 0 {
-		// Use buffer pool for small payloads
 		if len(f.Payload) <= 8192 {
 			buf := getWriteBuffer()
 			defer putWriteBuffer(buf)
@@ -223,7 +210,6 @@ func (ctx *connctx) writeFrame(f *frame) error {
 			_, err := ctx.conn.Write((*buf)[:frameHeaderSize+len(f.Payload)])
 			return err
 		}
-		// Large payloads: allocate once
 		buf := make([]byte, frameHeaderSize+len(f.Payload))
 		copy(buf, header[:])
 		copy(buf[frameHeaderSize:], f.Payload)

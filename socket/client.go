@@ -18,12 +18,11 @@ type Client struct {
 	clientID  uuid.UUID
 	peerID    uuid.UUID
 	channelID uuid.UUID
-	role      clientRole
 	done      chan struct{}
 	handshake chan struct{}
 }
 
-func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, error) {
+func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 	conn, err := net.Dial("tcp4", addr)
 	if err != nil {
 		return nil, err
@@ -38,7 +37,6 @@ func NewClient(addr string, channelID uuid.UUID, role clientRole) (*Client, erro
 		addr:      addr,
 		clientID:  uuid.New(),
 		channelID: channelID,
-		role:      role,
 		done:      make(chan struct{}),
 		handshake: make(chan struct{}),
 		ctx: &connctx{
@@ -92,7 +90,6 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int,
 		startF.ClientID = c.clientID
 		startF.PeerClientID = c.peerID
 		startF.ChannelID = c.channelID
-		startF.Role = c.role
 		startF.ClientTimeoutMs = timeoutMs
 		startF.Flags = flags
 		log.Printf("[Client %s] Sending START frame [seq=%d] for request %s (retry=%d)", c.clientID, frameSeq, reqID, retry)
@@ -119,15 +116,11 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int,
 				case startFrame:
 					if f.Flags == flagHandshakeStarted && c.peerID == uuid.Nil {
 						log.Printf("[Client %s] Received start frame response for handshake started from peer client %s", c.clientID, f.ClientID)
-						if f.ChannelID == c.channelID && f.Role != c.role {
+						if f.ChannelID == c.channelID {
 							c.peerID = f.ClientID
 							log.Printf("[Client %s] Set peer ID to %s", c.clientID, c.peerID)
 							putFrame(f)
 							return nil
-						} else if f.Role == c.role {
-							log.Printf("[Client %s] ERROR: Role mismatch, peer has same role", c.clientID)
-							putFrame(f)
-							return errPeerError
 						}
 						putFrame(f)
 						return nil
@@ -164,7 +157,6 @@ func (c *Client) sendChunkFrame(reqID uuid.UUID, payload []byte, frameSeq int) (
 	chunk.ClientID = c.clientID
 	chunk.PeerClientID = c.peerID
 	chunk.ChannelID = c.channelID
-	chunk.Role = c.role
 	chunk.Payload = make([]byte, len(payload))
 	copy(chunk.Payload, payload)
 	log.Printf("[Client %s] Sending CHUNK frame [seq=%d] for request %s (size=%d)", c.clientID, frameSeq, reqID, len(payload))
@@ -206,7 +198,6 @@ func (c *Client) sendEndFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int) (
 	endF.ClientID = c.clientID
 	endF.PeerClientID = c.peerID
 	endF.ChannelID = c.channelID
-	endF.Role = c.role
 	endF.ClientTimeoutMs = timeoutMs
 	log.Printf("[Client %s] Sending END frame [seq=%d] for request %s", c.clientID, frameSeq, reqID)
 	select {

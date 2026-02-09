@@ -38,16 +38,13 @@ func (rw *requestWorker) handle(reqCh chan *request, wg *sync.WaitGroup) {
 		}
 		
 		senderPeer, senderOk := rw.peers.get(req.clientID)
-		if senderOk && senderPeer.role != peer.role {
-			// Only map if roles are different (provider <-> consumer)
+		if senderOk {
 			if mappedReqID, found := senderPeer.mapper.getMappedRequestID(req.requestID); found {
-				// Request ID has a mapping - translate it back
+				log.Printf("[Worker] Response: Mapping request ID %s -> %s", req.requestID, mappedReqID)
 				req.frame.RequestID = mappedReqID
-				log.Printf("[Worker] Mapped request ID %s -> %s", req.requestID, mappedReqID)
-			} else if req.frame.Type == startFrame && req.frame.Flags == flagNone {
-				// New START frame - check if peer has a pending request to map to
-				// For now, just forward it and let the receiver handle correlation
-				log.Printf("[Worker] Forwarding START frame with request ID %s", req.requestID)
+				if req.frame.Type == endFrame {
+					senderPeer.mapper.removeMapping(req.requestID)
+				}
 			}
 		}
 		

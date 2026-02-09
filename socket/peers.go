@@ -9,14 +9,13 @@ import (
 type peer struct {
 	clientID  uuid.UUID
 	channelID uuid.UUID
-	role      clientRole
 	connctx   *connctx
-	mapper    *requestMapper // Maps request IDs between this peer and its paired peer
+	mapper    *requestMapper
 }
 
 type peers struct {
 	mu      sync.RWMutex
-	clients map[uuid.UUID]*peer // channelID -> clientID -> connctx
+	clients map[uuid.UUID]*peer
 }
 
 func newPeers() *peers {
@@ -35,12 +34,11 @@ func (r *peers) get(clientID uuid.UUID) (*peer, bool) {
 	return peer, true
 }
 
-func (r *peers) set(clientID uuid.UUID, ctx *connctx, role clientRole, channelId uuid.UUID) {
+func (r *peers) set(clientID uuid.UUID, ctx *connctx, channelId uuid.UUID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.clients[clientID] = &peer{
 		clientID:  clientID,
-		role:      role,
 		channelID: channelId,
 		connctx:   ctx,
 		mapper:    newRequestMapper(),
@@ -56,11 +54,11 @@ func (r *peers) delete(clientID uuid.UUID) {
 	}
 }
 
-func (r *peers) pair(clientID uuid.UUID, role clientRole, channelId uuid.UUID) *peer {
+func (r *peers) pair(clientID uuid.UUID, channelId uuid.UUID) *peer {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, peer := range r.clients {
-		if peer.channelID == channelId && peer.role != role && peer.clientID != clientID {
+		if peer.channelID == channelId && peer.clientID != clientID {
 			return peer
 		}
 	}
