@@ -161,18 +161,22 @@ func (s *Server) handle(conn net.Conn) {
 					log.Printf("[Server] Handshake completed: request ID mapping service ready for client %s", currentClientID)
 					req.peerClientID = f.PeerClientID
 					currentPeer, _ := s.peers.get(currentClientID)
-					peer, _ := s.peers.get(f.PeerClientID)
-
+					peerClient, _ := s.peers.get(f.PeerClientID)
+					
+					// Phase 1: Both signal ready
 					close(currentPeer.ready)
-					<-peer.ready
-
-					log.Printf("[Server] Both clients %s and %s are ready, processing request %s", currentClientID, f.PeerClientID, f.RequestID)
-
+					<-peerClient.ready
+					
+					// Phase 2: Route frame
 					if !s.requestHandler.handle(req) {
 						req.cancel()
 						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
 						return
 					}
+					
+					// Phase 3: Both signal barrier complete
+					close(currentPeer.barrier)
+					<-peerClient.barrier
 				default:
 					req.peerClientID = f.PeerClientID
 					currentPeer, _ := s.peers.get(currentClientID)
@@ -191,7 +195,6 @@ func (s *Server) handle(conn net.Conn) {
 						req.cancel()
 						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
 					}
-					return
 				}
 
 			case chunkFrame:
