@@ -3,7 +3,6 @@ package socket
 import (
 	"bytes"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -35,7 +34,6 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 			peerID:    uuid.Nil,
 			channelID: channelID,
 			done:      make(chan struct{}),
-			handshake: make(chan struct{}),
 			paired:    make(chan struct{}),
 			ctx: &connctx{
 				conn:   conn,
@@ -48,146 +46,73 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 		},
 	}
 
-	c.ctx.wg.Add(3)
+	c.ctx.wg.Add(2)
 	go c.ctx.startWriter()
 	go c.ctx.startReader()
-
-	go func() {
-		defer c.ctx.wg.Done()
-		select {
-		case <-c.done:
-		case <-c.paired:
-		}
-	}()
 
 	return c, nil
 }
 
-func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int, flags uint16) error {
+func (c *Client) sendStartFrame(reqID uuid.UUID, timeoutMs uint64, flags uint16) error {
+	f := getFrame()
+	f.Version = version1
+	f.Type = startFrame
+	f.RequestID = reqID
+	f.ClientID = c.clientID
+	f.PeerClientID = c.peerID
+	f.ChannelID = c.channelID
+	f.ClientTimeoutMs = timeoutMs
+	f.Flags = flags
 
-	startF := getFrame()
-	startF.Version = version1
-	startF.Type = startFrame
-	startF.RequestID = reqID
-	startF.ClientID = c.clientID
-	startF.PeerClientID = c.peerID
-	startF.ChannelID = c.channelID
-	startF.ClientTimeoutMs = timeoutMs
-	startF.Flags = flags
-	log.Printf("[Client %s] Sending START frame [seq=%d] for request %s", c.clientID, frameSeq, reqID)
 	select {
-	case c.ctx.writes <- startF:
+	case c.ctx.writes <- f:
 	case <-c.done:
-		putFrame(startF)
+		putFrame(f)
 		return errClosed
 	}
 
-	for {
-		select {
-		case f := <-c.ctx.reads:
-			switch f.Type {
-			case errorFrame:
-				log.Printf("[Client %s] ERROR: Received error frame during start frame response", c.clientID)
-				putFrame(f)
-				return errPeerError
-			case startFrame:
-				if f.RequestID == reqID {
-					log.Printf("[Client %s] Received start frame response for request %s", c.clientID, reqID)
-					if c.peerID != f.ClientID {
-						log.Printf("[Client %s] ERROR: Peer ID mismatch, expected %s, got %s", c.clientID, c.peerID, f.ClientID)
-						putFrame(f)
-						return errPeerError
-					}
-					putFrame(f)
-					return nil
-				}
-				putFrame(f)
-			}
-		case <-c.done:
-			return errClosed
-		}
-	}
+	return c.awaitFrame(reqID, byte(startFrame))
 }
 
-func (c *Client) sendChunkFrame(reqID uuid.UUID, payload []byte, frameSeq int) (io.Reader, error) {
-	chunk := getFrame()
-	chunk.Version = version1
-	chunk.Type = chunkFrame
-	chunk.RequestID = reqID
-	chunk.ClientID = c.clientID
-	chunk.PeerClientID = c.peerID
-	chunk.ChannelID = c.channelID
-	chunk.Payload = make([]byte, len(payload))
-	copy(chunk.Payload, payload)
-	log.Printf("[Client %s] Sending CHUNK frame [seq=%d] for request %s (size=%d)", c.clientID, frameSeq, reqID, len(payload))
+func (c *Client) sendChunkFrame(reqID uuid.UUID, payload []byte) ([]byte, error) {
+	f := getFrame()
+	f.Version = version1
+	f.Type = chunkFrame
+	f.RequestID = reqID
+	f.ClientID = c.clientID
+	f.PeerClientID = c.peerID
+	f.ChannelID = c.channelID
+	f.Payload = make([]byte, len(payload))
+	copy(f.Payload, payload)
+
 	select {
-	case c.ctx.writes <- chunk:
+	case c.ctx.writes <- f:
 	case <-c.done:
-		putFrame(chunk)
+		putFrame(f)
 		return nil, errClosed
 	}
 
-	for {
-		select {
-		case f := <-c.ctx.reads:
-			if f.RequestID == reqID {
-				if f.Type == errorFrame {
-					log.Printf("[Client %s] ERROR: Received error frame after CHUNK: %s", c.clientID, string(f.Payload))
-					putFrame(f)
-					return nil, errPeerError
-				}
-				if f.Type == chunkFrame {
-					log.Printf("[Client %s] Received CHUNK frame response for request %s", c.clientID, reqID)
-					r := bytes.NewReader(f.Payload)
-					putFrame(f)
-					return r, nil
-				}
-			}
-			putFrame(f)
-		case <-c.done:
-			return nil, errClosed
-		}
-	}
+	return c.awaitPayload(reqID, byte(chunkFrame))
 }
 
-func (c *Client) sendEndFrame(reqID uuid.UUID, timeoutMs uint64, frameSeq int) (io.Reader, error) {
-	endF := getFrame()
-	endF.Version = version1
-	endF.Type = endFrame
-	endF.RequestID = reqID
-	endF.ClientID = c.clientID
-	endF.PeerClientID = c.peerID
-	endF.ChannelID = c.channelID
-	endF.ClientTimeoutMs = timeoutMs
-	log.Printf("[Client %s] Sending END frame [seq=%d] for request %s", c.clientID, frameSeq, reqID)
+func (c *Client) sendEndFrame(reqID uuid.UUID, timeoutMs uint64) ([]byte, error) {
+	f := getFrame()
+	f.Version = version1
+	f.Type = endFrame
+	f.RequestID = reqID
+	f.ClientID = c.clientID
+	f.PeerClientID = c.peerID
+	f.ChannelID = c.channelID
+	f.ClientTimeoutMs = timeoutMs
+
 	select {
-	case c.ctx.writes <- endF:
+	case c.ctx.writes <- f:
 	case <-c.done:
-		putFrame(endF)
+		putFrame(f)
 		return nil, errClosed
 	}
 
-	for {
-		select {
-		case f := <-c.ctx.reads:
-			if f.RequestID == reqID {
-				if f.Type == errorFrame {
-					log.Printf("[Client %s] ERROR: Received error frame after END: %s", c.clientID, string(f.Payload))
-					putFrame(f)
-					return nil, errPeerError
-				}
-				if f.Type == endFrame {
-					log.Printf("[Client %s] Received END frame response for request %s", c.clientID, reqID)
-					r := bytes.NewReader(f.Payload)
-					putFrame(f)
-					return r, nil
-				}
-			}
-			putFrame(f)
-		case <-c.done:
-			return nil, errClosed
-		}
-	}
+	return c.awaitPayload(reqID, byte(endFrame))
 }
 
 func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
@@ -201,74 +126,68 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 		timeoutMs = uint64(defaultTimeout.Milliseconds())
 	}
 
-	frameSeq := 0
-
-	if err := c.sendStartFrame(reqID, timeoutMs, frameSeq, flagNone); err != nil {
+	if err := c.sendStartFrame(reqID, timeoutMs, flagNone); err != nil {
 		return nil, err
 	}
-	frameSeq++
 
-	respBuf := bytes.NewBuffer(make([]byte, 0, 1024))
+	var respBuf bytes.Buffer
 	buf := getBuffer()
+	defer putBuffer(buf)
+
 	for {
 		n, err := r.Read(*buf)
 		if n > 0 {
-			chunkResp, err := c.sendChunkFrame(reqID, (*buf)[:n], frameSeq)
+			payload, err := c.sendChunkFrame(reqID, (*buf)[:n])
 			if err != nil {
-				putBuffer(buf)
 				return nil, err
 			}
-			io.Copy(respBuf, chunkResp)
-			frameSeq++
+			respBuf.Write(payload)
 		}
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			putBuffer(buf)
 			return nil, err
 		}
 	}
-	putBuffer(buf)
 
-	endResp, err := c.sendEndFrame(reqID, timeoutMs, frameSeq)
+	payload, err := c.sendEndFrame(reqID, timeoutMs)
 	if err != nil {
 		return nil, err
 	}
-	io.Copy(respBuf, endResp)
+	respBuf.Write(payload)
 
-	log.Printf("[Client %s] Received complete response for request %s", c.clientID, reqID)
 	return bytes.NewReader(respBuf.Bytes()), nil
 }
 
 func (c *Client) respondStartFrame(timeoutMs uint64) (uuid.UUID, error) {
-	var reqID uuid.UUID
 	select {
 	case f := <-c.ctx.reads:
 		if f.Type != startFrame {
 			putFrame(f)
 			return uuid.Nil, errPeerError
 		}
-		reqID = f.RequestID
+		reqID := f.RequestID
 		flags := f.Flags
 		putFrame(f)
 
-		startF := getFrame()
-		startF.Version = version1
-		startF.Type = startFrame
-		startF.RequestID = reqID
-		startF.ClientID = c.clientID
-		startF.PeerClientID = c.peerID
-		startF.ChannelID = c.channelID
-		startF.ClientTimeoutMs = timeoutMs
-		startF.Flags = flags
+		resp := getFrame()
+		resp.Version = version1
+		resp.Type = startFrame
+		resp.RequestID = reqID
+		resp.ClientID = c.clientID
+		resp.PeerClientID = c.peerID
+		resp.ChannelID = c.channelID
+		resp.ClientTimeoutMs = timeoutMs
+		resp.Flags = flags
+
 		select {
-		case c.ctx.writes <- startF:
+		case c.ctx.writes <- resp:
+			return reqID, nil
 		case <-c.done:
-			putFrame(startF)
+			putFrame(resp)
 			return uuid.Nil, errClosed
 		}
-		return reqID, nil
 	case <-c.done:
 		return uuid.Nil, errClosed
 	}
@@ -277,11 +196,7 @@ func (c *Client) respondStartFrame(timeoutMs uint64) (uuid.UUID, error) {
 func (c *Client) respondChunkFrame(reqID uuid.UUID, r io.Reader, buf *[]byte) error {
 	select {
 	case f := <-c.ctx.reads:
-		if f.RequestID != reqID {
-			putFrame(f)
-			return nil
-		}
-		if f.Type != chunkFrame {
+		if f.RequestID != reqID || f.Type != chunkFrame {
 			putFrame(f)
 			return errPeerError
 		}
@@ -292,19 +207,20 @@ func (c *Client) respondChunkFrame(reqID uuid.UUID, r io.Reader, buf *[]byte) er
 
 	n, err := r.Read(*buf)
 	if n > 0 {
-		chunk := getFrame()
-		chunk.Version = version1
-		chunk.Type = chunkFrame
-		chunk.RequestID = reqID
-		chunk.ClientID = c.clientID
-		chunk.PeerClientID = c.peerID
-		chunk.ChannelID = c.channelID
-		chunk.Payload = make([]byte, n)
-		copy(chunk.Payload, (*buf)[:n])
+		resp := getFrame()
+		resp.Version = version1
+		resp.Type = chunkFrame
+		resp.RequestID = reqID
+		resp.ClientID = c.clientID
+		resp.PeerClientID = c.peerID
+		resp.ChannelID = c.channelID
+		resp.Payload = make([]byte, n)
+		copy(resp.Payload, (*buf)[:n])
+
 		select {
-		case c.ctx.writes <- chunk:
+		case c.ctx.writes <- resp:
 		case <-c.done:
-			putFrame(chunk)
+			putFrame(resp)
 			return errClosed
 		}
 	}
@@ -323,21 +239,22 @@ func (c *Client) respondEndFrame(reqID uuid.UUID, timeoutMs uint64) error {
 		return errClosed
 	}
 
-	endF := getFrame()
-	endF.Version = version1
-	endF.Type = endFrame
-	endF.RequestID = reqID
-	endF.ClientID = c.clientID
-	endF.PeerClientID = c.peerID
-	endF.ChannelID = c.channelID
-	endF.ClientTimeoutMs = timeoutMs
+	resp := getFrame()
+	resp.Version = version1
+	resp.Type = endFrame
+	resp.RequestID = reqID
+	resp.ClientID = c.clientID
+	resp.PeerClientID = c.peerID
+	resp.ChannelID = c.channelID
+	resp.ClientTimeoutMs = timeoutMs
+
 	select {
-	case c.ctx.writes <- endF:
+	case c.ctx.writes <- resp:
+		return nil
 	case <-c.done:
-		putFrame(endF)
+		putFrame(resp)
 		return errClosed
 	}
-	return nil
 }
 
 func (c *Client) Respond(r io.Reader, timeout time.Duration) error {
@@ -370,8 +287,54 @@ func (c *Client) Respond(r io.Reader, timeout time.Duration) error {
 	return c.respondEndFrame(reqID, timeoutMs)
 }
 
+func (c *Client) awaitFrame(reqID uuid.UUID, expectedType byte) error {
+	for {
+		select {
+		case f := <-c.ctx.reads:
+			if f.RequestID == reqID {
+				if f.Type == errorFrame {
+					putFrame(f)
+					return errPeerError
+				}
+				if f.Type == expectedType {
+					if f.ClientID != c.peerID {
+						putFrame(f)
+						return errPeerError
+					}
+					putFrame(f)
+					return nil
+				}
+			}
+			putFrame(f)
+		case <-c.done:
+			return errClosed
+		}
+	}
+}
+
+func (c *Client) awaitPayload(reqID uuid.UUID, expectedType byte) ([]byte, error) {
+	for {
+		select {
+		case f := <-c.ctx.reads:
+			if f.RequestID == reqID {
+				if f.Type == errorFrame {
+					putFrame(f)
+					return nil, errPeerError
+				}
+				if f.Type == expectedType {
+					payload := f.Payload
+					putFrame(f)
+					return payload, nil
+				}
+			}
+			putFrame(f)
+		case <-c.done:
+			return nil, errClosed
+		}
+	}
+}
+
 func (c *Client) Close() error {
-	log.Printf("[Client %s] Closing client", c.clientID)
 	close(c.done)
 
 	c.connMu.Lock()
