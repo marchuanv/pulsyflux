@@ -23,7 +23,8 @@ func (h *handshakeClient) doHandshake() error {
 	default:
 	}
 
-	if err := h.sendHandshakeFrame(uuid.New(), uint64(defaultTimeout.Milliseconds()), flagHandshake); err != nil {
+	reqID := uuid.New()
+	if err := h.sendHandshakeFrame(reqID, uint64(defaultTimeout.Milliseconds()), flagHandshake); err != nil {
 		return err
 	}
 
@@ -32,11 +33,11 @@ func (h *handshakeClient) doHandshake() error {
 }
 
 func (h *handshakeClient) sendHandshakeFrame(reqID uuid.UUID, timeoutMs uint64, flags uint16) error {
-	for retry := 0; retry < 3; retry++ {
+	for retry := 0; retry < 5; retry++ {
 		if retry > 0 {
-			time.Sleep(time.Duration(retry) * time.Second)
+			time.Sleep(200 * time.Millisecond)
 		}
-
+		
 		f := getFrame()
 		f.Version = version1
 		f.Type = startFrame
@@ -54,14 +55,10 @@ func (h *handshakeClient) sendHandshakeFrame(reqID uuid.UUID, timeoutMs uint64, 
 			return errClosed
 		}
 
+		timeout := time.After(1 * time.Second)
 		for {
 			select {
 			case resp := <-h.ctx.reads:
-				if resp.Type == errorFrame && resp.Flags&flagPeerNotAvailable != 0 && retry < 2 {
-					putFrame(resp)
-					break
-				}
-
 				if resp.Type == startFrame && resp.Flags == flagHandshake &&
 					resp.ChannelID == h.channelID && resp.ClientID != h.clientID {
 					h.peerID = resp.ClientID
@@ -69,13 +66,14 @@ func (h *handshakeClient) sendHandshakeFrame(reqID uuid.UUID, timeoutMs uint64, 
 					putFrame(resp)
 					return nil
 				}
-
 				putFrame(resp)
-				return errPeerError
+			case <-timeout:
+				goto nextRetry
 			case <-h.done:
 				return errClosed
 			}
 		}
+		nextRetry:
 	}
 	return errPeerError
 }

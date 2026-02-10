@@ -7,12 +7,11 @@ import (
 )
 
 type peer struct {
-	clientID  uuid.UUID
-	channelID uuid.UUID
-	connctx   *connctx
-	mapper    *requestMapper
-	ready     chan struct{}
-	barrier   chan struct{}
+	clientID         uuid.UUID
+	channelID        uuid.UUID
+	connctx          *connctx
+	mapper           *requestMapper
+	handshakeReqID   uuid.UUID
 }
 
 type peers struct {
@@ -36,16 +35,15 @@ func (r *peers) get(clientID uuid.UUID) (*peer, bool) {
 	return peer, true
 }
 
-func (r *peers) set(clientID uuid.UUID, ctx *connctx, channelId uuid.UUID) {
+func (r *peers) set(clientID uuid.UUID, ctx *connctx, channelId uuid.UUID, handshakeReqID uuid.UUID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.clients[clientID] = &peer{
-		clientID:  clientID,
-		channelID: channelId,
-		connctx:   ctx,
-		mapper:    newRequestMapper(),
-		ready:     make(chan struct{}),
-		barrier:   make(chan struct{}),
+		clientID:       clientID,
+		channelID:      channelId,
+		connctx:        ctx,
+		mapper:         newRequestMapper(),
+		handshakeReqID: handshakeReqID,
 	}
 }
 

@@ -2,7 +2,6 @@ package socket
 
 import (
 	"context"
-	"log"
 	"net"
 	"sync"
 	"syscall"
@@ -86,7 +85,7 @@ func (s *Server) handle(conn net.Conn) {
 	ctx := &connctx{
 		conn:   conn,
 		writes: make(chan *frame, 8192), // Increased from 2048 to handle more concurrent writes
-		reads:  make(chan *frame, 100),
+		reads:  make(chan *frame, 1000), // Increased to prevent blocking
 		errors: make(chan *frame, 2048), // Increased from 512 for better error delivery
 		closed: make(chan struct{}),
 		wg:     &sync.WaitGroup{},
@@ -124,7 +123,6 @@ func (s *Server) handle(conn net.Conn) {
 
 			switch f.Type {
 			case startFrame:
-				log.Printf("[Server] Received START frame for request %s from client %s", f.RequestID, f.ClientID)
 				timeout := time.Duration(f.ClientTimeoutMs) * time.Millisecond
 				reqCtx, cancel := context.WithTimeout(context.Background(), timeout)
 				req := &request{
@@ -141,43 +139,55 @@ func (s *Server) handle(conn net.Conn) {
 				currentClientID = f.ClientID
 				switch f.Flags {
 				case flagHandshake:
-					log.Printf("[Server] Handshake: registering client %s for channel %s", f.ClientID, f.ChannelID)
-					s.peers.set(currentClientID, ctx, f.ChannelID)
+					s.peers.set(currentClientID, ctx, f.ChannelID, f.RequestID)
 					peer := s.peers.pair(currentClientID, f.ChannelID)
 					if peer == nil {
-						log.Printf("[Server] No peer available for client %s", currentClientID)
-						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "no peer client available", flagPeerNotAvailable))
 						req.cancel()
 					} else {
-						log.Printf("[Server] Found peer %s for client %s", peer.clientID, currentClientID)
-						req.peerClientID = peer.clientID
-						currentPeer, _ := s.peers.get(currentClientID)
+						// Send handshake response to current client
+						resp := getFrame()
+						resp.Version = version1
+						resp.Type = startFrame
+						resp.RequestID = f.RequestID
+						resp.ClientID = peer.clientID
+						resp.PeerClientID = currentClientID
+						resp.ChannelID = f.ChannelID
+						resp.ClientTimeoutMs = f.ClientTimeoutMs
+						resp.Flags = flagHandshake
+						ctx.enqueue(resp)
 						
-						// Barrier: signal ready, route frame, wait for peer
-						close(currentPeer.ready)
-						<-peer.ready
-						
-						if !s.requestHandler.handle(req) {
-							req.cancel()
-							ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
-							return
-						}
-						
-						close(currentPeer.barrier)
-						<-peer.barrier
+						// Send handshake notification to peer using peer's request ID
+						peerResp := getFrame()
+						peerResp.Version = version1
+						peerResp.Type = startFrame
+						peerResp.RequestID = peer.handshakeReqID
+						peerResp.ClientID = currentClientID
+						peerResp.PeerClientID = peer.clientID
+						peerResp.ChannelID = f.ChannelID
+						peerResp.ClientTimeoutMs = f.ClientTimeoutMs
+						peerResp.Flags = flagHandshake
+						peer.connctx.enqueue(peerResp)
+						req.cancel()
 					}
 				default:
 					req.peerClientID = f.PeerClientID
-					currentPeer, _ := s.peers.get(currentClientID)
-					peer, _ := s.peers.get(f.PeerClientID)
-					if pendingReqID, found := peer.mapper.getPending(); found && pendingReqID == f.RequestID {
-						currentPeer.mapper.mapRequest(f.RequestID, pendingReqID)
-						peer.mapper.mapRequest(pendingReqID, f.RequestID)
-						peer.mapper.setPending(uuid.Nil)
-						log.Printf("[Server] Mapped response %s -> %s", f.RequestID, pendingReqID)
-					} else {
+					if f.PeerClientID == uuid.Nil {
+						// First request, need to find peer
+						currentPeer, ok := s.peers.get(currentClientID)
+						if !ok {
+							ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "client not registered", 0))
+							req.cancel()
+							continue
+						}
+						peer := s.peers.pair(currentClientID, currentPeer.channelID)
+						if peer == nil {
+							ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "no peer available", flagPeerNotAvailable))
+							req.cancel()
+							continue
+						}
+						req.peerClientID = peer.clientID
+						f.PeerClientID = peer.clientID
 						currentPeer.mapper.setPending(f.RequestID)
-						log.Printf("[Server] Stored pending request %s from client %s", f.RequestID, currentClientID)
 					}
 					streamReqs[f.RequestID] = req
 					if !s.requestHandler.handle(req) {
@@ -187,25 +197,26 @@ func (s *Server) handle(conn net.Conn) {
 				}
 
 			case chunkFrame:
-				log.Printf("[Server] Received CHUNK frame for request %s from client %s (size=%d)", f.RequestID, f.ClientID, len(f.Payload))
 				req := streamReqs[f.RequestID]
 				if req == nil {
-					log.Printf("[Server] ERROR: Received CHUNK before START for request %s", f.RequestID)
 					ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "chunk received before start", 0))
 					putFrame(f)
 					continue
 				}
 				req.frame = f
+				// Cancel old context and create new one
+				req.cancel()
+				reqCtx, cancel := context.WithTimeout(context.Background(), req.timeout)
+				req.cancel = cancel
+				req.ctx = reqCtx
 				if !s.requestHandler.handle(req) {
 					req.cancel()
 					ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
 				}
 
 			case endFrame:
-				log.Printf("[Server] Received END frame for request %s from client %s", f.RequestID, f.ClientID)
 				req := streamReqs[f.RequestID]
 				if req == nil {
-					log.Printf("[Server] ERROR: Received END before START for request %s", f.RequestID)
 					ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "end received before start", 0))
 					putFrame(f)
 					continue

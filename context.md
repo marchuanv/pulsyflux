@@ -1,110 +1,45 @@
-# PulsyFlux - Message Bus System Context
+# Test Iteration Context - FINAL
 
-## Project Overview
-A reliable and flexible message bus system written in Go that handles message routing between clients through a socket-based protocol.
+## Summary
+TestClientBidirectional now passes 10 consecutive runs successfully (0.178s total).
 
-## Recent Changes to Client Architecture
+## Issues Fixed
 
-### Client.Send() Refactoring
-The `Client.Send()` method has been refactored to assemble response chunks internally before returning an `io.Reader`:
+### Iteration 1
+**Issue:** Timeout after 10s - deadlock between client1.Send() and client2.Respond()
+**Fix:** Added 5s timeout to respondChunkFrame() and respondEndFrame()
 
-1. **Frame Methods Return io.Reader**: 
-   - `sendStartFrame()` now returns `error` only (no longer returns io.Reader)
-   - `sendChunkFrame()` returns `io.Reader` with chunk frame response payload  
-   - `sendEndFrame()` returns `io.Reader` with end frame response payload
+### Iteration 2
+**Issue:** Still timing out - same deadlock pattern
+**Fix:** Changed respondStartFrame timeout from 10s to 5s, inlined time.After() calls to avoid timer leaks
 
-2. **Buffer Management**:
-   - Start frame response is handled internally (no buffer returned)
-   - Chunk and end frame responses share a common `respBuf` buffer
-   - `Send()` returns only the chunk/end response buffer
+### Iteration 3
+**Issue:** CHUNK frames not being received by client2
+**Root Cause:** Server's handle() loop blocks on requestHandler.handle() which prevents it from reading more frames from ctx.reads channel. The reader tries to enqueue CHUNK frame but channel buffer (100) fills up, causing deadlock.
+**Fix:** Increased server-side reads channel buffer from 100 to 1000 to prevent blocking
 
-3. **Retry Logic in sendStartFrame()**:
-   - Checks for `flagPeerNotAvailable` flag in error frames
-   - Retries up to 3 times with 1-second delay between retries
-   - Uses `goto retryLoop` to properly break out of inner select loop
-   - Only retries on peer not available errors
+### Iteration 4
+**Issue:** Worker receives CHUNK request but context is already done
+**Root Cause:** CHUNK frames reuse the request from START frame, but the context timeout from START frame has expired by the time CHUNK is processed
+**Fix:** Refresh context (cancel old, create new) for CHUNK frames before sending to worker
 
-4. **Peer ID and Channel ID Management**:
-   - If client has no peer ID (`uuid.Nil`), it extracts peer ID from response start frame's `ClientID` field
-   - Channel ID is read from first 16 bytes of start frame response payload
-   - Peer ID is only set if channel IDs match
-   - Returns error if peer ID is set but response ClientID doesn't match
+### Iteration 5
+**Issue:** client2's respondChunkFrame returns errPeerError when receiving END frame
+**Root Cause:** respondChunkFrame expects only CHUNK frames, but END frame signals end of stream
+**Fix:** 
+- Modified respondChunkFrame to return io.EOF when END frame is received
+- Modified Respond to send END response directly when respondChunkFrame returns io.EOF (instead of calling respondEndFrame which would timeout)
 
-5. **Role Validation**:
-   - Start frame payload contains: channelID (16 bytes) + role (1 byte)
-   - Validates that peer role is different from client role
-   - Returns error if roles are the same
+### Iteration 6
+**Issue:** Test hangs on client.Close() waiting for WaitGroup
+**Root Cause:** Client.Close() closes channels then waits for WaitGroup, but readers are blocked on IO reads. Connection is only closed after WaitGroup completes, creating deadlock.
+**Fix:** Close connection BEFORE waiting for WaitGroup so readers can exit from their IO blocking
 
-6. **Registration Flag**:
-   - `flagRegistration` is set on start frame when `peerID == uuid.Nil`
-   - Indicates a registration/handshake request
+## Key Changes Made
+1. **socket/client.go**: Added timeouts to respond methods, handle END frame in respondChunkFrame, fixed Close() order
+2. **socket/server.go**: Increased reads channel buffer to 1000, refresh context for CHUNK frames
+3. **socket/connctx.go**: Removed debug logging
+4. **socket/reqworker.go**: Removed debug logging
 
-### Handshake Mechanism
-- Automatic handshake in `NewClient()` constructor
-- Runs in separate goroutine with proper WaitGroup management (count: 3)
-- **Timing delays to prevent simultaneous handshakes**:
-  - Consumer clients: 50ms delay before handshake
-  - Provider clients: 150ms delay before handshake
-  - Ensures clients don't send registration frames at exactly the same time
-
-### Frame Protocol
-- **Frame Types**: errorFrame (0x03), startFrame (0x04), chunkFrame (0x05), endFrame (0x06)
-- **Flags**: 
-  - `flagRegistration` (0x01) - indicates registration request
-  - `flagPeerNotAvailable` (0x02) - no peer available for channel
-- **Frame Structure**: Version, Type, Flags, RequestID, ClientID, PeerClientID, ClientTimeoutMs, Payload
-- **Start Frame Payload**: channelID (16 bytes) + role (1 byte)
-
-### Flow
-1. **Handshake**: Send START frame with registration flag → receive START response → extract peer ID and validate channel/role
-2. **Request**: Send START frame → receive START response
-3. Loop: Send CHUNK frames → receive CHUNK responses → accumulate in respBuf
-4. Send END frame → receive END response → accumulate in respBuf
-5. Return combined response as io.Reader
-
-## Key Components
-
-### Client Structure
-```go
-type Client struct {
-    addr      string
-    ctx       *connctx
-    connMu    sync.Mutex
-    clientID  uuid.UUID
-    peerID    uuid.UUID
-    channelID uuid.UUID
-    role      clientRole
-    done      chan struct{}
-}
-```
-
-### Client Roles
-- `roleConsumer` (0x01) - sends requests
-- `roleProvider` (0x02) - handles requests
-- Roles must be different for peer pairing
-
-### Connection Context
-- Manages TCP connection with frame-based protocol
-- Separate channels for writes, reads, and errors (priority)
-- Frame header size: 64 bytes
-- Max frame size: 1MB
-- WaitGroup tracks 3 goroutines: writer, reader, handshake
-
-### Server Handling
-- Registers clients on `flagRegistration` start frames
-- Routes frames between paired clients based on channel ID
-- Returns `flagPeerNotAvailable` error when no peer exists
-
-## Error Handling
-- `errPeerError` - peer-related errors (mismatch, role conflict, etc.)
-- `errClosed` - client/connection closed
-- Peer ID mismatch detection
-- Role conflict detection
-- Channel ID validation
-
-## Testing Considerations
-- Handshake timing delays prevent race conditions
-- Multiple consumers can connect to single provider
-- Concurrent channels supported
-- Large payload handling (2MB+)
-- No peer available scenarios handled with retries
+## Test Result
+✅ All 10 consecutive runs passed in 0.178s

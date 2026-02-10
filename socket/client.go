@@ -161,46 +161,61 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 }
 
 func (c *Client) respondStartFrame(timeoutMs uint64) (uuid.UUID, error) {
-	select {
-	case f := <-c.ctx.reads:
-		if f.Type != startFrame {
-			putFrame(f)
-			return uuid.Nil, errPeerError
-		}
-		reqID := f.RequestID
-		flags := f.Flags
-		putFrame(f)
-
-		resp := getFrame()
-		resp.Version = version1
-		resp.Type = startFrame
-		resp.RequestID = reqID
-		resp.ClientID = c.clientID
-		resp.PeerClientID = c.peerID
-		resp.ChannelID = c.channelID
-		resp.ClientTimeoutMs = timeoutMs
-		resp.Flags = flags
-
+	timeout := time.After(5 * time.Second)
+	for {
 		select {
-		case c.ctx.writes <- resp:
-			return reqID, nil
+		case f := <-c.ctx.reads:
+			if f.Type == startFrame && f.Flags != flagHandshake {
+				reqID := f.RequestID
+				flags := f.Flags
+				putFrame(f)
+
+				resp := getFrame()
+				resp.Version = version1
+				resp.Type = startFrame
+				resp.RequestID = reqID
+				resp.ClientID = c.clientID
+				resp.PeerClientID = c.peerID
+				resp.ChannelID = c.channelID
+				resp.ClientTimeoutMs = timeoutMs
+				resp.Flags = flags
+
+				select {
+				case c.ctx.writes <- resp:
+					return reqID, nil
+				case <-c.done:
+					putFrame(resp)
+					return uuid.Nil, errClosed
+				}
+			}
+			putFrame(f)
+		case <-timeout:
+			return uuid.Nil, errTimeout
 		case <-c.done:
-			putFrame(resp)
 			return uuid.Nil, errClosed
 		}
-	case <-c.done:
-		return uuid.Nil, errClosed
 	}
 }
 
 func (c *Client) respondChunkFrame(reqID uuid.UUID, r io.Reader, buf *[]byte) error {
 	select {
 	case f := <-c.ctx.reads:
-		if f.RequestID != reqID || f.Type != chunkFrame {
+		if f.RequestID != reqID {
+			putFrame(f)
+			return errPeerError
+		}
+		if f.Type == endFrame {
+			// Peer sent END frame, we're done with chunks
+			putFrame(f)
+			return io.EOF
+		}
+		if f.Type != chunkFrame {
 			putFrame(f)
 			return errPeerError
 		}
 		putFrame(f)
+	case <-time.After(5 * time.Second):
+		return errTimeout
 	case <-c.done:
 		return errClosed
 	}
@@ -235,6 +250,8 @@ func (c *Client) respondEndFrame(reqID uuid.UUID, timeoutMs uint64) error {
 			return errPeerError
 		}
 		putFrame(f)
+	case <-time.After(5 * time.Second):
+		return errTimeout
 	case <-c.done:
 		return errClosed
 	}
@@ -277,14 +294,28 @@ func (c *Client) Respond(r io.Reader, timeout time.Duration) error {
 	for {
 		err := c.respondChunkFrame(reqID, r, buf)
 		if err == io.EOF {
-			break
+			// END frame was already received in respondChunkFrame
+			// Send END response
+			resp := getFrame()
+			resp.Version = version1
+			resp.Type = endFrame
+			resp.RequestID = reqID
+			resp.ClientID = c.clientID
+			resp.PeerClientID = c.peerID
+			resp.ChannelID = c.channelID
+			resp.ClientTimeoutMs = timeoutMs
+			select {
+			case c.ctx.writes <- resp:
+				return nil
+			case <-c.done:
+				putFrame(resp)
+				return errClosed
+			}
 		}
 		if err != nil {
 			return err
 		}
 	}
-
-	return c.respondEndFrame(reqID, timeoutMs)
 }
 
 func (c *Client) awaitFrame(reqID uuid.UUID, expectedType byte) error {
@@ -341,14 +372,13 @@ func (c *Client) Close() error {
 	defer c.connMu.Unlock()
 
 	if c.ctx != nil {
+		if c.ctx.conn != nil {
+			c.ctx.conn.Close()
+		}
 		close(c.ctx.writes)
 		close(c.ctx.errors)
 		c.ctx.wg.Wait()
-		if c.ctx.conn != nil {
-			err := c.ctx.conn.Close()
-			c.ctx.conn = nil
-			return err
-		}
+		c.ctx.conn = nil
 	}
 	return nil
 }
