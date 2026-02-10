@@ -23,8 +23,7 @@ const (
 	defaultFrameReadTimeout         = 2 * time.Minute
 	defaultFrameWriteTimeout        = 5 * time.Second
 	flagNone                 uint16 = 0x00
-	flagHandshakeStarted     uint16 = 0x01
-	flagHandshakeCompleted   uint16 = 0x02
+	flagHandshake            uint16 = 0x01
 	flagPeerNotAvailable     uint16 = 0x03
 	defaultClientTimeoutMs   uint64 = 30000
 )

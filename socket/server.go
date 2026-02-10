@@ -140,8 +140,8 @@ func (s *Server) handle(conn net.Conn) {
 
 				currentClientID = f.ClientID
 				switch f.Flags {
-				case flagHandshakeStarted:
-					log.Printf("[Server] Handshake started: registering client %s for channel %s", f.ClientID, f.ChannelID)
+				case flagHandshake:
+					log.Printf("[Server] Handshake: registering client %s for channel %s", f.ClientID, f.ChannelID)
 					s.peers.set(currentClientID, ctx, f.ChannelID)
 					peer := s.peers.pair(currentClientID, f.ChannelID)
 					if peer == nil {
@@ -151,32 +151,21 @@ func (s *Server) handle(conn net.Conn) {
 					} else {
 						log.Printf("[Server] Found peer %s for client %s", peer.clientID, currentClientID)
 						req.peerClientID = peer.clientID
+						currentPeer, _ := s.peers.get(currentClientID)
+						
+						// Barrier: signal ready, route frame, wait for peer
+						close(currentPeer.ready)
+						<-peer.ready
+						
 						if !s.requestHandler.handle(req) {
 							req.cancel()
 							ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
 							return
 						}
+						
+						close(currentPeer.barrier)
+						<-peer.barrier
 					}
-				case flagHandshakeCompleted:
-					log.Printf("[Server] Handshake completed: request ID mapping service ready for client %s", currentClientID)
-					req.peerClientID = f.PeerClientID
-					currentPeer, _ := s.peers.get(currentClientID)
-					peerClient, _ := s.peers.get(f.PeerClientID)
-					
-					// Phase 1: Both signal ready
-					close(currentPeer.ready)
-					<-peerClient.ready
-					
-					// Phase 2: Route frame
-					if !s.requestHandler.handle(req) {
-						req.cancel()
-						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))
-						return
-					}
-					
-					// Phase 3: Both signal barrier complete
-					close(currentPeer.barrier)
-					<-peerClient.barrier
 				default:
 					req.peerClientID = f.PeerClientID
 					currentPeer, _ := s.peers.get(currentClientID)

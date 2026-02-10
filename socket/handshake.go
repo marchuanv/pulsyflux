@@ -26,15 +26,9 @@ func (h *handshakeClient) doHandshake() error {
 
 	timeoutMs := uint64(defaultTimeout.Milliseconds())
 
-	// Send handshake started and wait for peer's handshake started
-	handshakeStartedReqID := uuid.New()
-	if err := h.sendHandshakeFrame(handshakeStartedReqID, timeoutMs, flagHandshakeStarted); err != nil {
-		return err
-	}
-
-	// Send handshake completed and wait for peer's handshake completed
-	handshakeCompletedReqID := uuid.New()
-	if err := h.sendHandshakeFrame(handshakeCompletedReqID, timeoutMs, flagHandshakeCompleted); err != nil {
+	// Single handshake frame
+	handshakeReqID := uuid.New()
+	if err := h.sendHandshakeFrame(handshakeReqID, timeoutMs, flagHandshake); err != nil {
 		return err
 	}
 
@@ -81,24 +75,16 @@ func (h *handshakeClient) sendHandshakeFrame(reqID uuid.UUID, timeoutMs uint64, 
 					return errPeerError
 				case startFrame:
 					switch f.Flags {
-					case flagHandshakeStarted:
+					case flagHandshake:
 						if f.ChannelID == h.channelID && f.ClientID != h.clientID {
 							h.peerID = f.ClientID
-							log.Printf("[Client %s] Set peer ID to %s", h.clientID, h.peerID)
+							log.Printf("[Client %s] Handshake completed with peer %s", h.clientID, h.peerID)
 							putFrame(f)
 							return nil
 						}
-						log.Printf("[Client %s] ERROR: Received handshake startFrame with invalid channel ID or client ID", h.clientID)
+						log.Printf("[Client %s] ERROR: Received handshake frame with invalid channel ID or client ID", h.clientID)
 						putFrame(f)
 						return errPeerError
-					case flagHandshakeCompleted:
-						if h.peerID == uuid.Nil {
-							log.Printf("[Client %s] ERROR: Handshake completed but no peer ID set", h.clientID)
-							return errPeerError
-						}
-						log.Printf("[Client %s] Handshake completed successfully with peer %s", h.clientID, h.peerID)
-						putFrame(f)
-						return nil
 					default:
 						log.Printf("[Client %s] ERROR: Received unexpected handshake frame with flags %d", h.clientID, f.Flags)
 						return errPeerError
