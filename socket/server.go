@@ -160,6 +160,14 @@ func (s *Server) handle(conn net.Conn) {
 				case flagHandshakeCompleted:
 					log.Printf("[Server] Handshake completed: request ID mapping service ready for client %s", currentClientID)
 					req.peerClientID = f.PeerClientID
+					currentPeer, _ := s.peers.get(currentClientID)
+					peer, _ := s.peers.get(f.PeerClientID)
+
+					close(currentPeer.ready)
+					<-peer.ready
+
+					log.Printf("[Server] Both clients %s and %s are ready, processing request %s", currentClientID, f.PeerClientID, f.RequestID)
+
 					if !s.requestHandler.handle(req) {
 						req.cancel()
 						ctx.enqueue(newErrorFrame(f.RequestID, currentClientID, "server overloaded", 0))

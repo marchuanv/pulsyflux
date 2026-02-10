@@ -11,6 +11,7 @@ type peer struct {
 	channelID uuid.UUID
 	connctx   *connctx
 	mapper    *requestMapper
+	ready     chan struct{}
 }
 
 type peers struct {
@@ -42,6 +43,7 @@ func (r *peers) set(clientID uuid.UUID, ctx *connctx, channelId uuid.UUID) {
 		channelID: channelId,
 		connctx:   ctx,
 		mapper:    newRequestMapper(),
+		ready:     make(chan struct{}),
 	}
 }
 
