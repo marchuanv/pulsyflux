@@ -69,3 +69,74 @@ func TestLargePayload(t *testing.T) {
 func TestConcurrentChannels(t *testing.T) {
 	t.Skip("Test needs to be redesigned without Receive()")
 }
+
+func TestMultiplePeers(t *testing.T) {
+	server := NewServer("9093")
+	if err := server.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer server.Stop()
+
+	channelID := uuid.New()
+	client1, _ := NewClient("127.0.0.1:9093", channelID)
+	defer client1.Close()
+	client2, _ := NewClient("127.0.0.1:9093", channelID)
+	defer client2.Close()
+	client3, _ := NewClient("127.0.0.1:9093", channelID)
+	defer client3.Close()
+
+	done := make(chan string, 2)
+	go func() {
+		client2.Respond(strings.NewReader("from2"), 5*time.Second)
+		done <- "client2"
+	}()
+	go func() {
+		client3.Respond(strings.NewReader("from3"), 5*time.Second)
+		done <- "client3"
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	resp, err := client1.Send(strings.NewReader("test"), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	data, _ := io.ReadAll(resp)
+	if len(data) == 0 {
+		t.Error("Expected response from peer")
+	}
+	<-done
+}
+
+func TestBroadcast(t *testing.T) {
+	server := NewServer("9094")
+	if err := server.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer server.Stop()
+
+	channelID := uuid.New()
+	client1, _ := NewClient("127.0.0.1:9094", channelID)
+	defer client1.Close()
+	client2, _ := NewClient("127.0.0.1:9094", channelID)
+	defer client2.Close()
+	client3, _ := NewClient("127.0.0.1:9094", channelID)
+	defer client3.Close()
+
+	received := make(chan bool, 2)
+	go func() {
+		client2.Respond(strings.NewReader("ack2"), 5*time.Second)
+		received <- true
+	}()
+	go func() {
+		client3.Respond(strings.NewReader("ack3"), 5*time.Second)
+		received <- true
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	err := client1.Broadcast(strings.NewReader("broadcast"), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Broadcast failed: %v", err)
+	}
+	<-received
+	<-received
+}

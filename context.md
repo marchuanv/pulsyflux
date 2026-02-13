@@ -43,3 +43,38 @@ TestClientBidirectional now passes 10 consecutive runs successfully (0.178s tota
 
 ## Test Result
 ✅ All 10 consecutive runs passed in 0.178s
+
+
+# Socket Package Redesign - Multiple Peers Support
+
+## Changes Made
+
+### 1. peers.go - Channel-based indexing
+- Added `channels map[uuid.UUID]map[uuid.UUID]*peer` to track all peers per channel
+- Added `getChannelPeers(channelID, excludeClientID)` to return all peers on a channel
+- Modified `set()` to maintain both client and channel indexes
+- Modified `delete()` to clean up both indexes
+
+### 2. connctx.go - Broadcast flag
+- Added `flagBroadcast uint16 = 0x02` constant
+
+### 3. client.go - Broadcast support
+- Added `Broadcast(r io.Reader, timeout) error` method
+- Refactored `Send()` to use internal `send(r, timeout, flags)` method
+- Broadcast mode skips response collection
+
+### 4. reqworker.go - Broadcast routing
+- Modified `handle()` to check `flagBroadcast` flag
+- Routes to all channel peers when broadcast flag is set
+- Routes to single peer for normal messages
+
+### 5. server.go - Multi-peer handshake
+- Modified handshake to use `getChannelPeers()` instead of `pair()`
+- Notifies all existing peers when new peer joins channel
+- Each peer receives handshake notification with new peer's ID
+
+## Architecture
+- Multiple clients can join same channel
+- Broadcast messages to all peers on channel
+- Backward compatible with 1:1 pairing (uses first peer)
+- Minimal code changes to existing structure

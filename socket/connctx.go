@@ -14,18 +14,19 @@ import (
 const version1 byte = 1
 
 const (
-	errorFrame               byte   = 0x03
-	startFrame               byte   = 0x04
-	chunkFrame               byte   = 0x05
-	endFrame                 byte   = 0x06
-	frameHeaderSize                 = 80
-	maxFrameSize                    = 1024 * 1024
-	defaultFrameReadTimeout         = 2 * time.Minute
-	defaultFrameWriteTimeout        = 5 * time.Second
-	flagNone                 uint16 = 0x00
-	flagHandshake            uint16 = 0x01
-	flagPeerNotAvailable     uint16 = 0x03
-	defaultClientTimeoutMs   uint64 = 30000
+	errorFrame           byte   = 0x03
+	startFrame           byte   = 0x04
+	chunkFrame           byte   = 0x05
+	endFrame             byte   = 0x06
+	frameHeaderSize             = 64
+	maxFrameSize                = 1024 * 1024
+	defaultFrameReadTimeout     = 2 * time.Minute
+	defaultFrameWriteTimeout    = 5 * time.Second
+	flagNone             uint16 = 0x00
+	flagRequest          uint16 = 0x01
+	flagReceive          uint16 = 0x04
+	flagResponse         uint16 = 0x08
+	defaultClientTimeoutMs uint64 = 30000
 )
 
 type connctx struct {
@@ -43,7 +44,6 @@ type frame struct {
 	Flags           uint16
 	RequestID       uuid.UUID
 	ClientID        uuid.UUID
-	PeerClientID    uuid.UUID
 	ChannelID       uuid.UUID
 	ClientTimeoutMs uint64
 	Payload         []byte
@@ -56,7 +56,6 @@ func newErrorFrame(reqID uuid.UUID, clientID uuid.UUID, msg string, flags uint16
 	f.Flags = flags
 	f.RequestID = reqID
 	f.ClientID = clientID
-	f.PeerClientID = uuid.Nil
 	f.ClientTimeoutMs = defaultClientTimeoutMs
 	f.Payload = []byte(msg)
 	return f
@@ -160,7 +159,7 @@ func (ctx *connctx) readFrame() (*frame, error) {
 		return nil, errors.New("unsupported protocol version")
 	}
 
-	payloadLen := binary.BigEndian.Uint32(header[76:80])
+	payloadLen := binary.BigEndian.Uint32(header[60:64])
 	if payloadLen > maxFrameSize {
 		return nil, errors.New("frame payload too large")
 	}
@@ -171,9 +170,8 @@ func (ctx *connctx) readFrame() (*frame, error) {
 	f.Flags = binary.BigEndian.Uint16(header[2:4])
 	copy(f.RequestID[:], header[4:20])
 	copy(f.ClientID[:], header[20:36])
-	copy(f.PeerClientID[:], header[36:52])
-	copy(f.ChannelID[:], header[52:68])
-	f.ClientTimeoutMs = binary.BigEndian.Uint64(header[68:76])
+	copy(f.ChannelID[:], header[36:52])
+	f.ClientTimeoutMs = binary.BigEndian.Uint64(header[52:60])
 
 	if payloadLen > 0 {
 		f.Payload = make([]byte, payloadLen)
@@ -196,10 +194,9 @@ func (ctx *connctx) writeFrame(f *frame) error {
 	binary.BigEndian.PutUint16(header[2:4], f.Flags)
 	copy(header[4:20], f.RequestID[:])
 	copy(header[20:36], f.ClientID[:])
-	copy(header[36:52], f.PeerClientID[:])
-	copy(header[52:68], f.ChannelID[:])
-	binary.BigEndian.PutUint64(header[68:76], f.ClientTimeoutMs)
-	binary.BigEndian.PutUint32(header[76:80], uint32(len(f.Payload)))
+	copy(header[36:52], f.ChannelID[:])
+	binary.BigEndian.PutUint64(header[52:60], f.ClientTimeoutMs)
+	binary.BigEndian.PutUint32(header[60:64], uint32(len(f.Payload)))
 	if len(f.Payload) > 0 {
 		if len(f.Payload) <= 8192 {
 			buf := getWriteBuffer()

@@ -28,16 +28,28 @@ func (rw *requestWorker) handle(reqCh chan *request, wg *sync.WaitGroup) {
 			continue
 		default:
 		}
-		peer, ok := rw.peers.get(req.peerClientID)
-		if !ok {
-			req.connctx.enqueue(newErrorFrame(req.requestID, req.clientID, "no peer client available", flagPeerNotAvailable))
-			req.cancel()
-			continue
-		}
-		
-		// Route frame to peer
-		if !peer.connctx.enqueue(req.frame) {
-			req.connctx.enqueue(newErrorFrame(req.requestID, req.clientID, "failed to send frame to peer", 0))
+
+		if req.frame.Flags&flagBroadcast != 0 {
+			currentPeer, ok := rw.peers.get(req.clientID)
+			if !ok {
+				req.connctx.enqueue(newErrorFrame(req.requestID, req.clientID, "client not registered", 0))
+				req.cancel()
+				continue
+			}
+			peers := rw.peers.getChannelPeers(currentPeer.channelID, req.clientID)
+			for _, peer := range peers {
+				peer.connctx.enqueue(req.frame)
+			}
+		} else {
+			peer, ok := rw.peers.get(req.peerClientID)
+			if !ok {
+				req.connctx.enqueue(newErrorFrame(req.requestID, req.clientID, "no peer client available", flagPeerNotAvailable))
+				req.cancel()
+				continue
+			}
+			if !peer.connctx.enqueue(req.frame) {
+				req.connctx.enqueue(newErrorFrame(req.requestID, req.clientID, "failed to send frame to peer", 0))
+			}
 		}
 		req.cancel()
 	}

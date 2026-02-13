@@ -1,0 +1,146 @@
+package socket
+
+import (
+	"sync"
+
+	"github.com/google/uuid"
+)
+
+type clientEntry struct {
+	clientID      uuid.UUID
+	channelID     uuid.UUID
+	connctx       *connctx
+	requestQueue  chan *frame
+	responseQueue chan *frame
+}
+
+type registry struct {
+	mu       sync.RWMutex
+	clients  map[uuid.UUID]*clientEntry
+	channels map[uuid.UUID]map[uuid.UUID]*clientEntry
+}
+
+func newRegistry() *registry {
+	return &registry{
+		clients:  make(map[uuid.UUID]*clientEntry),
+		channels: make(map[uuid.UUID]map[uuid.UUID]*clientEntry),
+	}
+}
+
+func (r *registry) register(clientID, channelID uuid.UUID, ctx *connctx) *clientEntry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	entry := &clientEntry{
+		clientID:      clientID,
+		channelID:     channelID,
+		connctx:       ctx,
+		requestQueue:  make(chan *frame, 1024),
+		responseQueue: make(chan *frame, 1024),
+	}
+
+	r.clients[clientID] = entry
+	if r.channels[channelID] == nil {
+		r.channels[channelID] = make(map[uuid.UUID]*clientEntry)
+	}
+	r.channels[channelID][clientID] = entry
+
+	go entry.processResponses()
+	return entry
+}
+
+func (r *registry) get(clientID uuid.UUID) (*clientEntry, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, ok := r.clients[clientID]
+	return entry, ok
+}
+
+func (r *registry) unregister(clientID uuid.UUID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if entry, ok := r.clients[clientID]; ok {
+		close(entry.requestQueue)
+		close(entry.responseQueue)
+		delete(r.clients, clientID)
+
+		if ch := r.channels[entry.channelID]; ch != nil {
+			delete(ch, clientID)
+			if len(ch) == 0 {
+				delete(r.channels, entry.channelID)
+			}
+		}
+	}
+}
+
+func (r *registry) getChannelPeers(channelID, excludeClientID uuid.UUID) []*clientEntry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	ch := r.channels[channelID]
+	if ch == nil {
+		return nil
+	}
+
+	peers := make([]*clientEntry, 0, len(ch)-1)
+	for id, entry := range ch {
+		if id != excludeClientID {
+			peers = append(peers, entry)
+		}
+	}
+	return peers
+}
+
+func (r *registry) dequeueRequestForClient(clientID uuid.UUID) (*frame, bool) {
+	entry, ok := r.get(clientID)
+	if !ok {
+		return nil, false
+	}
+
+	if f, ok := entry.dequeueRequest(); ok {
+		return f, true
+	}
+
+	peers := r.getChannelPeers(entry.channelID, clientID)
+	for _, peer := range peers {
+		if f, ok := peer.dequeueRequest(); ok {
+			return f, true
+		}
+	}
+
+	return nil, false
+}
+
+func (e *clientEntry) enqueueRequest(f *frame) bool {
+	select {
+	case e.requestQueue <- f:
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *clientEntry) dequeueRequest() (*frame, bool) {
+	select {
+	case f, ok := <-e.requestQueue:
+		return f, ok
+	default:
+		return nil, false
+	}
+}
+
+func (e *clientEntry) enqueueResponse(f *frame) bool {
+	select {
+	case e.responseQueue <- f:
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *clientEntry) processResponses() {
+	for f := range e.responseQueue {
+		e.connctx.enqueue(f)
+	}
+}
