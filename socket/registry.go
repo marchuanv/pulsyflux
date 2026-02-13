@@ -7,11 +7,12 @@ import (
 )
 
 type clientEntry struct {
-	clientID      uuid.UUID
-	channelID     uuid.UUID
-	connctx       *connctx
-	requestQueue  chan *frame
-	responseQueue chan *frame
+	clientID       uuid.UUID
+	channelID      uuid.UUID
+	connctx        *connctx
+	requestQueue   chan *frame
+	responseQueue  chan *frame
+	pendingReceive chan *frame
 }
 
 type registry struct {
@@ -32,11 +33,12 @@ func (r *registry) register(clientID, channelID uuid.UUID, ctx *connctx) *client
 	defer r.mu.Unlock()
 
 	entry := &clientEntry{
-		clientID:      clientID,
-		channelID:     channelID,
-		connctx:       ctx,
-		requestQueue:  make(chan *frame, 1024),
-		responseQueue: make(chan *frame, 1024),
+		clientID:       clientID,
+		channelID:      channelID,
+		connctx:        ctx,
+		requestQueue:   make(chan *frame, 1024),
+		responseQueue:  make(chan *frame, 1024),
+		pendingReceive: make(chan *frame, 1024),
 	}
 
 	r.clients[clientID] = entry
@@ -63,6 +65,7 @@ func (r *registry) unregister(clientID uuid.UUID) {
 	if entry, ok := r.clients[clientID]; ok {
 		close(entry.requestQueue)
 		close(entry.responseQueue)
+		close(entry.pendingReceive)
 		delete(r.clients, clientID)
 
 		if ch := r.channels[entry.channelID]; ch != nil {
@@ -136,6 +139,24 @@ func (e *clientEntry) enqueueResponse(f *frame) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func (e *clientEntry) enqueuePendingReceive(f *frame) bool {
+	select {
+	case e.pendingReceive <- f:
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *clientEntry) dequeuePendingReceive() (*frame, bool) {
+	select {
+	case f, ok := <-e.pendingReceive:
+		return f, ok
+	default:
+		return nil, false
 	}
 }
 

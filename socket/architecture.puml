@@ -1,0 +1,66 @@
+@startuml Architecture Diagram
+
+title Socket Package Architecture
+
+package "Client A" {
+  [Send()] as SendA
+  [Receive()] as RecvA
+  [Respond()] as RespA
+  [connctx] as ConnA
+}
+
+package "Server" {
+  [Frame Router] as Router
+  database "Registry" {
+    folder "Client A Entry" {
+      queue "Request Queue A" as ReqQA
+      queue "Response Queue A" as RespQA
+    }
+    folder "Client B Entry" {
+      queue "Request Queue B" as ReqQB
+      queue "Response Queue B" as RespQB
+    }
+  }
+}
+
+package "Client B" {
+  [Send()] as SendB
+  [Receive()] as RecvB
+  [Respond()] as RespB
+  [connctx] as ConnB
+}
+
+SendA --> ConnA: flagRequest
+ConnA --> Router: TCP
+Router --> ReqQB: enqueue
+
+RecvB --> ConnB: flagReceive
+ConnB --> Router: TCP
+Router --> ReqQB: dequeue
+Router --> ConnB: direct send
+
+RespB --> ConnB: flagResponse
+ConnB --> Router: TCP
+Router --> RespQA: enqueue
+RespQA --> ConnA: FIFO
+
+note right of Router
+  Routes frames based on flags:
+  - flagRequest → peers' request queues
+  - flagReceive → dequeue & send
+  - flagResponse → response queue
+end note
+
+note bottom of ReqQA
+  Request Queue:
+  Contains requests FROM
+  other clients (or self if alone)
+end note
+
+note bottom of RespQA
+  Response Queue:
+  Contains responses TO
+  be sent to this client
+end note
+
+@enduml

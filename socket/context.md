@@ -1,74 +1,62 @@
-# Socket Package Context
+# Socket Implementation Context
 
-## Architecture Overview
+## Current Status
 
-The socket package implements a server-side connected client registry that manages multiple concurrent logical clients with strict FIFO ordering per client.
+### Passing Tests
+- `TestSendReceiveRespond` - Basic send/receive/respond flow between two clients
+- `TestNoOtherClients` - Client sending to itself when no peers exist
+- `TestReceiveFromPeerQueue` - Client receiving from peer's queue
 
-## Core Components
+### Failing Tests
+- `TestMultiplePeers` - Multiple peers receiving same request (needs work)
+- `TestConcurrentRequests` - Concurrent request handling (needs work)
 
-### Registry (registry.go)
-- Manages all connected clients
-- Each client has two independent queues:
-  - **Request Queue**: Contains request frames from other clients in the same channel
-  - **Response Queue**: Contains response frames to be sent to that specific client
-- Queues enforce strict FIFO ordering, isolated per client
+## Key Implementation Details
 
-### Server (server.go)
-- Accepts TCP connections on localhost
-- Routes frames based on flags:
-  - **flagRequest (0x01)**: Enqueues to peers' request queues (or own if no peers)
-  - **flagReceive (0x04)**: Dequeues from own request queue first, then peers' queues, sends directly to client
-  - **flagResponse (0x08)**: Routes to original requester's response queue
-  - Unknown flags: Discarded
+### Frame Routing Logic
 
-### Client (client.go)
-- Three main operations:
-  - **Send()**: Sends request frames with flagRequest to server
-  - **Receive()**: Sends frame with flagReceive, waits for dequeued request
-  - **Respond()**: Sends response frames with flagResponse back to requester
+1. **START Frames with flagRequest**:
+   - Try to send directly to peers with pending receives
+   - If no pending receives, enqueue to peer request queues
+   - Send ACK to sender when enqueued to own queue (no peers) or successfully enqueued to peers
 
-## Frame Structure
-- Version (byte)
-- Type (byte): startFrame, chunkFrame, endFrame, errorFrame
-- Flags (uint16): flagRequest, flagReceive, flagResponse
-- RequestID (UUID)
-- ClientID (UUID)
-- ChannelID (UUID)
-- ClientTimeoutMs (uint64)
-- Payload ([]byte)
+2. **CHUNK/END Frames with flagRequest**:
+   - Send directly to first peer (assumes START already established connection)
+   - No pending receive check needed for continuation frames
 
-## Frame Routing Logic
+3. **Response Frames (flagResponse)**:
+   - Route directly back to original requester using ClientID from frame
+   - Blocking send to ensure delivery
 
-### When Client Calls Send()
-1. Client sends frames with flagRequest
-2. Server enqueues to all other clients' request queues in same channel
-3. If no other clients exist, enqueues to sender's own request queue
+4. **Receive Frames (flagReceive)**:
+   - Try to dequeue from own request queue first
+   - Then try peers' request queues
+   - If no requests available, enqueue as pending receive
 
-### When Client Calls Receive()
-1. Client sends frame with flagReceive
-2. Server dequeues from client's own request queue first
-3. If empty, dequeues from other clients' request queues in same channel
-4. Server sends dequeued frame directly to client (bypasses response queue)
-5. If no requests available, sends errorFrame
+### Client Response Flow
 
-### When Client Calls Respond()
-1. Client sends frames with flagResponse
-2. Server routes to original requester's response queue
-3. Response queue processor sends to client in FIFO order
+When a client calls `Respond()`:
+1. Sends a receive frame to signal readiness
+2. Waits for START frame from peer
+3. Extracts requester's ClientID from incoming frame
+4. Uses requester's ClientID in all response frames (START, CHUNK, END)
+5. This ensures server routes responses back to original requester
 
-## Key Design Decisions
+### Critical Fixes Applied
 
-1. **No Handshake**: Removed handshake mechanism for simplicity
-2. **No PeerClientID**: Frames don't track peer relationships
-3. **Direct Send on Receive**: Receive() bypasses response queue for immediate delivery
-4. **Flag-Based Routing**: Server uses flags to determine frame routing
-5. **Per-Client Isolation**: Request/response queues are completely isolated per client
+1. **Response Routing**: Changed from using responder's ClientID to using requester's ClientID in response frames
+2. **Chunk Frame Responses**: Always send chunk response even if payload is empty to maintain request-response pairing
+3. **Direct Peer Routing**: CHUNK/END frames bypass pending receive mechanism and go directly to first peer
+4. **ACK for Enqueued Requests**: Send ACK when START frame is enqueued (no immediate responder available)
 
-## Files Structure
-- `server.go`: Server implementation with frame routing logic
-- `client.go`: Client implementation with Send/Receive/Respond methods
-- `registry.go`: Client registry with per-client queues
-- `connctx.go`: Connection context with frame read/write logic
-- `shared.go`: Shared constants and error definitions
-- `bufferpool.go`: Buffer pooling for performance
-- `specification.md`: Detailed specification document
+### Known Issues
+
+1. **Multiple Peers**: When multiple peers exist, only first peer receives CHUNK/END frames. Need to track which peer is handling each request.
+2. **Concurrent Requests**: Multiple concurrent requests may interfere with each other's routing.
+
+## Next Steps
+
+To fix remaining tests:
+1. Track active request-peer mappings (requestID -> peerID)
+2. Route CHUNK/END frames to the specific peer handling that request
+3. Handle race conditions in concurrent request scenarios

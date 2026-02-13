@@ -1,0 +1,68 @@
+@startuml Frame Flow Diagram
+
+title Socket Package Frame Flow
+
+actor "Client A" as CA
+participant "Server\nRegistry" as Server
+participant "Client A\nRequest Queue" as QA_REQ
+participant "Client A\nResponse Queue" as QA_RESP
+participant "Client B\nRequest Queue" as QB_REQ
+participant "Client B\nResponse Queue" as QB_RESP
+actor "Client B" as CB
+
+== Send() Flow ==
+CA -> Server: frame(flagRequest, start)
+Server -> QB_REQ: enqueue(frame)
+note right: Enqueues to peer's\nrequest queue
+
+CA -> Server: frame(flagRequest, chunk)
+Server -> QB_REQ: enqueue(frame)
+
+CA -> Server: frame(flagRequest, end)
+Server -> QB_REQ: enqueue(frame)
+
+== Receive() Flow ==
+CB -> Server: frame(flagReceive)
+Server -> QB_REQ: dequeueRequest()
+QB_REQ --> Server: frame(start)
+Server -> CB: frame(start)
+note right: Sends directly\nto client
+
+CB -> Server: frame(flagReceive)
+Server -> QB_REQ: dequeueRequest()
+QB_REQ --> Server: frame(chunk)
+Server -> CB: frame(chunk)
+
+CB -> Server: frame(flagReceive)
+Server -> QB_REQ: dequeueRequest()
+QB_REQ --> Server: frame(end)
+Server -> CB: frame(end)
+
+== Respond() Flow ==
+CB -> Server: frame(flagResponse, start)
+Server -> QA_RESP: enqueue(frame)
+note right: Routes to original\nrequester's response queue
+
+QA_RESP -> CA: frame(start)
+note right: Response queue\nprocessor sends\nin FIFO order
+
+CB -> Server: frame(flagResponse, chunk)
+Server -> QA_RESP: enqueue(frame)
+QA_RESP -> CA: frame(chunk)
+
+CB -> Server: frame(flagResponse, end)
+Server -> QA_RESP: enqueue(frame)
+QA_RESP -> CA: frame(end)
+
+== No Peers Case ==
+CA -> Server: frame(flagRequest, start)
+Server -> QA_REQ: enqueue(frame)
+note right: No peers exist,\nenqueues to own queue
+
+CA -> Server: frame(flagReceive)
+Server -> QA_REQ: dequeueRequest()
+QA_REQ --> Server: frame(start)
+Server -> CA: frame(start)
+note right: Client receives\nits own request
+
+@enduml
