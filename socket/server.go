@@ -140,8 +140,6 @@ func (s *Server) handle(conn net.Conn) {
 						continue
 					}
 				}
-				// Nothing to dequeue - keep receive frame pending
-				entry.enqueuePendingReceive(f)
 			} else if f.Flags&flagResponse != 0 {
 				// Response frame - route to specific client
 				if peer, ok := s.registry.get(f.ClientID); ok {
