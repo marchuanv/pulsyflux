@@ -115,127 +115,66 @@ func (s *Server) handle(conn net.Conn) {
 			}
 
 			if f.Flags&flagReceive != 0 {
-				// Client wants to receive - try to dequeue immediately
+				// Client wants to receive - dequeue from own or peers' queues
 				if req, ok := entry.dequeueRequest(); ok {
-					entry.connctx.enqueue(req)
-					putFrame(f)
-				} else {
-					// Try peers' queues
-					peers := s.registry.getChannelPeers(entry.channelID, clientID)
-					found := false
-					for _, peer := range peers {
-						if req, ok := peer.dequeueRequest(); ok {
-							entry.connctx.enqueue(req)
-							found = true
-							break
-						}
-					}
-					if !found {
-						// No requests available - queue the receive frame
-						if !entry.enqueuePendingReceive(f) {
-							// Queue full - send error
-							entry.connctx.enqueue(newErrorFrame(uuid.Nil, clientID, "pending receive queue full", 0))
-							putFrame(f)
-						}
-						// If enqueue succeeded, don't putFrame - keep it queued
-					} else {
-						putFrame(f)
-					}
-				}
-			} else if f.Flags&flagResponse != 0 {
-				// Response frame - route back to original requester
-				if peer, ok := s.registry.get(f.ClientID); ok {
 					select {
-					case peer.connctx.writes <- f:
+					case entry.connctx.writes <- req:
 					case <-s.ctx.Done():
-						putFrame(f)
+						putFrame(req)
 						return
 					}
-				} else {
 					putFrame(f)
+					continue
 				}
+				// Try peers' queues
+				peers := s.registry.getChannelPeers(entry.channelID, clientID)
+				for _, peer := range peers {
+					if req, ok := peer.dequeueRequest(); ok {
+						select {
+						case entry.connctx.writes <- req:
+						case <-s.ctx.Done():
+							putFrame(req)
+							return
+						}
+						putFrame(f)
+						continue
+					}
+				}
+				// Nothing to dequeue - keep receive frame pending
+				entry.enqueuePendingReceive(f)
+			} else if f.Flags&flagResponse != 0 {
+				// Response frame - route to specific client
+				if peer, ok := s.registry.get(f.ClientID); ok {
+					peer.enqueueResponse(f)
+				}
+				putFrame(f)
 			} else if f.Flags&flagRequest != 0 {
-				// Route request to peers
+				// Request frame - try pending receives first, then enqueue
 				peers := s.registry.getChannelPeers(entry.channelID, clientID)
 				sent := false
-				
-				// For START frames, try pending receives first
-				if f.Type == startFrame {
-					for _, peer := range peers {
-						if _, ok := peer.dequeuePendingReceive(); ok {
-							select {
-							case peer.connctx.writes <- f:
-								sent = true
-							default:
-							}
-							if sent {
-								break
-							}
-						}
-					}
-				} else {
-					// For CHUNK/END frames, send directly to first peer
-					if len(peers) > 0 {
+				for _, peer := range peers {
+					if _, ok := peer.dequeuePendingReceive(); ok {
 						select {
-						case peers[0].connctx.writes <- f:
+						case peer.connctx.writes <- f:
 							sent = true
 						default:
 						}
+						if sent {
+							break
+						}
 					}
 				}
-				
 				if !sent {
-					// No pending receives - enqueue to request queues
+					// No pending receives - enqueue to all peers or self
 					if len(peers) == 0 {
-						// No peers - enqueue to own queue and send ACK
-						if !entry.enqueueRequest(f) {
-							entry.enqueueResponse(newErrorFrame(f.RequestID, clientID, "request queue full", 0))
-							putFrame(f)
-						} else if f.Type == startFrame {
-							// Send ACK for start frame
-							ack := getFrame()
-							ack.Version = version1
-							ack.Type = startFrame
-							ack.RequestID = f.RequestID
-							ack.ClientID = clientID
-							ack.ChannelID = entry.channelID
-							ack.Flags = flagResponse
-							select {
-							case entry.connctx.writes <- ack:
-							case <-s.ctx.Done():
-								putFrame(ack)
-								return
-							}
-						}
-					} else if f.Type == startFrame {
-						// START frame with peers - enqueue to all peers
-						enqueued := false
+						entry.enqueueRequest(f)
+					} else {
 						for _, peer := range peers {
-							if peer.enqueueRequest(f) {
-								enqueued = true
-							}
+							peer.enqueueRequest(f)
 						}
-						if !enqueued {
-							entry.enqueueResponse(newErrorFrame(f.RequestID, clientID, "peer queue full", 0))
-						} else {
-							// Send ACK since request was enqueued
-							ack := getFrame()
-							ack.Version = version1
-							ack.Type = startFrame
-							ack.RequestID = f.RequestID
-							ack.ClientID = clientID
-							ack.ChannelID = entry.channelID
-							ack.Flags = flagResponse
-							select {
-							case entry.connctx.writes <- ack:
-							case <-s.ctx.Done():
-								putFrame(ack)
-								return
-							}
-						}
-						putFrame(f)
 					}
 				}
+				putFrame(f)
 			} else {
 				// Unknown flag
 				putFrame(f)

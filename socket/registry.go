@@ -162,6 +162,11 @@ func (e *clientEntry) dequeuePendingReceive() (*frame, bool) {
 
 func (e *clientEntry) processResponses() {
 	for f := range e.responseQueue {
-		e.connctx.enqueue(f)
+		select {
+		case e.connctx.writes <- f:
+		case <-e.connctx.closed:
+			putFrame(f)
+			return
+		}
 	}
 }

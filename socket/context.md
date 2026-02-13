@@ -1,62 +1,39 @@
 # Socket Implementation Context
 
-## Current Status
+## Current Status (Updated)
 
-### Passing Tests
-- `TestSendReceiveRespond` - Basic send/receive/respond flow between two clients
-- `TestNoOtherClients` - Client sending to itself when no peers exist
-- `TestReceiveFromPeerQueue` - Client receiving from peer's queue
+### Test Status
+- All main tests still failing after flow simplification attempt
+- Need to ensure response delivery is reliable
 
-### Failing Tests
-- `TestMultiplePeers` - Multiple peers receiving same request (needs work)
-- `TestConcurrentRequests` - Concurrent request handling (needs work)
+### Current Implementation
 
-## Key Implementation Details
+The flow has been simplified to:
+1. **Request frames (flagRequest)**: Try pending receives first, then enqueue to all peers/self
+2. **Receive frames (flagReceive)**: Dequeue from own/peer queues, or keep pending if nothing available  
+3. **Response frames (flagResponse)**: Route to specific client by ClientID
 
-### Frame Routing Logic
+### Key Issue
 
-1. **START Frames with flagRequest**:
-   - Try to send directly to peers with pending receives
-   - If no pending receives, enqueue to peer request queues
-   - Send ACK to sender when enqueued to own queue (no peers) or successfully enqueued to peers
+Response frames are being enqueued to responseQueue, but the processResponses goroutine uses `connctx.enqueue` which can drop frames if the channel is full. This causes responses to be lost.
 
-2. **CHUNK/END Frames with flagRequest**:
-   - Send directly to first peer (assumes START already established connection)
-   - No pending receive check needed for continuation frames
+### Solution Needed
 
-3. **Response Frames (flagResponse)**:
-   - Route directly back to original requester using ClientID from frame
-   - Blocking send to ensure delivery
+Change processResponses to use blocking sends instead of enqueue:
+```go
+func (e *clientEntry) processResponses() {
+    for f := range e.responseQueue {
+        select {
+        case e.connctx.writes <- f:
+        case <-e.connctx.closed:
+            putFrame(f)
+            return
+        }
+    }
+}
+```
 
-4. **Receive Frames (flagReceive)**:
-   - Try to dequeue from own request queue first
-   - Then try peers' request queues
-   - If no requests available, enqueue as pending receive
-
-### Client Response Flow
-
-When a client calls `Respond()`:
-1. Sends a receive frame to signal readiness
-2. Waits for START frame from peer
-3. Extracts requester's ClientID from incoming frame
-4. Uses requester's ClientID in all response frames (START, CHUNK, END)
-5. This ensures server routes responses back to original requester
-
-### Critical Fixes Applied
-
-1. **Response Routing**: Changed from using responder's ClientID to using requester's ClientID in response frames
-2. **Chunk Frame Responses**: Always send chunk response even if payload is empty to maintain request-response pairing
-3. **Direct Peer Routing**: CHUNK/END frames bypass pending receive mechanism and go directly to first peer
-4. **ACK for Enqueued Requests**: Send ACK when START frame is enqueued (no immediate responder available)
-
-### Known Issues
-
-1. **Multiple Peers**: When multiple peers exist, only first peer receives CHUNK/END frames. Need to track which peer is handling each request.
-2. **Concurrent Requests**: Multiple concurrent requests may interfere with each other's routing.
-
-## Next Steps
-
-To fix remaining tests:
-1. Track active request-peer mappings (requestID -> peerID)
-2. Route CHUNK/END frames to the specific peer handling that request
-3. Handle race conditions in concurrent request scenarios
+### Next Steps
+1. Fix processResponses to use blocking delivery
+2. Test all scenarios
+3. Handle edge cases (queue full, client disconnect, etc.)

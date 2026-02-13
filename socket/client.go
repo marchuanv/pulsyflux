@@ -120,8 +120,21 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 		timeoutMs = uint64(defaultTimeout.Milliseconds())
 	}
 
-	if err := c.sendStartFrame(reqID, timeoutMs, flagNone); err != nil {
-		return nil, err
+	// Send start frame
+	f := getFrame()
+	f.Version = version1
+	f.Type = startFrame
+	f.RequestID = reqID
+	f.ClientID = c.clientID
+	f.ChannelID = c.channelID
+	f.ClientTimeoutMs = timeoutMs
+	f.Flags = flagRequest
+
+	select {
+	case c.ctx.writes <- f:
+	case <-c.done:
+		putFrame(f)
+		return nil, errClosed
 	}
 
 	var respBuf bytes.Buffer
@@ -239,7 +252,7 @@ func (c *Client) Respond(r io.Reader, timeout time.Duration) error {
 		timeoutMs = uint64(defaultTimeout.Milliseconds())
 	}
 
-	// Send receive frame to signal readiness
+	// Receive start frame
 	f := getFrame()
 	f.Version = version1
 	f.Type = startFrame
@@ -254,9 +267,38 @@ func (c *Client) Respond(r io.Reader, timeout time.Duration) error {
 		return errClosed
 	}
 
-	reqID, requesterID, _, err := c.respondStartFrame(timeoutMs)
-	if err != nil {
-		return err
+	// Wait for start frame
+	var reqID, requesterID uuid.UUID
+	select {
+	case sf := <-c.ctx.reads:
+		if sf.Type != startFrame {
+			putFrame(sf)
+			return errPeerError
+		}
+		reqID = sf.RequestID
+		requesterID = sf.ClientID
+		putFrame(sf)
+	case <-time.After(5 * time.Second):
+		return errTimeout
+	case <-c.done:
+		return errClosed
+	}
+
+	// Send start response
+	resp := getFrame()
+	resp.Version = version1
+	resp.Type = startFrame
+	resp.RequestID = reqID
+	resp.ClientID = requesterID
+	resp.ChannelID = c.channelID
+	resp.ClientTimeoutMs = timeoutMs
+	resp.Flags = flagResponse
+
+	select {
+	case c.ctx.writes <- resp:
+	case <-c.done:
+		putFrame(resp)
+		return errClosed
 	}
 
 	buf := getBuffer()
