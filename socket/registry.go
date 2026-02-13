@@ -95,26 +95,6 @@ func (r *registry) getChannelPeers(channelID, excludeClientID uuid.UUID) []*clie
 	return peers
 }
 
-func (r *registry) dequeueRequestForClient(clientID uuid.UUID) (*frame, bool) {
-	entry, ok := r.get(clientID)
-	if !ok {
-		return nil, false
-	}
-
-	if f, ok := entry.dequeueRequest(); ok {
-		return f, true
-	}
-
-	peers := r.getChannelPeers(entry.channelID, clientID)
-	for _, peer := range peers {
-		if f, ok := peer.dequeueRequest(); ok {
-			return f, true
-		}
-	}
-
-	return nil, false
-}
-
 func (e *clientEntry) enqueueRequest(f *frame) bool {
 	select {
 	case e.requestQueue <- f:
@@ -139,24 +119,6 @@ func (e *clientEntry) enqueueResponse(f *frame) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-func (e *clientEntry) enqueuePendingReceive(f *frame) bool {
-	select {
-	case e.pendingReceive <- f:
-		return true
-	default:
-		return false
-	}
-}
-
-func (e *clientEntry) dequeuePendingReceive() (*frame, bool) {
-	select {
-	case f, ok := <-e.pendingReceive:
-		return f, ok
-	default:
-		return nil, false
 	}
 }
 

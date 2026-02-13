@@ -149,29 +149,12 @@ func (s *Server) handle(conn net.Conn) {
 				}
 				putFrame(f)
 			} else if f.Flags&flagRequest != 0 {
-				// Request frame - try pending receives first, then enqueue
 				peers := s.registry.getChannelPeers(entry.channelID, clientID)
-				sent := false
-				for _, peer := range peers {
-					if _, ok := peer.dequeuePendingReceive(); ok {
-						select {
-						case peer.connctx.writes <- f:
-							sent = true
-						default:
-						}
-						if sent {
-							break
-						}
-					}
-				}
-				if !sent {
-					// No pending receives - enqueue to all peers or self
-					if len(peers) == 0 {
-						entry.enqueueRequest(f)
-					} else {
-						for _, peer := range peers {
-							peer.enqueueRequest(f)
-						}
+				if len(peers) == 0 { // No peers - enqueue to own queue
+					entry.enqueueRequest(f)
+				} else {
+					for _, peer := range peers {
+						peer.enqueueRequest(f)
 					}
 				}
 				putFrame(f)
