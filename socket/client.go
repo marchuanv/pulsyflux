@@ -53,6 +53,11 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 }
 
 func (c *Client) sendStartFrame(reqID uuid.UUID, clientID uuid.UUID, timeoutMs uint64, flags uint16) error {
+	select {
+	case <-c.ctx.closed:
+		return errClosed
+	default:
+	}
 	f := getFrame()
 	f.Version = version1
 	f.Type = startFrame
@@ -64,7 +69,7 @@ func (c *Client) sendStartFrame(reqID uuid.UUID, clientID uuid.UUID, timeoutMs u
 	f.setSequence(0, true)
 	select {
 	case c.ctx.writes <- f:
-	case <-c.done:
+	case <-c.ctx.closed:
 		putFrame(f)
 		return errClosed
 	}
@@ -87,7 +92,7 @@ func (c *Client) receiveStartFrame(reqID uuid.UUID) (*frame, error) {
 				return f, nil
 			}
 			putFrame(f)
-		case <-c.done:
+		case <-c.ctx.closed:
 			return nil, errClosed
 		}
 	}
@@ -107,7 +112,7 @@ func (c *Client) sendChunkFrame(reqID uuid.UUID, clientID uuid.UUID, timeoutMs u
 	f.setSequence(index, isFinal)
 	select {
 	case c.ctx.writes <- f:
-	case <-c.done:
+	case <-c.ctx.closed:
 		putFrame(f)
 		return errClosed
 	}
@@ -130,7 +135,7 @@ func (c *Client) receiveChunkFrame(reqID uuid.UUID) (*frame, error) {
 				return f, nil
 			}
 			putFrame(f)
-		case <-c.done:
+		case <-c.ctx.closed:
 			return nil, errClosed
 		}
 	}
@@ -148,7 +153,7 @@ func (c *Client) sendEndFrame(reqID uuid.UUID, clientID uuid.UUID, timeoutMs uin
 	f.setSequence(0, true)
 	select {
 	case c.ctx.writes <- f:
-	case <-c.done:
+	case <-c.ctx.closed:
 		putFrame(f)
 		return errClosed
 	}
@@ -171,7 +176,7 @@ func (c *Client) receiveEndFrame(reqID uuid.UUID) (*frame, error) {
 				return f, nil
 			}
 			putFrame(f)
-		case <-c.done:
+		case <-c.ctx.closed:
 			return nil, errClosed
 		}
 	}
@@ -195,7 +200,7 @@ func (c *Client) sendDisassembledChunkFrames(reqId uuid.UUID, clientID uuid.UUID
 			}
 		}
 		if err == io.EOF {
-			if n == 0 && index > 0 {
+			if n == 0 {
 				if err := c.sendChunkFrame(reqId, clientID, timeoutMs, index, true, nil, flags); err != nil {
 					return err
 				}
@@ -319,18 +324,24 @@ func (c *Client) Receive(incoming chan io.Reader, outgoing chan io.Reader, timeo
 }
 
 func (c *Client) Close() error {
-	close(c.done)
-
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 
+	select {
+	case <-c.done:
+		return nil
+	default:
+		close(c.done)
+	}
+
 	if c.ctx != nil {
+		close(c.ctx.closed)
 		if c.ctx.conn != nil {
 			c.ctx.conn.Close()
 		}
+		c.ctx.wg.Wait()
 		close(c.ctx.writes)
 		close(c.ctx.errors)
-		c.ctx.wg.Wait()
 		c.ctx.conn = nil
 	}
 	return nil
