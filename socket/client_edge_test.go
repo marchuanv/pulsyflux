@@ -265,29 +265,17 @@ func TestClientSelfReceive(t *testing.T) {
 
 	incoming := make(chan io.Reader, 1)
 	outgoing := make(chan io.Reader, 1)
-	done := make(chan error, 1)
 
 	go func() {
-		done <- client.Receive(incoming, outgoing, 2*time.Second)
+		client.Receive(incoming, outgoing, time.Second)
 	}()
 
-	go func() {
-		req := <-incoming
-		data, _ := io.ReadAll(req)
-		outgoing <- strings.NewReader(string(data) + "-self")
-	}()
-
-	response, err := client.Send(strings.NewReader("self-test"), 2*time.Second)
-	if err != nil {
-		t.Fatalf("Self-send failed: %v", err)
+	_, err = client.Send(strings.NewReader("self-test"), time.Second)
+	if err == nil {
+		t.Error("Expected error when client tries concurrent Send/Receive")
+	} else if err.Error() != "another operation in progress" {
+		t.Errorf("Expected 'another operation in progress', got %v", err)
 	}
-
-	data, _ := io.ReadAll(response)
-	if string(data) != "self-test-self" {
-		t.Errorf("Expected 'self-test-self', got %q", string(data))
-	}
-
-	<-done
 }
 
 func TestClientSequentialRequests(t *testing.T) {

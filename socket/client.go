@@ -17,6 +17,7 @@ type Client struct {
 	ctx       *connctx
 	done      chan struct{}
 	connMu    sync.Mutex
+	opMu      sync.Mutex
 }
 
 func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
@@ -239,6 +240,11 @@ func (c *Client) receiveAssembledChunkFrames(reqId uuid.UUID, clientId uuid.UUID
 }
 
 func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
+	if !c.opMu.TryLock() {
+		return nil, errOperationInProgress
+	}
+	defer c.opMu.Unlock()
+
 	reqID := uuid.New()
 	timeoutMs := uint64(timeout.Milliseconds())
 	if timeoutMs == 0 {
@@ -274,6 +280,11 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 }
 
 func (c *Client) Receive(incoming chan io.Reader, outgoing chan io.Reader, timeout time.Duration) error {
+	if !c.opMu.TryLock() {
+		return errOperationInProgress
+	}
+	defer c.opMu.Unlock()
+
 	origReqID := uuid.New()
 	timeoutMs := uint64(timeout.Milliseconds())
 	if timeoutMs == 0 {
