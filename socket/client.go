@@ -317,6 +317,11 @@ func (c *Client) Receive(incoming chan io.Reader, outgoing chan io.Reader, timeo
 	if _, err := c.receiveEndFrame(uuid.Nil); err != nil {
 		return err
 	}
+
+	if err := c.sendEndFrame(reqID, reqClientID, timeoutMs, flagResponse); err != nil {
+		return err
+	}
+
 	return nil
 }
 
