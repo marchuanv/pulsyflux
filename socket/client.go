@@ -3,6 +3,7 @@ package socket
 import (
 	"bytes"
 	"io"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -81,17 +82,22 @@ func (c *Client) receiveStartFrame(reqID uuid.UUID) (*frame, error) {
 	for {
 		select {
 		case f := <-c.ctx.reads:
+			log.Printf("[Client %s] receiveStartFrame: got frame type=%d reqID=%s (expecting reqID=%s)", c.clientID.String()[:8], f.Type, f.RequestID.String()[:8], reqID.String()[:8])
 			if f.RequestID == reqID || reqID == uuid.Nil {
 				if f.Type == errorFrame {
+					log.Printf("[Client %s] receiveStartFrame: ERROR FRAME", c.clientID.String()[:8])
 					putFrame(f)
 					return nil, errFrame
 				}
 				if f.Type != startFrame {
+					log.Printf("[Client %s] receiveStartFrame: INVALID FRAME - expected startFrame(4), got type=%d", c.clientID.String()[:8], f.Type)
 					putFrame(f)
 					return nil, errInvalidFrame
 				}
+				log.Printf("[Client %s] receiveStartFrame: SUCCESS", c.clientID.String()[:8])
 				return f, nil
 			}
+			log.Printf("[Client %s] receiveStartFrame: SKIPPING frame with wrong reqID", c.clientID.String()[:8])
 			putFrame(f)
 		case <-c.ctx.closed:
 			return nil, errClosed
@@ -246,6 +252,7 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 	defer c.opMu.Unlock()
 
 	reqID := uuid.New()
+	log.Printf("[Client %s] Send: START reqID=%s", c.clientID.String()[:8], reqID.String()[:8])
 	timeoutMs := uint64(timeout.Milliseconds())
 	if timeoutMs == 0 {
 		timeoutMs = uint64(defaultTimeout.Milliseconds())
@@ -276,6 +283,7 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 		return nil, err
 	}
 
+	log.Printf("[Client %s] Send: COMPLETE reqID=%s", c.clientID.String()[:8], reqID.String()[:8])
 	return bytes.NewReader(respBuf.Bytes()), nil
 }
 
@@ -286,6 +294,7 @@ func (c *Client) Receive(incoming chan io.Reader, outgoing chan io.Reader, timeo
 	defer c.opMu.Unlock()
 
 	origReqID := uuid.New()
+	log.Printf("[Client %s] Receive: START origReqID=%s", c.clientID.String()[:8], origReqID.String()[:8])
 	timeoutMs := uint64(timeout.Milliseconds())
 	if timeoutMs == 0 {
 		timeoutMs = uint64(defaultTimeout.Milliseconds())
@@ -302,6 +311,7 @@ func (c *Client) Receive(incoming chan io.Reader, outgoing chan io.Reader, timeo
 
 	reqID := rcvF.RequestID
 	reqClientID := rcvF.ClientID
+	log.Printf("[Client %s] Receive: Got request reqID=%s from client=%s", c.clientID.String()[:8], reqID.String()[:8], reqClientID.String()[:8])
 
 	if err := c.sendStartFrame(reqID, reqClientID, timeoutMs, flagResponse); err != nil {
 		return err
@@ -331,6 +341,7 @@ func (c *Client) Receive(incoming chan io.Reader, outgoing chan io.Reader, timeo
 		return err
 	}
 
+	log.Printf("[Client %s] Receive: COMPLETE", c.clientID.String()[:8])
 	return nil
 }
 
