@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -265,10 +266,14 @@ func TestClientSelfReceive(t *testing.T) {
 
 	incoming := make(chan io.Reader, 1)
 	outgoing := make(chan io.Reader, 1)
+	recvStarted := make(chan struct{})
 
 	go func() {
+		close(recvStarted)
 		client.Receive(incoming, outgoing, time.Second)
 	}()
+
+	<-recvStarted
 
 	_, err = client.Send(strings.NewReader("self-test"), time.Second)
 	if err == nil {
@@ -399,4 +404,71 @@ func TestClientBoundaryPayloadSizes(t *testing.T) {
 			<-done
 		})
 	}
+}
+
+
+func TestClientMultipleConcurrent(t *testing.T) {
+	server := NewServer("9102")
+	if err := server.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer server.Stop()
+
+	channelID := uuid.New()
+	numPairs := 3
+
+	var wg sync.WaitGroup
+	wg.Add(numPairs * 2)
+
+	for i := 0; i < numPairs; i++ {
+		go func(id int) {
+			defer wg.Done()
+
+			receiver, err := NewClient("127.0.0.1:9102", channelID)
+			if err != nil {
+				t.Errorf("Failed to create receiver %d: %v", id, err)
+				return
+			}
+			defer receiver.Close()
+
+			incoming := make(chan io.Reader, 1)
+			outgoing := make(chan io.Reader, 1)
+
+			go func() {
+				req := <-incoming
+				data, _ := io.ReadAll(req)
+				outgoing <- strings.NewReader(string(data) + "-echo")
+			}()
+
+			if err := receiver.Receive(incoming, outgoing, 2*time.Second); err != nil {
+				t.Errorf("Receiver %d error: %v", id, err)
+			}
+		}(i)
+
+		go func(id int) {
+			defer wg.Done()
+
+			client, err := NewClient("127.0.0.1:9102", channelID)
+			if err != nil {
+				t.Errorf("Client %d: Failed to create: %v", id, err)
+				return
+			}
+			defer client.Close()
+
+			msg := "client" + string(rune('0'+id))
+			response, err := client.Send(strings.NewReader(msg), 2*time.Second)
+			if err != nil {
+				t.Errorf("Client %d: Send failed: %v", id, err)
+				return
+			}
+
+			data, _ := io.ReadAll(response)
+			expected := msg + "-echo"
+			if string(data) != expected {
+				t.Errorf("Client %d: Expected %q, got %q", id, expected, string(data))
+			}
+		}(i)
+	}
+
+	wg.Wait()
 }
