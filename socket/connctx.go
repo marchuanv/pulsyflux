@@ -47,8 +47,24 @@ type frame struct {
 	ChannelID       uuid.UUID
 	ClientTimeoutMs uint64
 	Payload         []byte
-	index           int
-	length          int
+	sequence        uint32
+}
+
+const sequenceFinalFlag uint32 = 0x80000000
+
+func (f *frame) setSequence(index int, isFinal bool) {
+	f.sequence = uint32(index)
+	if isFinal {
+		f.sequence |= sequenceFinalFlag
+	}
+}
+
+func (f *frame) getIndex() int {
+	return int(f.sequence & ^sequenceFinalFlag)
+}
+
+func (f *frame) isFinal() bool {
+	return (f.sequence & sequenceFinalFlag) != 0
 }
 
 func newErrorFrame(reqID uuid.UUID, clientID uuid.UUID, msg string, flags uint16) *frame {
