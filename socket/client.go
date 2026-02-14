@@ -2,6 +2,7 @@ package socket
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -118,12 +119,14 @@ func (c *Client) receiveChunkFrame(reqID uuid.UUID) (*frame, error) {
 	for {
 		select {
 		case f := <-c.ctx.reads:
+			fmt.Printf("[Client] receiveChunkFrame got frame type=%d, payloadLen=%d\n", f.Type, len(f.Payload))
 			if f.RequestID == reqID || reqID == uuid.Nil {
 				if f.Type == errorFrame {
 					putFrame(f)
 					return nil, errFrame
 				}
 				if f.Type != chunkFrame {
+					fmt.Printf("[Client] Wrong type, expected chunkFrame(5), got %d\n", f.Type)
 					putFrame(f)
 					return nil, errInvalidFrame
 				}
@@ -186,6 +189,7 @@ func (c *Client) sendDisassembledChunkFrames(reqId uuid.UUID, clientID uuid.UUID
 		n, err := r.Read(*buf)
 		if n > 0 {
 			isFinal := err == io.EOF
+			fmt.Printf("[Client] Sending chunk index=%d, isFinal=%v, payloadLen=%d\n", index, isFinal, n)
 			if err := c.sendChunkFrame(reqId, clientID, timeoutMs, index, isFinal, (*buf)[:n], flags); err != nil {
 				return err
 			}
@@ -195,6 +199,13 @@ func (c *Client) sendDisassembledChunkFrames(reqId uuid.UUID, clientID uuid.UUID
 			}
 		}
 		if err == io.EOF {
+			if n == 0 && index > 0 {
+				// Send empty final chunk
+				fmt.Printf("[Client] Sending final empty chunk index=%d\n", index)
+				if err := c.sendChunkFrame(reqId, clientID, timeoutMs, index, true, nil, flags); err != nil {
+					return err
+				}
+			}
 			break
 		}
 		if err != nil {
@@ -218,6 +229,7 @@ func (c *Client) receiveAssembledChunkFrames(reqId uuid.UUID, clientId uuid.UUID
 		if err != nil {
 			return
 		}
+		fmt.Printf("[Client] Received chunk, isFinal=%v, payloadLen=%d\n", rcvF.isFinal(), len(rcvF.Payload))
 		requestId = rcvF.RequestID
 		clientID = rcvF.ClientID
 		buff.Write(rcvF.Payload)

@@ -2,6 +2,7 @@ package socket
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"syscall"
@@ -115,9 +116,11 @@ func (s *Server) handle(conn net.Conn) {
 			}
 
 			if f.Flags&flagReceive != 0 {
+				fmt.Printf("[Server] flagReceive type=%d from client=%s\n", f.Type, clientID.String()[:8])
 				// Client wants to receive - dequeue from own or peers' queues
 				found := false
 				if req, ok := entry.dequeueRequest(); ok {
+					fmt.Printf("[Server] Dequeued from own queue, type=%d\n", req.Type)
 					select {
 					case entry.connctx.writes <- req:
 						found = true
@@ -131,8 +134,10 @@ func (s *Server) handle(conn net.Conn) {
 				// Try peers' queues
 				if !found {
 					peers := s.registry.getChannelPeers(entry.channelID, clientID)
+					fmt.Printf("[Server] Trying %d peers' queues\n", len(peers))
 					for _, peer := range peers {
 						if req, ok := peer.dequeueRequest(); ok {
+							fmt.Printf("[Server] Dequeued from peer queue, type=%d\n", req.Type)
 							select {
 							case entry.connctx.writes <- req:
 								found = true
@@ -147,22 +152,27 @@ func (s *Server) handle(conn net.Conn) {
 				}
 				// Nothing available - keep pending
 				if !found {
+					fmt.Printf("[Server] No requests available, enqueueing pending receive\n")
 					entry.enqueuePendingReceive(f)
 				}
 			} else if f.Flags&flagResponse != 0 {
+				fmt.Printf("[Server] flagResponse type=%d to client=%s\n", f.Type, f.ClientID.String()[:8])
 				// Response frame - route to target client
 				if peer, ok := s.registry.get(f.ClientID); ok {
 					peer.enqueueResponse(f)
 				}
 				putFrame(f)
 			} else if f.Flags&flagRequest != 0 {
+				fmt.Printf("[Server] flagRequest type=%d from client=%s, payloadLen=%d\n", f.Type, clientID.String()[:8], len(f.Payload))
 				peers := s.registry.getChannelPeers(entry.channelID, clientID)
+				fmt.Printf("[Server] Found %d peers\n", len(peers))
 				if len(peers) == 0 {
 					entry.enqueueRequest(f)
 				} else {
 					for _, peer := range peers {
 						// Check if peer has pending receive
 						if pendingRecv, ok := peer.dequeuePendingReceive(); ok {
+							fmt.Printf("[Server] Peer has pending receive, sending frame with payloadLen=%d\n", len(f.Payload))
 							putFrame(pendingRecv)
 							select {
 							case peer.connctx.writes <- f:
@@ -172,6 +182,7 @@ func (s *Server) handle(conn net.Conn) {
 							}
 							goto sent
 						}
+						fmt.Printf("[Server] Enqueueing to peer requestQueue\n")
 						peer.enqueueRequest(f)
 					}
 				}
