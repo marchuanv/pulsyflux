@@ -96,23 +96,24 @@ The socket package implements a TCP-based message bus with client-server archite
 ### Request Frame (flagRequest)
 - Get all peers in same channel (excluding sender)
 - If no peers exist: enqueue to sender's own requestQueue
-- If peers exist: enqueue to ALL peers' requestQueues
-- Frames are always enqueued to support late connections
-- If a peer calls Receive() before Send(), frames wait in queue
-- If a peer calls Receive() after Send(), frames are already queued
+- If peers exist:
+  - For each peer, check if peer has pending receive
+  - If pending receive exists: send frame directly to peer's connection
+  - Otherwise: enqueue to peer's requestQueue
+- When a frame is sent directly to a pending receive, it is not enqueued to other peers
+- This allows immediate delivery when receiver is waiting
 
 ### Receive Frame (flagReceive)
 - First attempt: dequeue from client's own requestQueue
 - If own queue empty: iterate through all peers' requestQueues
-- If nothing available: enqueue to client's pendingReceive queue (unused currently)
-- When frame found: write directly to client's connection
-- Receive blocks until a request frame is available
+- If frame found: write directly to client's connection
+- If nothing available: enqueue to client's pendingReceive queue
+- When new request arrives, server checks pendingReceive and sends directly
+- No polling required - server pushes frames when available
 
 ### Response Frame (flagResponse)
 - Extract ClientID from frame header (target client)
-- Only chunkFrames with flagResponse are routed
-- startFrame and endFrame with flagResponse are acknowledgments (discarded)
-- Enqueue chunkFrame to target client's responseQueue
+- Enqueue all frame types to target client's responseQueue
 - Background processResponses goroutine drains responseQueue:
   - Blocking send to connctx.writes channel
   - Ensures FIFO delivery of responses
