@@ -2,7 +2,6 @@ package socket
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"sync"
 	"syscall"
