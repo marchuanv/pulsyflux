@@ -90,3 +90,19 @@ Solution: Need to transmit sequence in the frame header. The header is 64 bytes:
 - 60-63: PayloadLength
 
 No space for sequence! Need to add 4 bytes for sequence field, making header 68 bytes.
+
+
+## Frame Routing Rules
+
+For flagRequest frames:
+- startFrame: Acknowledge back to sender ONLY (not routed to peers)
+- chunkFrame: Route to peers (with pending receive check)
+- endFrame: Acknowledge back to sender ONLY (not routed to peers)
+
+For flagReceive frames:
+- All frame types: Check queues and deliver available frames
+
+For flagResponse frames:
+- All frame types: Route to target client via responseQueue
+
+The key insight: startFrame and endFrame are control frames that establish/close the request lifecycle. They are acknowledged but not routed. Only chunkFrames (the actual data) are routed between peers.

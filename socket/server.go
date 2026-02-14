@@ -6,6 +6,7 @@ import (
 	"net"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -123,31 +124,34 @@ func (s *Server) handle(conn net.Conn) {
 			}
 
 			if f.Flags&flagReceive != 0 {
-				fmt.Printf("[Server] flagReceive type=%d from client=%s\n", f.Type, clientID.String()[:8])
-				found := false
-				if req, ok := entry.dequeueRequest(); ok {
-					fmt.Printf("[Server] Dequeued from own queue, type=%d\n", req.Type)
-					entry.enqueueResponse(req)
-					found = true
-				}
-				if !found {
-					peers := s.registry.getChannelPeers(entry.channelID, clientID)
-					fmt.Printf("[Server] Trying %d peers' queues\n", len(peers))
-					for _, peer := range peers {
-						if req, ok := peer.dequeueRequest(); ok {
-							fmt.Printf("[Server] Dequeued from peer queue, type=%d, payloadLen=%d\n", req.Type, len(req.Payload))
-							entry.enqueueResponse(req)
-							found = true
-							break
+				go func() {
+					for {
+						select {
+						case <-s.ctx.Done():
+							putFrame(f)
+							return
+						default:
 						}
+						fmt.Printf("[Server] flagReceive type=%d from client=%s\n", f.Type, clientID.String()[:8])
+						if req, ok := entry.dequeueRequest(); ok {
+							fmt.Printf("[Server] Dequeued from own queue, type=%d\n", req.Type)
+							entry.enqueueResponse(req)
+							putFrame(f)
+							return
+						}
+						peers := s.registry.getChannelPeers(entry.channelID, clientID)
+						fmt.Printf("[Server] Trying %d peers' queues\n", len(peers))
+						for _, peer := range peers {
+							if req, ok := peer.dequeueRequest(); ok {
+								fmt.Printf("[Server] Dequeued from peer queue, type=%d, payloadLen=%d\n", req.Type, len(req.Payload))
+								entry.enqueueResponse(req)
+								putFrame(f)
+								return
+							}
+						}
+						time.Sleep(10 * time.Millisecond)
 					}
-				}
-				if !found {
-					fmt.Printf("[Server] No requests available, storing pending receive\n")
-					entry.enqueuePendingReceive(f)
-				} else {
-					putFrame(f)
-				}
+				}()
 			} else if f.Flags&flagResponse != 0 {
 				fmt.Printf("[Server] flagResponse type=%d to client=%s\n", f.Type, f.ClientID.String()[:8])
 				if peer, ok := s.registry.get(f.ClientID); ok {
@@ -162,20 +166,8 @@ func (s *Server) handle(conn net.Conn) {
 				if len(peers) == 0 {
 					entry.enqueueRequest(f)
 				} else {
-					delivered := false
 					for _, peer := range peers {
-						if pendingRecv, ok := peer.dequeuePendingReceive(); ok {
-							fmt.Printf("[Server] Peer has pending receive, delivering directly\n")
-							putFrame(pendingRecv)
-							peer.enqueueResponse(f)
-							delivered = true
-							break
-						}
-					}
-					if !delivered {
-						for _, peer := range peers {
-							peer.enqueueRequest(f)
-						}
+						peer.enqueueRequest(f)
 					}
 				}
 			} else {
