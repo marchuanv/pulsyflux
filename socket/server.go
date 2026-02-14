@@ -116,9 +116,11 @@ func (s *Server) handle(conn net.Conn) {
 
 			if f.Flags&flagReceive != 0 {
 				// Client wants to receive - dequeue from own or peers' queues
+				found := false
 				if req, ok := entry.dequeueRequest(); ok {
 					select {
 					case entry.connctx.writes <- req:
+						found = true
 					case <-s.ctx.Done():
 						putFrame(req)
 						return
@@ -127,23 +129,28 @@ func (s *Server) handle(conn net.Conn) {
 					continue
 				}
 				// Try peers' queues
-				peers := s.registry.getChannelPeers(entry.channelID, clientID)
-				for _, peer := range peers {
-					if req, ok := peer.dequeueRequest(); ok {
-						select {
-						case entry.connctx.writes <- req:
-						case <-s.ctx.Done():
-							putFrame(req)
-							return
+				if !found {
+					peers := s.registry.getChannelPeers(entry.channelID, clientID)
+					for _, peer := range peers {
+						if req, ok := peer.dequeueRequest(); ok {
+							select {
+							case entry.connctx.writes <- req:
+								found = true
+							case <-s.ctx.Done():
+								putFrame(req)
+								return
+							}
+							putFrame(f)
+							continue
 						}
-						putFrame(f)
-						continue
 					}
 				}
-				// Nothing to dequeue - keep pending and wait
-				entry.enqueuePendingReceive(f)
+				// Nothing available - keep pending
+				if !found {
+					entry.enqueuePendingReceive(f)
+				}
 			} else if f.Flags&flagResponse != 0 {
-				// Response frame - route to specific client
+				// Response frame - route to target client
 				if peer, ok := s.registry.get(f.ClientID); ok {
 					peer.enqueueResponse(f)
 				}
@@ -154,18 +161,21 @@ func (s *Server) handle(conn net.Conn) {
 					entry.enqueueRequest(f)
 				} else {
 					for _, peer := range peers {
-						if req, ok := peer.dequeuePendingReceive(); ok {
+						// Check if peer has pending receive
+						if pendingRecv, ok := peer.dequeuePendingReceive(); ok {
+							putFrame(pendingRecv)
 							select {
-							case peer.connctx.writes <- req:
+							case peer.connctx.writes <- f:
 							case <-s.ctx.Done():
-								putFrame(req)
+								putFrame(f)
 								return
 							}
-						} else {
-							peer.enqueueRequest(f)
+							goto sent
 						}
+						peer.enqueueRequest(f)
 					}
 				}
+			sent:
 				putFrame(f)
 			} else {
 				// Unknown flag

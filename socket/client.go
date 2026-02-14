@@ -84,7 +84,6 @@ func (c *Client) receiveStartFrame(reqID uuid.UUID) (*frame, error) {
 					putFrame(f)
 					return nil, errInvalidFrame
 				}
-				putFrame(f)
 				return f, nil
 			}
 			putFrame(f)
@@ -128,7 +127,6 @@ func (c *Client) receiveChunkFrame(reqID uuid.UUID) (*frame, error) {
 					putFrame(f)
 					return nil, errInvalidFrame
 				}
-				putFrame(f)
 				return f, nil
 			}
 			putFrame(f)
@@ -170,7 +168,6 @@ func (c *Client) receiveEndFrame(reqID uuid.UUID) (*frame, error) {
 					putFrame(f)
 					return nil, errInvalidFrame
 				}
-				putFrame(f)
 				return f, nil
 			}
 			putFrame(f)

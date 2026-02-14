@@ -96,23 +96,23 @@ The socket package implements a TCP-based message bus with client-server archite
 ### Request Frame (flagRequest)
 - Get all peers in same channel (excluding sender)
 - If no peers exist: enqueue to sender's own requestQueue
-- If peers exist:
-  - For each peer:
-    - Check peer's pendingReceive queue
-    - If pending receive exists: immediately write frame to peer's connection
-    - Otherwise: enqueue to peer's requestQueue
-- Frame is distributed to ALL peers (not just one)
+- If peers exist: enqueue to ALL peers' requestQueues
+- Frames are always enqueued to support late connections
+- If a peer calls Receive() before Send(), frames wait in queue
+- If a peer calls Receive() after Send(), frames are already queued
 
 ### Receive Frame (flagReceive)
 - First attempt: dequeue from client's own requestQueue
 - If own queue empty: iterate through all peers' requestQueues
-- If nothing available: enqueue to client's pendingReceive queue
+- If nothing available: enqueue to client's pendingReceive queue (unused currently)
 - When frame found: write directly to client's connection
+- Receive blocks until a request frame is available
 
 ### Response Frame (flagResponse)
 - Extract ClientID from frame header (target client)
-- Lookup target client in registry
-- Enqueue to target client's responseQueue
+- Only chunkFrames with flagResponse are routed
+- startFrame and endFrame with flagResponse are acknowledgments (discarded)
+- Enqueue chunkFrame to target client's responseQueue
 - Background processResponses goroutine drains responseQueue:
   - Blocking send to connctx.writes channel
   - Ensures FIFO delivery of responses
@@ -177,6 +177,29 @@ The socket package implements a TCP-based message bus with client-server archite
   - Max frame payload: 1MB (maxFrameSize)
   - Frame header: 64 bytes fixed
 - Protocol version check: only version1 (0x01) supported
+
+## Late Connection Handling
+
+### Send Before Receive
+- Client1 calls Send() and sends request frames
+- Server enqueues all frames to Client2's requestQueue
+- Client2 later calls Receive()
+- Server dequeues frames from Client2's requestQueue
+- Frames are delivered in order
+
+### Receive Before Send
+- Client2 calls Receive() and sends flagReceive frame
+- Server finds no frames in any requestQueue
+- Server enqueues flagReceive to Client2's pendingReceive queue (currently unused)
+- Client1 later calls Send()
+- Server enqueues request frames to Client2's requestQueue
+- Client2's Receive continues polling and dequeues frames
+
+### Current Implementation
+- Request frames are always enqueued to requestQueues
+- Receive operations poll requestQueues until frames available
+- No direct frame delivery from pending receives
+- This ensures all frames in a sequence are handled consistently
 
 ## Implementation Details
 
