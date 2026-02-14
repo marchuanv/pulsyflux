@@ -140,6 +140,8 @@ func (s *Server) handle(conn net.Conn) {
 						continue
 					}
 				}
+				// Nothing to dequeue - keep pending and wait
+				entry.enqueuePendingReceive(f)
 			} else if f.Flags&flagResponse != 0 {
 				// Response frame - route to specific client
 				if peer, ok := s.registry.get(f.ClientID); ok {
@@ -148,11 +150,20 @@ func (s *Server) handle(conn net.Conn) {
 				putFrame(f)
 			} else if f.Flags&flagRequest != 0 {
 				peers := s.registry.getChannelPeers(entry.channelID, clientID)
-				if len(peers) == 0 { // No peers - enqueue to own queue
+				if len(peers) == 0 {
 					entry.enqueueRequest(f)
 				} else {
 					for _, peer := range peers {
-						peer.enqueueRequest(f)
+						if req, ok := peer.dequeuePendingReceive(); ok {
+							select {
+							case peer.connctx.writes <- req:
+							case <-s.ctx.Done():
+								putFrame(req)
+								return
+							}
+						} else {
+							peer.enqueueRequest(f)
+						}
 					}
 				}
 				putFrame(f)

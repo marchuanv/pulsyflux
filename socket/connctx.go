@@ -14,19 +14,19 @@ import (
 const version1 byte = 1
 
 const (
-	errorFrame           byte   = 0x03
-	startFrame           byte   = 0x04
-	chunkFrame           byte   = 0x05
-	endFrame             byte   = 0x06
-	frameHeaderSize             = 64
-	maxFrameSize                = 1024 * 1024
-	defaultFrameReadTimeout     = 2 * time.Minute
-	defaultFrameWriteTimeout    = 5 * time.Second
-	flagNone             uint16 = 0x00
-	flagRequest          uint16 = 0x01
-	flagReceive          uint16 = 0x04
-	flagResponse         uint16 = 0x08
-	defaultClientTimeoutMs uint64 = 30000
+	errorFrame               byte   = 0x03
+	startFrame               byte   = 0x04
+	chunkFrame               byte   = 0x05
+	endFrame                 byte   = 0x06
+	frameHeaderSize                 = 64
+	maxFrameSize                    = 1024 * 1024
+	defaultFrameReadTimeout         = 2 * time.Minute
+	defaultFrameWriteTimeout        = 5 * time.Second
+	flagNone                 uint16 = 0x00
+	flagRequest              uint16 = 0x01
+	flagReceive              uint16 = 0x04
+	flagResponse             uint16 = 0x08
+	defaultClientTimeoutMs   uint64 = 30000
 )
 
 type connctx struct {
@@ -47,6 +47,8 @@ type frame struct {
 	ChannelID       uuid.UUID
 	ClientTimeoutMs uint64
 	Payload         []byte
+	index           int
+	length          int
 }
 
 func newErrorFrame(reqID uuid.UUID, clientID uuid.UUID, msg string, flags uint16) *frame {

@@ -34,8 +34,6 @@ func TestSendReceiveRespond(t *testing.T) {
 		client2.Respond(strings.NewReader("echo"), 5*time.Second)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
-
 	// Client1 sends request
 	response, err := client1.Send(strings.NewReader("hello"), 5*time.Second)
 	if err != nil {

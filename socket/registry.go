@@ -122,6 +122,24 @@ func (e *clientEntry) enqueueResponse(f *frame) bool {
 	}
 }
 
+func (e *clientEntry) enqueuePendingReceive(f *frame) bool {
+	select {
+	case e.pendingReceive <- f:
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *clientEntry) dequeuePendingReceive() (*frame, bool) {
+	select {
+	case f, ok := <-e.pendingReceive:
+		return f, ok
+	default:
+		return nil, false
+	}
+}
+
 func (e *clientEntry) processResponses() {
 	for f := range e.responseQueue {
 		select {

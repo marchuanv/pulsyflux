@@ -6,8 +6,9 @@ import (
 )
 
 var (
-	defaultTimeout = 5 * time.Second
-	errTimeout     = errors.New("timeout")
-	errPeerError   = errors.New("peer error")
-	errClosed      = errors.New("client closed")
+	defaultTimeout  = 5 * time.Second
+	errTimeout      = errors.New("timeout")
+	errFrame        = errors.New("error frame received")
+	errClosed       = errors.New("client closed")
+	errInvalidFrame = errors.New("invalid frame")
 )
