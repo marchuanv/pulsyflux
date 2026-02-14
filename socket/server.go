@@ -64,21 +64,16 @@ func (s *Server) acceptLoop() {
 			case <-s.ctx.Done():
 				return
 			default:
-				fmt.Printf("[Server] Accept error: %v\n", err)
 				continue
 			}
 		}
-		fmt.Printf("[Server] Accepted new connection\n")
 		s.conns.Add(1)
-		// Use a separate goroutine for each connection handler
-		// to ensure accepts don't block on handler processing
 		go s.handle(conn)
 	}
 }
 
 func (s *Server) handle(conn net.Conn) {
 	defer s.conns.Done()
-	fmt.Printf("[Server] New connection handler started\n")
 
 	ctx := &connctx{
 		conn:   conn,
@@ -96,7 +91,6 @@ func (s *Server) handle(conn net.Conn) {
 	var entry *clientEntry
 
 	defer func() {
-		fmt.Printf("[Server] Connection handler exiting\n")
 		if clientID != uuid.Nil {
 			s.registry.unregister(clientID)
 		}
@@ -109,14 +103,11 @@ func (s *Server) handle(conn net.Conn) {
 	for {
 		select {
 		case <-s.ctx.Done():
-			fmt.Printf("[Server] Context done\n")
 			return
 		case f, ok := <-ctx.reads:
 			if !ok {
-				fmt.Printf("[Server] Reads channel closed\n")
 				return
 			}
-			fmt.Printf("[Server] Received frame type=%d flags=0x%x\n", f.Type, f.Flags)
 
 			if clientID == uuid.Nil {
 				clientID = f.ClientID
@@ -132,18 +123,14 @@ func (s *Server) handle(conn net.Conn) {
 							return
 						default:
 						}
-						fmt.Printf("[Server] flagReceive type=%d from client=%s\n", f.Type, clientID.String()[:8])
 						if req, ok := entry.dequeueRequest(); ok {
-							fmt.Printf("[Server] Dequeued from own queue, type=%d\n", req.Type)
 							entry.enqueueResponse(req)
 							putFrame(f)
 							return
 						}
 						peers := s.registry.getChannelPeers(entry.channelID, clientID)
-						fmt.Printf("[Server] Trying %d peers' queues\n", len(peers))
 						for _, peer := range peers {
 							if req, ok := peer.dequeueRequest(); ok {
-								fmt.Printf("[Server] Dequeued from peer queue, type=%d, payloadLen=%d\n", req.Type, len(req.Payload))
 								entry.enqueueResponse(req)
 								putFrame(f)
 								return
@@ -153,16 +140,13 @@ func (s *Server) handle(conn net.Conn) {
 					}
 				}()
 			} else if f.Flags&flagResponse != 0 {
-				fmt.Printf("[Server] flagResponse type=%d to client=%s\n", f.Type, f.ClientID.String()[:8])
 				if peer, ok := s.registry.get(f.ClientID); ok {
 					peer.enqueueResponse(f)
 				} else {
 					putFrame(f)
 				}
 			} else if f.Flags&flagRequest != 0 {
-				fmt.Printf("[Server] flagRequest type=%d from client=%s, payloadLen=%d\n", f.Type, clientID.String()[:8], len(f.Payload))
 				peers := s.registry.getChannelPeers(entry.channelID, clientID)
-				fmt.Printf("[Server] Found %d peers\n", len(peers))
 				if len(peers) == 0 {
 					entry.enqueueRequest(f)
 				} else {

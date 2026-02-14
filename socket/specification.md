@@ -9,9 +9,10 @@ The socket package implements a TCP-based message bus with client-server archite
 ### Server
 - Listens on TCP port with SO_REUSEADDR and optimized buffers (2MB send/recv)
 - Maintains a registry of connected clients grouped by channel
-- Routes frames between clients based on flags and channel membership
+- Routes frames between clients based on flags
 - Handles graceful shutdown with connection draining
 - Each connection handler runs in dedicated goroutine
+- flagReceive handlers run in separate goroutines with polling loop (10ms sleep)
 
 ### Client
 - Establishes TCP connection with TCP_NODELAY and optimized buffers (2MB send/recv)
@@ -25,10 +26,9 @@ The socket package implements a TCP-based message bus with client-server archite
 ### Registry
 - Maps clientID → clientEntry for direct client lookup
 - Maps channelID → set of clientEntry for channel-based routing
-- Each clientEntry maintains three queues:
+- Each clientEntry maintains two queues:
   - requestQueue: incoming requests from peers (buffered 1024)
   - responseQueue: outgoing responses to this client (buffered 1024)
-  - pendingReceive: pending Receive() calls awaiting requests (buffered 1024)
 - Background goroutine per client drains responseQueue to connection
 
 ## Frame Protocol
@@ -44,7 +44,7 @@ The socket package implements a TCP-based message bus with client-server archite
 - flagReceive (0x04): Client polling for requests
 - flagResponse (0x08): Client sending response
 
-### Frame Header (64 bytes)
+### Frame Header (68 bytes)
 - Version (1 byte)
 - Type (1 byte)
 - Flags (2 bytes)
@@ -52,71 +52,56 @@ The socket package implements a TCP-based message bus with client-server archite
 - ClientID (16 bytes UUID)
 - ChannelID (16 bytes UUID)
 - ClientTimeoutMs (8 bytes)
+- Sequence (4 bytes)
 - PayloadLength (4 bytes)
 
-### Frame Fields (not in wire format)
+### Frame Fields
 - sequence (uint32): Chunk sequence number
   - High bit (0x80000000) set indicates final chunk
   - Lower 31 bits contain chunk index (0-based)
-  - Example: 0x80000005 = final chunk, index 5
-  - Example: 0x00000003 = chunk 3, more chunks follow
+  - Transmitted in frame header bytes 60-63
 - Payload ([]byte): Frame payload data (max 1MB)
 
 ## Request Flow
 
-### Send() Operation (Client Perspective)
-1. Client generates unique RequestID
-2. Sends startFrame with flagRequest
-3. Waits for startFrame acknowledgment (blocks on receiveStartFrame)
-4. Sends chunkFrame(s) with payload data via sendDisassembledChunkFrames
-   - Reads from io.Reader in maxFrameSize chunks
-   - Each chunk sent as separate chunkFrame
-5. Waits for response chunkFrame(s) via receiveAssembledChunkFrames
-   - Assembles chunks into bytes.Buffer
-6. Sends endFrame with flagRequest
-7. Waits for endFrame acknowledgment
-8. Returns assembled response as io.Reader
+### Send() Operation (Client1 Perspective)
+1. Sends startFrame with flagRequest
+2. Waits for startFrame acknowledgment (from server via responseQueue)
+3. Sends chunkFrame(s) with payload data
+4. Waits for response chunkFrame(s) from Client2
+5. Waits for endFrame from Client2 (with flagResponse)
+6. Returns assembled response
 
-### Receive() Operation (Client Perspective)
-1. Client sends startFrame with flagReceive and unique origReqID
-2. Waits for startFrame from server (blocks on receiveStartFrame with uuid.Nil)
-   - Server provides actual RequestID and ClientID of incoming request
-3. Client sends startFrame with flagResponse as acknowledgment
-4. Client receives chunkFrame(s) via receiveAssembledChunkFrames
-   - Uses flagReceive to signal server to send next chunk
-   - Assembles request payload into bytes.Buffer
-5. Client sends assembled request to incoming channel
-6. Client waits for response from outgoing channel
-7. Client sends response chunkFrame(s) with flagResponse
-8. Client sends endFrame with flagReceive
-9. Client waits for endFrame acknowledgment
+### Receive() Operation (Client2 Perspective)
+1. Sends startFrame with flagReceive (triggers server dequeue)
+2. Waits for startFrame from Client1 (dequeued by server)
+3. Sends startFrame with flagResponse (acknowledges to Client1)
+4. Sends chunkFrame with flagReceive (triggers server dequeue)
+5. Receives chunkFrame(s) from Client1 (dequeued by server)
+6. Sends response chunkFrame(s) with flagResponse
+7. Sends endFrame with flagReceive (triggers server dequeue for Client1's endFrame)
+8. Waits for endFrame from Client1 (dequeued by server)
+9. Sends endFrame with flagResponse (acknowledges to Client1)
 
 ## Server Routing Logic
 
 ### Request Frame (flagRequest)
-- Get all peers in same channel (excluding sender)
+- Enqueue to all peers' requestQueues in same channel
 - If no peers exist: enqueue to sender's own requestQueue
-- If peers exist:
-  - For each peer, check if peer has pending receive
-  - If pending receive exists: send frame directly to peer's connection
-  - Otherwise: enqueue to peer's requestQueue
-- When a frame is sent directly to a pending receive, it is not enqueued to other peers
-- This allows immediate delivery when receiver is waiting
+- Server does NOT filter by frame type - all frames routed uniformly
 
 ### Receive Frame (flagReceive)
-- First attempt: dequeue from client's own requestQueue
-- If own queue empty: iterate through all peers' requestQueues
-- If frame found: write directly to client's connection
-- If nothing available: enqueue to client's pendingReceive queue
-- When new request arrives, server checks pendingReceive and sends directly
-- No polling required - server pushes frames when available
+- Spawns goroutine that polls in loop:
+  - First attempt: dequeue from client's own requestQueue
+  - If own queue empty: iterate through all peers' requestQueues
+  - If frame found: enqueue to client's responseQueue and exit
+  - If nothing available: sleep 10ms and retry
+- No blocking - server continuously polls until frame available
 
 ### Response Frame (flagResponse)
 - Extract ClientID from frame header (target client)
-- Enqueue all frame types to target client's responseQueue
-- Background processResponses goroutine drains responseQueue:
-  - Blocking send to connctx.writes channel
-  - Ensures FIFO delivery of responses
+- Enqueue to target client's responseQueue
+- Background processResponses goroutine drains responseQueue to connection
 
 ## Ordering Guarantees
 
@@ -129,13 +114,13 @@ The socket package implements a TCP-based message bus with client-server archite
 
 ### Client Registration
 - First frame from connection establishes ClientID and ChannelID
-- Registry creates clientEntry with three buffered queues (1024 each)
+- Registry creates clientEntry with two buffered queues (1024 each)
 - Spawns processResponses goroutine to drain responseQueue
 - Adds entry to both clients map and channels map
 
 ### Client Unregistration
 - Triggered by connection close or context cancellation
-- Closes all three queues (request, response, pendingReceive)
+- Closes both queues (request, response)
 - Removes from clients map (by clientID)
 - Removes from channels map (by channelID → clientID)
 - Cleans up channel map entry if last client in channel
@@ -154,8 +139,6 @@ The socket package implements a TCP-based message bus with client-server archite
 - Writer prioritizes error frames over normal frames
 - Reader sets 2-minute read deadline per frame
 - Writer sets 5-second write deadline per frame
-
-
 
 ## Timeouts
 
@@ -176,31 +159,8 @@ The socket package implements a TCP-based message bus with client-server archite
   - errTimeout: operation timeout
 - Frame size limits:
   - Max frame payload: 1MB (maxFrameSize)
-  - Frame header: 64 bytes fixed
+  - Frame header: 68 bytes fixed
 - Protocol version check: only version1 (0x01) supported
-
-## Late Connection Handling
-
-### Send Before Receive
-- Client1 calls Send() and sends request frames
-- Server enqueues all frames to Client2's requestQueue
-- Client2 later calls Receive()
-- Server dequeues frames from Client2's requestQueue
-- Frames are delivered in order
-
-### Receive Before Send
-- Client2 calls Receive() and sends flagReceive frame
-- Server finds no frames in any requestQueue
-- Server enqueues flagReceive to Client2's pendingReceive queue (currently unused)
-- Client1 later calls Send()
-- Server enqueues request frames to Client2's requestQueue
-- Client2's Receive continues polling and dequeues frames
-
-### Current Implementation
-- Request frames are always enqueued to requestQueues
-- Receive operations poll requestQueues until frames available
-- No direct frame delivery from pending receives
-- This ensures all frames in a sequence are handled consistently
 
 ## Implementation Details
 
@@ -215,12 +175,12 @@ The socket package implements a TCP-based message bus with client-server archite
 ### Chunk Assembly
 - sendDisassembledChunkFrames:
   - Reads from io.Reader in maxFrameSize chunks
-  - Sends each chunk with index and length fields
-  - Length field indicates total expected chunks (currently 0)
+  - Sends each chunk with sequence field (index + isFinal flag)
+  - Final chunk indicated by high bit in sequence field
 - receiveAssembledChunkFrames:
   - Accumulates chunks into bytes.Buffer
-  - Stops when length == 0 or length == (index + 1)
-  - For flagReceive: sends chunk request before each receive
+  - For flagReceive: sends empty chunkFrame before each receive to trigger dequeue
+  - Stops when isFinal() returns true
 
 ### Buffer Pooling
 - Frame pool: reuses frame structs (sync.Pool)
@@ -231,7 +191,16 @@ The socket package implements a TCP-based message bus with client-server archite
 
 ### Concurrency
 - Server: one goroutine per connection in handle()
+- Server: one goroutine per flagReceive frame (polling loop)
 - Client: two goroutines per connection (reader, writer)
 - Registry: one processResponses goroutine per clientEntry
 - All frame channels are buffered to reduce blocking
 - Mutex protection on registry maps (RWMutex)
+
+## Key Implementation Notes
+
+1. **No Pending Receive Queue**: The original design included a pendingReceive queue, but the final implementation uses polling loops instead
+2. **Frame Ownership**: Frames are NOT recycled (putFrame) when enqueued to requestQueue or responseQueue - ownership transfers to the queue
+3. **Sequence Field Transmission**: The sequence field is transmitted in the frame header (bytes 60-63) to preserve isFinal flag across the wire
+4. **Frame Type Agnostic Server**: Server does not filter frames by type - all flagRequest frames are routed to peers, all flagReceive frames trigger dequeue polling
+5. **Polling Sleep**: flagReceive handlers sleep 10ms between dequeue attempts to avoid busy-waiting
