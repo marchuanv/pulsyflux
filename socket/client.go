@@ -183,33 +183,62 @@ func (c *Client) receiveEndFrame(reqID uuid.UUID) (*frame, error) {
 	}
 }
 
-func (c *Client) receiveAssembledChunkFrames(reqId uuid.UUID, timeoutMs uint64) (payload io.Reader, requestId uuid.UUID, clientID uuid.UUID, err error) {
-	var rcvF *frame
-	var reqPayload []byte
+func (c *Client) sendDisassembledChunkFrames(reqId uuid.UUID, clientID uuid.UUID, r io.Reader, timeoutMs uint64, flags uint16) error {
+
+	var err error
+	var n int
+
+	buf := getBuffer()
+	defer putBuffer(buf)
+
+	totalFramesToExpect := 0 //need to determine how many chunk frames to expect based on payload size
 	for {
-		err = c.sendChunkFrame(reqId, c.clientID, timeoutMs, 0, 1, nil, flagReceive)
-		if err != nil {
-			return nil, requestId, clientID, err
+		n, err = r.Read(*buf)
+		if n > 0 {
+			err = c.sendChunkFrame(reqId, clientID, timeoutMs, n, totalFramesToExpect, (*buf)[:n], flags)
+			if err != nil {
+				return err
+			}
 		}
-		rcvF, err = c.receiveChunkFrame(uuid.Nil)
-		if err != nil {
-			return nil, requestId, clientID, err
-		}
-		if rcvF.length == 0 || rcvF.length == (rcvF.index+1) { //last chunk frame
+		if err == io.EOF {
 			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) receiveAssembledChunkFrames(reqId uuid.UUID, clientId uuid.UUID, timeoutMs uint64, flags uint16) (buff bytes.Buffer, requestId uuid.UUID, clientID uuid.UUID, err error) {
+	var rcvF *frame
+	for {
+		if flags&flagReceive != 0 {
+			err = c.sendChunkFrame(reqId, clientId, timeoutMs, 0, 1, nil, flags)
+			if err != nil {
+				return buff, requestId, clientID, err
+			}
+			rcvF, err = c.receiveChunkFrame(uuid.Nil)
+		} else {
+			rcvF, err = c.receiveChunkFrame(reqId)
+		}
+		if err != nil {
+			return buff, requestId, clientID, err
 		}
 		requestId = rcvF.RequestID
 		clientID = rcvF.ClientID
-		reqPayload = append(reqPayload, rcvF.Payload...)
+		buff.Write(rcvF.Payload)
+		if rcvF.length == 0 || rcvF.length == (rcvF.index+1) { //last chunk frame
+			break
+		}
 	}
-	return bytes.NewReader(reqPayload), requestId, clientID, nil
+	return buff, requestId, clientID, nil
 }
 
 func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 
 	var err error
 	var rcvF *frame
-	var n int
 
 	reqID := uuid.New()
 	timeoutMs := uint64(timeout.Milliseconds())
@@ -227,31 +256,13 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 		return nil, err
 	}
 
-	var respBuf bytes.Buffer
-	buf := getBuffer()
-	defer putBuffer(buf)
-
-	totalFramesToExpect := 0 //need to determine how many chunk frames to expect based on payload size
-	for {
-		n, err = r.Read(*buf)
-		if n > 0 {
-			err = c.sendChunkFrame(reqID, c.clientID, timeoutMs, n, totalFramesToExpect, (*buf)[:n], flagRequest)
-			if err != nil {
-				return nil, err
-			}
-			rcvF, err = c.receiveChunkFrame(reqID)
-			if err != nil {
-				return nil, err
-			}
-			respBuf.Write(rcvF.Payload)
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
+	err = c.sendDisassembledChunkFrames(reqID, c.clientID, r, timeoutMs, flagRequest)
+	if err != nil {
+		return nil, err
 	}
+
+	var respBuf bytes.Buffer
+	respBuf, _, _, err = c.receiveAssembledChunkFrames(reqID, c.clientID, timeoutMs, flagRequest)
 
 	err = c.sendEndFrame(reqID, c.clientID, timeoutMs, flagRequest)
 	if err != nil {
@@ -269,10 +280,10 @@ func (c *Client) Send(r io.Reader, timeout time.Duration) (io.Reader, error) {
 
 func (c *Client) Receive(incoming chan io.Reader, outgoing chan io.Reader, timeout time.Duration) error {
 
-	var n int
 	var err error
 	var rcvF *frame
 	var reqID, reqClientID uuid.UUID
+	var reqBuf bytes.Buffer
 
 	origReqID := uuid.New()
 	timeoutMs := uint64(timeout.Milliseconds())
@@ -298,33 +309,17 @@ func (c *Client) Receive(incoming chan io.Reader, outgoing chan io.Reader, timeo
 		return err
 	}
 
-	var reqPayload io.Reader
-	reqPayload, reqID, reqClientID, err = c.receiveAssembledChunkFrames(origReqID, timeoutMs)
+	reqBuf, reqID, reqClientID, err = c.receiveAssembledChunkFrames(origReqID, c.clientID, timeoutMs, flagReceive)
 	if err != nil {
 		return err
 	}
-	incoming <- reqPayload
 
-	buf := getBuffer()
-	defer putBuffer(buf)
-
+	incoming <- bytes.NewReader(reqBuf.Bytes())
 	reader := <-outgoing
-	totalFramesToExpect := 0 //need to determine how many chunk frames to expect based on payload size
-	for {
-		n, err = reader.Read(*buf)
-		if n > 0 {
-			payload := make([]byte, n)
-			if n > 0 {
-				copy(payload, (*buf)[:n])
-			}
-			err = c.sendChunkFrame(reqID, reqClientID, timeoutMs, n, totalFramesToExpect, payload, flagResponse)
-			if err != nil {
-				return err
-			}
-		}
-		if err == io.EOF {
-			break
-		}
+
+	err = c.sendDisassembledChunkFrames(reqID, reqClientID, reader, timeoutMs, flagResponse)
+	if err != nil {
+		return err
 	}
 
 	err = c.sendEndFrame(origReqID, c.clientID, timeoutMs, flagReceive)
