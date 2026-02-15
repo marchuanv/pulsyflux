@@ -181,7 +181,6 @@ func (c *Client) Receive(r io.Reader) {
     // Spawns goroutine that:
     //   - Reads from pre-assembled incoming channel
     //   - Writes payload to r (must be io.Writer)
-    //   - Signals ackDone to send acknowledgments
     // Errors captured in opErrors channel
 }
 ```
@@ -193,7 +192,6 @@ func (c *Client) Respond(req io.Reader, resp io.Reader) {
     // Spawns goroutine that:
     //   - Reads from pre-assembled incoming channel
     //   - Writes request payload to req (must be io.Writer)
-    //   - Signals ackDone to send acknowledgments
     //   - Calls Send(resp) if resp != nil
     // Errors captured in opErrors channel
 }
@@ -202,9 +200,11 @@ func (c *Client) Respond(req io.Reader, resp io.Reader) {
 **Wait() error**:
 ```go
 func (c *Client) Wait() error {
-    // Blocks until all async operations complete
-    // Returns first error from opErrors channel
+    // Transactional - can be called multiple times
+    // Blocks until all pending async operations complete
+    // Drains opErrors channel and returns first error
     // Returns nil if no errors
+    // After Wait() returns, new operations can be started
 }
 ```
 
@@ -238,18 +238,21 @@ func (c *Client) Wait() error {
 
 **processIncoming** (background goroutine):
 - Reads from `requests` channel
-- Receives start frame, sends ack
-- Receives chunk frames, sends acks, assembles payload
-- Receives end frame, sends ack
+- Receives start frame, sends ack immediately
+- Receives chunk frames, sends acks immediately, assembles payload
+- Receives end frame, sends ack immediately
 - Queues assembled request to `incoming` channel
+- Acknowledgments sent before consumer reads from `incoming`
 
 ### Concurrency Control
 
-**No Operation Lock**:
+**Transactional Wait Pattern**:
 - `Send()`, `Receive()`, `Respond()` are all async and return immediately
 - All operations tracked via `opWg` (sync.WaitGroup)
 - Errors collected in `opErrors` channel (buffered 100)
 - `Wait()` blocks until all operations complete and returns first error
+- `Wait()` can be called multiple times - each call waits for pending operations
+- After `Wait()` returns, new operations can be started
 - Background goroutines handle frame routing and request assembly
 
 **Connection Context** (`connctx`):
@@ -349,6 +352,17 @@ client.Respond(&reqBuf, bytes.NewReader(respData))
 client.Wait() // Block until respond completes
 ```
 
+**Multiple transactions**:
+```go
+client, _ := NewClient("127.0.0.1:9090", channelID)
+defer client.Close()
+
+for i := 0; i < 5; i++ {
+    client.Send(strings.NewReader(fmt.Sprintf("msg%d", i)))
+    client.Wait() // Wait for this send to complete
+}
+```
+
 ## Key Implementation Details
 
 1. **Implicit Registration**: Client sends registration frame (startFrame with flagNone) on connect
@@ -364,3 +378,5 @@ client.Wait() // Block until respond completes
 11. **No Client-Side Filtering**: Server handles sender exclusion
 12. **Consolidated Frame Methods**: Single `sendFrame()` and `receiveFrame()` for all types
 13. **Error in Payload**: Error frames carry error message in payload field
+14. **Immediate Acknowledgment**: `processIncoming()` sends acks immediately upon receiving frames, not waiting for consumer
+15. **Transactional Wait**: `Wait()` is transactional - can be called multiple times on same client for sequential operations

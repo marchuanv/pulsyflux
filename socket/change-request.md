@@ -1,223 +1,79 @@
-# Change Request: Wait() Pattern for Async Operations
+# Change Request
 
-## Status: PRODUCTION-READY ✅
+## Completed: Transactional Wait() Pattern ✅
 
-### Solution: Immediate Frame Acknowledgment
+### What Was Done
 
-**Problem Identified:**
-The original implementation had `processIncoming()` collecting all frame IDs and waiting until the consumer called `Receive()`/`Respond()` before sending acknowledgments. This created a deadlock:
-- Server sends frame → waits for ack
-- Client receives frame → waits for more frames
-- Server won't send more frames until ack received
-- **DEADLOCK**
+**Problem Solved:**
+Deadlock from delayed acknowledgments - `processIncoming()` was waiting for consumer to call `Receive()`/`Respond()` before sending acks.
 
-**Solution Implemented:**
-`processIncoming()` now sends acknowledgments **immediately** after receiving each frame:
+**Solution:**
+- `processIncoming()` sends acknowledgments immediately after receiving each frame
+- `Wait()` made transactional - can be called multiple times on same client
+- Removed `sync.Once` from `Wait()` to allow repeated calls
+- `opErrors` channel stays open for multiple transaction cycles
+
+**Result:**
+- Sequential operations work: `Send()` → `Wait()` → `Send()` → `Wait()`
+- All tests passing including `TestClientSequentialRequests`
+- Clean transactional API for socket consumers
+
+---
+
+## New Request: True Stream-Like Experience for Socket Consumers
+
+### Goal
+Provide a stream-oriented API that feels natural for continuous message processing, similar to reading from a file or network stream.
+
+### Current State
+- Operations are transactional with explicit `Wait()` calls
+- Each `Receive()` requires a separate call and `Wait()`
+- No built-in loop for continuous message consumption
+
+### Proposed Enhancement
+
+Add streaming methods that handle multiple messages automatically:
 
 ```go
-// Receive startFrame → send ack immediately
-c.sendAck(startFrameID, reqID)
+// Stream continuously receives messages until error or close
+func (c *Client) Stream(handler func([]byte) error) error
 
-// Receive chunkFrame → send ack immediately  
-c.sendAck(chunkF.FrameID, reqID)
-
-// Receive endFrame → send ack immediately
-c.sendAck(endF.FrameID, reqID)
-
-// Then queue assembled request to c.incoming
-c.incoming <- &assembledRequest{payload: buf.Bytes()}
+// StreamRespond continuously receives and responds
+func (c *Client) StreamRespond(handler func([]byte) ([]byte, error)) error
 ```
 
-This matches the server's frame-by-frame acknowledgment protocol.
+### Use Cases
 
-**Removed:**
-- `ackDone chan struct{}` from `assembledRequest` - no longer needed
-- Delayed acknowledgment logic - acks sent immediately
-
-### Core Innovation: Wait() Method
-
-All operations are async and return immediately. `Wait()` provides the synchronization point:
-
+**Current approach** (transactional):
 ```go
-// Operations return immediately (void)
-client.Send(data)      // No return value
-client.Receive(&buf)   // No return value
-client.Respond(&req, resp)  // No return value
-
-// Wait() blocks until ALL operations complete
-err := client.Wait()   // Returns first error or nil
-```
-
-## Why Wait() Matters
-
-1. **Non-blocking API**: Fire operations without waiting
-2. **Concurrent Operations**: Multiple operations in flight simultaneously
-3. **Centralized Error Handling**: All errors collected, first returned
-4. **Thread-Safe**: Can only be called once per client (sync.Once)
-5. **Simple Testing**: Easy to test timeouts, errors, concurrent scenarios
-
-## Wait() Implementation
-
-```go
-type Client struct {
-    opWg      sync.WaitGroup  // Tracks all async operations
-    opErrors  chan error      // Collects errors (buffered 100)
-    waitOnce  sync.Once       // Ensures Wait() called only once
-}
-
-func (c *Client) Wait() error {
-    var firstErr error
-    c.waitOnce.Do(func() {
-        c.opWg.Wait()           // Block until all ops complete
-        close(c.opErrors)       // Close error channel
-        for err := range c.opErrors {  // Drain all errors
-            if err != nil && firstErr == nil {
-                firstErr = err  // Capture first error
-            }
-        }
-    })
-    return firstErr
+for i := 0; i < 10; i++ {
+    var buf bytes.Buffer
+    client.Receive(&buf)
+    if err := client.Wait(); err != nil {
+        return err
+    }
+    process(buf.Bytes())
 }
 ```
 
-### Key Features
-
-- **Thread-Safe**: `sync.Once` ensures single execution
-- **Blocks Until Complete**: `opWg.Wait()` waits for all operations
-- **Error Collection**: Drains all errors from channel
-- **First Error**: Returns first non-nil error
-- **Channel Cleanup**: Closes `opErrors` after draining
-
-## Usage Examples
-
-### Basic Pattern
+**Proposed approach** (streaming):
 ```go
-client.Send(data)
-err := client.Wait()  // Block until send completes
-if err != nil {
-    log.Fatal(err)
-}
+err := client.Stream(func(data []byte) error {
+    return process(data)
+})
 ```
 
-### Multiple Operations
-```go
-client.Send(data1)
-client.Send(data2)
-client.Receive(&buf)
-err := client.Wait()  // Wait for all 3 operations
-```
+### Benefits
 
-### Multiple Clients
-```go
-client1.Send(data)
-client2.Receive(&buf)
+1. **Simpler code**: No manual loop management
+2. **Automatic error handling**: Stream stops on first error
+3. **Resource efficient**: Single goroutine handles all messages
+4. **Familiar pattern**: Similar to HTTP handlers, gRPC streams
+5. **Backward compatible**: Existing transactional API unchanged
 
-if err := client1.Wait(); err != nil {
-    log.Fatal(err)
-}
-if err := client2.Wait(); err != nil {
-    log.Fatal(err)
-}
-```
+### Implementation Notes
 
-## Testing Benefits
-
-```go
-// Test timeout
-publisher.Send(data)
-err := publisher.Wait()
-if !strings.Contains(err.Error(), "timeout") {
-    t.Error("Expected timeout")
-}
-
-// Test concurrent operations
-client1.Send(data)
-client2.Receive(&buf)
-var wg sync.WaitGroup
-wg.Add(2)
-go func() { defer wg.Done(); client1.Wait() }()
-go func() { defer wg.Done(); client2.Wait() }()
-wg.Wait()
-```
-
-## Implementation Details
-
-### Async Operations
-
-All operations spawn goroutines:
-
-```go
-func (c *Client) Send(r io.Reader) error {
-    c.opWg.Add(1)
-    go func() {
-        defer c.opWg.Done()
-        if err := c.doSend(r); err != nil {
-            select {
-            case c.opErrors <- err:
-            default:
-            }
-        }
-    }()
-    return nil
-}
-```
-
-Same pattern for `Receive()` and `Respond()`.
-
-### Error Collection
-
-- Errors sent to `opErrors` channel (buffered 100)
-- `Wait()` drains channel and returns first error
-- Non-blocking send prevents goroutine leaks if channel full
-
-## Architecture Changes
-
-### Frame Routing
-- `routeFrames()` separates request/response frames
-- `processIncoming()` assembles requests in background
-- No frame stealing between operations
-
-### Delayed Acknowledgment
-- Acks sent only after `Receive()`/`Respond()` called
-- Enables timeout testing
-- Consumer controls ack timing
-
-## API
-
-```go
-// All async - no return value
-Send(r io.Reader)
-Receive(r io.Reader)  // r must be io.Writer
-Respond(req io.Reader, resp io.Reader)  // req must be io.Writer
-
-// Synchronization point
-Wait() error  // Blocks until all operations complete
-```
-
-## Benefits
-
-1. **Flexibility**: Call operations in any order
-2. **Concurrency**: Multiple operations without blocking
-3. **Error Handling**: Single point to check errors
-4. **Testability**: Easy to test all scenarios
-5. **Performance**: Better CPU utilization
-
-## Testing
-
-All tests updated to use Wait() pattern:
-
-```go
-// Before
-client1.Send(data)  // Blocked until complete
-
-// After  
-client1.Send(data)  // Returns immediately
-err := client1.Wait()  // Block here
-```
-
-Tests pass:
-- ✅ `TestOperationOrderIndependence`
-- ✅ `TestTimeoutNoReceivers`
-- ✅ `TestTimeoutWithSlowReceivers`
-- ✅ `TestTimeoutNoResponse`
-- ✅ All existing tests
+- Stream methods would be blocking (like `Wait()`)
+- Handler called for each incoming message
+- Stream ends on handler error, client close, or context cancellation
+- Could add context support: `StreamContext(ctx, handler)`
