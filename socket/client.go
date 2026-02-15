@@ -20,14 +20,14 @@ type Client struct {
 	incoming  chan *assembledRequest
 	requests  chan *frame
 	responses chan *frame
+	opWg      sync.WaitGroup
+	opErrors  chan error
 	wg        sync.WaitGroup
 }
 
 type assembledRequest struct {
 	payload []byte
-	frameIDs []uuid.UUID
-	reqID uuid.UUID
-	ackChan chan struct{}
+	ackDone chan struct{}
 }
 
 func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
@@ -49,6 +49,7 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 		incoming:  make(chan *assembledRequest, 16),
 		requests:  make(chan *frame, 1024),
 		responses: make(chan *frame, 1024),
+		opErrors:  make(chan error, 100),
 		ctx: &connctx{
 			conn:   conn,
 			writes: make(chan *frame, 1024),
@@ -152,6 +153,20 @@ func (c *Client) receiveFrame(frameType byte, reqID uuid.UUID) (*frame, error) {
 
 
 func (c *Client) Send(r io.Reader) error {
+	c.opWg.Add(1)
+	go func() {
+		defer c.opWg.Done()
+		if err := c.doSend(r); err != nil {
+			select {
+			case c.opErrors <- err:
+			default:
+			}
+		}
+	}()
+	return nil
+}
+
+func (c *Client) doSend(r io.Reader) error {
 	reqID := uuid.New()
 	timeoutMs := uint64(defaultTimeout.Milliseconds())
 
@@ -228,7 +243,7 @@ func (c *Client) Receive(incoming chan io.Reader) error {
 	select {
 	case req := <-c.incoming:
 		incoming <- bytes.NewReader(req.payload)
-		close(req.ackChan)
+		close(req.ackDone)
 		return nil
 	case <-c.ctx.closed:
 		return errClosed
@@ -239,12 +254,13 @@ func (c *Client) Respond(incoming chan io.Reader, outgoing chan io.Reader) error
 	select {
 	case req := <-c.incoming:
 		incoming <- bytes.NewReader(req.payload)
-		close(req.ackChan)
+		close(req.ackDone)
 		reader := <-outgoing
 		if reader == nil {
 			return nil
 		}
-		return c.Send(reader)
+		go c.Send(reader)
+		return nil
 	case <-c.ctx.closed:
 		return errClosed
 	}
@@ -313,8 +329,15 @@ func (c *Client) processIncoming() {
 			return
 		}
 		reqID := startF.RequestID
-		frameIDs := []uuid.UUID{startF.FrameID}
+		startFrameID := startF.FrameID
 		putFrame(startF)
+
+		type frameAck struct {
+			frameID uuid.UUID
+			reqID   uuid.UUID
+		}
+		var acks []frameAck
+		acks = append(acks, frameAck{startFrameID, reqID})
 
 		var buf bytes.Buffer
 		for {
@@ -328,7 +351,7 @@ func (c *Client) processIncoming() {
 			case <-c.ctx.closed:
 				return
 			}
-			frameIDs = append(frameIDs, chunkF.FrameID)
+			acks = append(acks, frameAck{chunkF.FrameID, reqID})
 			buf.Write(chunkF.Payload)
 			isFinal := chunkF.isFinal()
 			putFrame(chunkF)
@@ -347,31 +370,36 @@ func (c *Client) processIncoming() {
 		case <-c.ctx.closed:
 			return
 		}
-		frameIDs = append(frameIDs, endF.FrameID)
+		acks = append(acks, frameAck{endF.FrameID, reqID})
 		putFrame(endF)
 
-		ackChan := make(chan struct{})
+		ackDone := make(chan struct{})
 		select {
-		case c.incoming <- &assembledRequest{
-			payload: buf.Bytes(),
-			frameIDs: frameIDs,
-			reqID: reqID,
-			ackChan: ackChan,
-		}:
+		case c.incoming <- &assembledRequest{payload: buf.Bytes(), ackDone: ackDone}:
 		case <-c.ctx.closed:
 			return
 		}
 
 		select {
-		case <-ackChan:
-			for _, frameID := range frameIDs {
-				if err := c.sendAck(frameID, reqID); err != nil {
+		case <-ackDone:
+			for _, ack := range acks {
+				if err := c.sendAck(ack.frameID, ack.reqID); err != nil {
 					return
 				}
 			}
 		case <-c.ctx.closed:
 			return
 		}
+	}
+}
+
+func (c *Client) Wait() error {
+	c.opWg.Wait()
+	select {
+	case err := <-c.opErrors:
+		return err
+	default:
+		return nil
 	}
 }
 
