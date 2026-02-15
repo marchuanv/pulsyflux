@@ -108,7 +108,6 @@ Sender                  Server                  Receiver
 - Routes frames based on flags:
   - `flagRequest` → broadcast to peers via `handleRequest()`
   - `flagAck` → record ack via `registry.recordAck()`
-  - `flagResponse` → route to specific client
   - Other → discard
 
 **Registry** (`registry.go`):
@@ -126,7 +125,7 @@ type ackCollector struct {
     frameID       uuid.UUID  // Unique ID for this frame instance
     requestID     uuid.UUID  // The message requestID
     senderID      uuid.UUID  // Who sent the frame
-    frameType     uint8      // start/chunk/end
+    frameType     byte       // start/chunk/end
     expectedAcks  int        // Number of receivers
     receivedAcks  int        // Acks received so far
     done          chan struct{}  // Signal when all acks received
@@ -282,7 +281,7 @@ func (c *Client) Respond(incoming, outgoing chan io.Reader) error {
 - `errTimeout` - operation timeout
 
 **Error Frame Flow**:
-- Server sends error frame with `flagResponse`
+- Server sends error frame with `flagNone`
 - Payload contains error message string
 - Client receives in `waitForAck()` and returns error
 
@@ -346,13 +345,15 @@ client.Respond(incoming, outgoing)
 
 ## Key Implementation Details
 
-1. **Implicit Registration**: Client sends registration frame (flagNone) on connect
+1. **Implicit Registration**: Client sends registration frame (startFrame with flagNone) on connect
 2. **Server Excludes Sender**: `getChannelPeers()` excludes sender from peer list
 3. **Frame-by-Frame Sync**: Sender blocks after each frame until all acks received
 4. **Ack Aggregation**: N receivers → N acks → 1 ack to sender
 5. **FrameID Tracking**: Each broadcast frame gets unique FrameID for ack correlation
-6. **Sequence Field**: Chunk index (31 bits) + isFinal flag (1 bit)
-7. **Operation Serialization**: `opMu` prevents concurrent operations on same client
-8. **No Client-Side Filtering**: Server handles sender exclusion
-9. **Consolidated Frame Methods**: Single `sendFrame()` and `receiveFrame()` for all types
-10. **Error in Payload**: Error frames carry error message in payload field
+6. **RequestID Purpose**: Groups frames together (start/chunk/end) and enables frame filtering
+7. **Sequence Field**: Chunk index (31 bits) + isFinal flag (1 bit)
+8. **Operation Serialization**: `opMu` prevents concurrent operations on same client
+9. **No Client-Side Filtering**: Server handles sender exclusion
+10. **Consolidated Frame Methods**: Single `sendFrame()` and `receiveFrame()` for all types
+11. **Error in Payload**: Error frames carry error message in payload field
+12. **No flagResponse**: Removed as redundant - frame type is sufficient
