@@ -24,7 +24,6 @@ type Client struct {
 	opErrors   chan error
 	wg         sync.WaitGroup
 	registered chan struct{}
-	sessionMu  sync.Mutex
 	session    *session
 }
 
@@ -56,6 +55,7 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 		responses:  make(chan *frame, 1024),
 		opErrors:   make(chan error, 100),
 		registered: make(chan struct{}),
+		session:    &session{incoming: make(chan *assembledRequest, 1024)},
 		ctx: &connctx{
 			conn:   conn,
 			writes: make(chan *frame, 1024),
@@ -162,12 +162,6 @@ func (c *Client) receiveFrame(frameType byte, reqID uuid.UUID) (*frame, error) {
 	}
 }
 func (c *Client) Send(r io.Reader) {
-	c.sessionMu.Lock()
-	if c.session == nil {
-		c.session = &session{incoming: make(chan *assembledRequest, 1)}
-	}
-	c.sessionMu.Unlock()
-	
 	c.opWg.Add(1)
 	go func() {
 		defer c.opWg.Done()
@@ -254,12 +248,6 @@ func (c *Client) waitForAck(reqID uuid.UUID) error {
 }
 
 func (c *Client) Receive(r io.Reader) {
-	c.sessionMu.Lock()
-	if c.session == nil {
-		c.session = &session{incoming: make(chan *assembledRequest, 1)}
-	}
-	c.sessionMu.Unlock()
-	
 	c.opWg.Add(1)
 	go func() {
 		defer c.opWg.Done()
@@ -285,12 +273,6 @@ func (c *Client) doReceive(r io.Reader) error {
 }
 
 func (c *Client) Respond(req io.Reader, resp io.Reader) {
-	c.sessionMu.Lock()
-	if c.session == nil {
-		c.session = &session{incoming: make(chan *assembledRequest, 1)}
-	}
-	c.sessionMu.Unlock()
-	
 	c.opWg.Add(1)
 	go func() {
 		defer c.opWg.Done()
@@ -428,15 +410,10 @@ func (c *Client) processIncoming() {
 		c.sendAck(endF.FrameID, reqID)
 		putFrame(endF)
 
-		c.sessionMu.Lock()
-		sess := c.session
-		c.sessionMu.Unlock()
-		if sess != nil {
-			select {
-			case sess.incoming <- &assembledRequest{payload: buf.Bytes()}:
-			case <-c.ctx.closed:
-				return
-			}
+		select {
+		case c.session.incoming <- &assembledRequest{payload: buf.Bytes()}:
+		case <-c.ctx.closed:
+			return
 		}
 	}
 }
@@ -444,9 +421,15 @@ func (c *Client) processIncoming() {
 func (c *Client) Wait() error {
 	c.opWg.Wait()
 	
-	c.sessionMu.Lock()
-	c.session = nil
-	c.sessionMu.Unlock()
+	// Check for unconsumed messages - this indicates a bug
+	select {
+	case <-c.session.incoming:
+		return errors.New("session has unconsumed messages after Wait")
+	default:
+	}
+	
+	// Create new session for next set of operations
+	c.session = &session{incoming: make(chan *assembledRequest, 1024)}
 	
 	var firstErr error
 	for {
