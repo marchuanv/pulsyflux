@@ -186,7 +186,7 @@ func (r *registry) recordAck(frameID uuid.UUID) {
 	}
 	collector.mu.Lock()
 	collector.receivedAcks++
-	if collector.receivedAcks >= collector.expectedAcks {
+	if collector.receivedAcks == collector.expectedAcks {
 		close(collector.done)
 	}
 	collector.mu.Unlock()
