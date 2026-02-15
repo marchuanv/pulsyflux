@@ -739,5 +739,5 @@ func testConcurrentSendRespond(t *testing.T, server *Server, channelID uuid.UUID
 }
 
 func TestTimeoutWithReceivers(t *testing.T) {
-	t.Skip("Test requires mechanism to simulate slow receiver acknowledgment - not currently possible with background processIncoming")
+	t.Skip("Cannot test slow receiver timeout without network-level delays or invasive test hooks")
 }

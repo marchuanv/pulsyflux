@@ -142,8 +142,9 @@ type ackCollector struct {
    - Generate unique `FrameID`
    - Create `ackCollector` expecting N acks
    - Broadcast frame to all N receivers
-   - Block on `<-collector.done` until all acks received
-   - Send ack to sender
+   - Wait on `<-collector.done` OR timeout (using `ClientTimeoutMs`)
+   - On success: send ack to sender
+   - On timeout: send error frame "timeout waiting for acknowledgments"
    - Cleanup collector
 
 **waitForReceivers**:
@@ -305,6 +306,14 @@ func (c *Client) Respond(incoming, outgoing chan io.Reader) error {
 3. On timeout → server sends error frame "no receivers available"
 4. Client's `waitForAck()` receives error frame
 5. `Send()` returns error to caller
+
+**Slow Receivers Scenario**:
+1. Client calls `Send()`
+2. Server finds receivers and broadcasts frame
+3. Server waits for acks with timeout (using `ClientTimeoutMs`)
+4. If not all acks received within timeout → server sends error frame "timeout waiting for acknowledgments"
+5. Client's `waitForAck()` receives error frame
+6. `Send()` returns error to caller
 
 ## Timeouts
 

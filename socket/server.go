@@ -149,16 +149,22 @@ func (s *Server) handleRequest(f *frame, clientID, channelID uuid.UUID, entry *c
 		peer.enqueueRequest(cloneFrame(f))
 	}
 	
-	<-collector.done
+	timeout := time.After(time.Duration(f.ClientTimeoutMs) * time.Millisecond)
+	select {
+	case <-collector.done:
+		ackF := getFrame()
+		ackF.Version = version1
+		ackF.Type = ackFrame
+		ackF.Flags = flagAck
+		ackF.RequestID = f.RequestID
+		ackF.ClientID = f.ClientID
+		ackF.FrameID = frameID
+		entry.enqueueResponse(ackF)
+	case <-timeout:
+		errFrame := newErrorFrame(f.RequestID, f.ClientID, "timeout waiting for acknowledgments", flagNone)
+		entry.enqueueResponse(errFrame)
+	}
 	
-	ackF := getFrame()
-	ackF.Version = version1
-	ackF.Type = ackFrame
-	ackF.Flags = flagAck
-	ackF.RequestID = f.RequestID
-	ackF.ClientID = f.ClientID
-	ackF.FrameID = frameID
-	entry.enqueueResponse(ackF)
 	s.registry.removeAckCollector(frameID)
 	putFrame(f)
 }
