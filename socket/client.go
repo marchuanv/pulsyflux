@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"log"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -24,6 +24,7 @@ type Client struct {
 	opWg      sync.WaitGroup
 	opErrors  chan error
 	wg        sync.WaitGroup
+	registered chan struct{}
 }
 
 type assembledRequest struct {
@@ -42,14 +43,15 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 	}
 
 	c := &Client{
-		addr:      addr,
-		clientID:  uuid.New(),
-		channelID: channelID,
-		done:      make(chan struct{}),
-		incoming:  make(chan *assembledRequest, 16),
-		requests:  make(chan *frame, 1024),
-		responses: make(chan *frame, 1024),
-		opErrors:  make(chan error, 100),
+		addr:       addr,
+		clientID:   uuid.New(),
+		channelID:  channelID,
+		done:       make(chan struct{}),
+		incoming:   make(chan *assembledRequest, 16),
+		requests:   make(chan *frame, 1024),
+		responses:  make(chan *frame, 1024),
+		opErrors:   make(chan error, 100),
+		registered: make(chan struct{}),
 		ctx: &connctx{
 			conn:   conn,
 			writes: make(chan *frame, 1024),
@@ -71,6 +73,14 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 	if err := c.sendRegistration(); err != nil {
 		c.Close()
 		return nil, err
+	}
+	
+	// Wait for registration to complete
+	select {
+	case <-c.registered:
+	case <-time.After(2 * time.Second):
+		c.Close()
+		return nil, errors.New("registration timeout")
 	}
 
 	return c, nil
@@ -147,11 +157,6 @@ func (c *Client) receiveFrame(frameType byte, reqID uuid.UUID) (*frame, error) {
 		}
 	}
 }
-
-
-
-
-
 func (c *Client) Send(r io.Reader) {
 	c.opWg.Add(1)
 	go func() {
@@ -239,11 +244,9 @@ func (c *Client) waitForAck(reqID uuid.UUID) error {
 }
 
 func (c *Client) Receive(r io.Reader) {
-	log.Printf("[Client %s] Receive: spawning goroutine", c.clientID.String()[:8])
 	c.opWg.Add(1)
 	go func() {
 		defer c.opWg.Done()
-		log.Printf("[Client %s] Receive: goroutine started", c.clientID.String()[:8])
 		if err := c.doReceive(r); err != nil {
 			select {
 			case c.opErrors <- err:
@@ -254,10 +257,8 @@ func (c *Client) Receive(r io.Reader) {
 }
 
 func (c *Client) doReceive(r io.Reader) error {
-	log.Printf("[Client %s] doReceive: waiting on c.incoming", c.clientID.String()[:8])
 	select {
 	case req := <-c.incoming:
-		log.Printf("[Client %s] doReceive: received %d bytes from c.incoming", c.clientID.String()[:8], len(req.payload))
 		if w, ok := r.(io.Writer); ok {
 			w.Write(req.payload)
 		}
@@ -314,15 +315,21 @@ func (c *Client) sendAck(frameID, reqID uuid.UUID) error {
 
 func (c *Client) routeFrames() {
 	defer c.wg.Done()
-	log.Printf("[Client %s] routeFrames: started", c.clientID.String()[:8])
 	for {
 		select {
 		case f := <-c.ctx.reads:
-			log.Printf("[Client %s] routeFrames: received frame type=%d flags=%d", c.clientID.String()[:8], f.Type, f.Flags)
+			// Check for registration ack
+			if f.Type == ackFrame && f.Flags == flagNone {
+				select {
+				case c.registered <- struct{}{}:
+				default:
+				}
+				putFrame(f)
+				continue
+			}
 			if f.Flags&flagRequest != 0 {
 				select {
 				case c.requests <- f:
-					log.Printf("[Client %s] routeFrames: routed to requests", c.clientID.String()[:8])
 				case <-c.ctx.closed:
 					putFrame(f)
 					return
@@ -330,7 +337,6 @@ func (c *Client) routeFrames() {
 			} else {
 				select {
 				case c.responses <- f:
-					log.Printf("[Client %s] routeFrames: routed to responses", c.clientID.String()[:8])
 				case <-c.ctx.closed:
 					putFrame(f)
 					return
@@ -344,7 +350,6 @@ func (c *Client) routeFrames() {
 
 func (c *Client) processIncoming() {
 	defer c.wg.Done()
-	log.Printf("[Client %s] processIncoming: started", c.clientID.String()[:8])
 	for {
 		select {
 		case <-c.ctx.closed:
@@ -352,13 +357,10 @@ func (c *Client) processIncoming() {
 		default:
 		}
 
-		log.Printf("[Client %s] processIncoming: waiting for startFrame", c.clientID.String()[:8])
 		var startF *frame
 		select {
 		case startF = <-c.requests:
-			log.Printf("[Client %s] processIncoming: received frame type=%d", c.clientID.String()[:8], startF.Type)
 			if startF.Type != startFrame {
-				log.Printf("[Client %s] processIncoming: not startFrame, discarding", c.clientID.String()[:8])
 				putFrame(startF)
 				continue
 			}
@@ -368,7 +370,6 @@ func (c *Client) processIncoming() {
 		reqID := startF.RequestID
 		startFrameID := startF.FrameID
 		putFrame(startF)
-		log.Printf("[Client %s] processIncoming: sending ack for startFrame", c.clientID.String()[:8])
 		c.sendAck(startFrameID, reqID)
 
 		var buf bytes.Buffer
@@ -383,7 +384,6 @@ func (c *Client) processIncoming() {
 			case <-c.ctx.closed:
 				return
 			}
-			log.Printf("[Client %s] processIncoming: sending ack for chunkFrame", c.clientID.String()[:8])
 			c.sendAck(chunkF.FrameID, reqID)
 			buf.Write(chunkF.Payload)
 			isFinal := chunkF.isFinal()
@@ -403,14 +403,11 @@ func (c *Client) processIncoming() {
 		case <-c.ctx.closed:
 			return
 		}
-		log.Printf("[Client %s] processIncoming: sending ack for endFrame", c.clientID.String()[:8])
 		c.sendAck(endF.FrameID, reqID)
 		putFrame(endF)
 
-		log.Printf("[Client %s] processIncoming: queuing %d bytes to c.incoming", c.clientID.String()[:8], buf.Len())
 		select {
 		case c.incoming <- &assembledRequest{payload: buf.Bytes()}:
-			log.Printf("[Client %s] processIncoming: queued successfully", c.clientID.String()[:8])
 		case <-c.ctx.closed:
 			return
 		}

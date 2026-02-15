@@ -1,30 +1,27 @@
 package socket
 
 import (
-	"log"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 type ackCollector struct {
 	frameID      uuid.UUID
-	requestID    uuid.UUID
-	senderID     uuid.UUID
-	frameType    byte
 	expectedAcks int
 	receivedAcks int
 	done         chan struct{}
+	closed       bool
 	mu           sync.Mutex
 }
 
 type clientEntry struct {
-	clientID       uuid.UUID
-	channelID      uuid.UUID
-	connctx        *connctx
-	requestQueue   chan *frame
-	responseQueue  chan *frame
-	pendingReceive chan *frame
+	clientID      uuid.UUID
+	channelID     uuid.UUID
+	connctx       *connctx
+	requestQueue  chan *frame
+	responseQueue chan *frame
 }
 
 type registry struct {
@@ -32,13 +29,15 @@ type registry struct {
 	clients     map[uuid.UUID]*clientEntry
 	channels    map[uuid.UUID]map[uuid.UUID]*clientEntry
 	pendingAcks map[uuid.UUID]*ackCollector
+	channelNotify map[uuid.UUID][]chan struct{}
 }
 
 func newRegistry() *registry {
 	return &registry{
-		clients:     make(map[uuid.UUID]*clientEntry),
-		channels:    make(map[uuid.UUID]map[uuid.UUID]*clientEntry),
-		pendingAcks: make(map[uuid.UUID]*ackCollector),
+		clients:       make(map[uuid.UUID]*clientEntry),
+		channels:      make(map[uuid.UUID]map[uuid.UUID]*clientEntry),
+		pendingAcks:   make(map[uuid.UUID]*ackCollector),
+		channelNotify: make(map[uuid.UUID][]chan struct{}),
 	}
 }
 
@@ -46,15 +45,12 @@ func (r *registry) register(clientID, channelID uuid.UUID, ctx *connctx) *client
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	log.Printf("[Registry] Registering client %s on channel %s", clientID.String()[:8], channelID.String()[:8])
-
 	entry := &clientEntry{
-		clientID:       clientID,
-		channelID:      channelID,
-		connctx:        ctx,
-		requestQueue:   make(chan *frame, 1024),
-		responseQueue:  make(chan *frame, 1024),
-		pendingReceive: make(chan *frame, 1024),
+		clientID:      clientID,
+		channelID:     channelID,
+		connctx:       ctx,
+		requestQueue:  make(chan *frame, 1024),
+		responseQueue: make(chan *frame, 1024),
 	}
 
 	r.clients[clientID] = entry
@@ -62,6 +58,17 @@ func (r *registry) register(clientID, channelID uuid.UUID, ctx *connctx) *client
 		r.channels[channelID] = make(map[uuid.UUID]*clientEntry)
 	}
 	r.channels[channelID][clientID] = entry
+
+	// Notify any waiting senders that a new receiver is available
+	if waiters := r.channelNotify[channelID]; len(waiters) > 0 {
+		for _, ch := range waiters {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
+		}
+		delete(r.channelNotify, channelID)
+	}
 
 	go entry.processResponses()
 	go entry.processRequests()
@@ -71,8 +78,7 @@ func (r *registry) register(clientID, channelID uuid.UUID, ctx *connctx) *client
 func (r *registry) get(clientID uuid.UUID) (*clientEntry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	entry, ok := r.clients[clientID]
-	return entry, ok
+	return r.clients[clientID], r.clients[clientID] != nil
 }
 
 func (r *registry) unregister(clientID uuid.UUID) {
@@ -82,7 +88,6 @@ func (r *registry) unregister(clientID uuid.UUID) {
 	if entry, ok := r.clients[clientID]; ok {
 		close(entry.requestQueue)
 		close(entry.responseQueue)
-		close(entry.pendingReceive)
 		delete(r.clients, clientID)
 
 		if ch := r.channels[entry.channelID]; ch != nil {
@@ -94,10 +99,36 @@ func (r *registry) unregister(clientID uuid.UUID) {
 	}
 }
 
-func (r *registry) getChannelPeers(channelID, excludeClientID uuid.UUID) []*clientEntry {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+func (r *registry) waitForReceivers(channelID, excludeClientID uuid.UUID, timeoutMs uint64) []*clientEntry {
+	r.mu.Lock()
+	peers := r.getChannelPeersLocked(channelID, excludeClientID)
+	if len(peers) > 0 {
+		r.mu.Unlock()
+		return peers
+	}
+	
+	// No receivers yet, register for notification
+	notifyCh := make(chan struct{}, 1)
+	r.channelNotify[channelID] = append(r.channelNotify[channelID], notifyCh)
+	r.mu.Unlock()
+	
+	timeout := time.After(time.Duration(timeoutMs) * time.Millisecond)
+	for {
+		select {
+		case <-notifyCh:
+			r.mu.Lock()
+			peers := r.getChannelPeersLocked(channelID, excludeClientID)
+			r.mu.Unlock()
+			if len(peers) > 0 {
+				return peers
+			}
+		case <-timeout:
+			return nil
+		}
+	}
+}
 
+func (r *registry) getChannelPeersLocked(channelID, excludeClientID uuid.UUID) []*clientEntry {
 	ch := r.channels[channelID]
 	if ch == nil {
 		return nil
@@ -112,30 +143,19 @@ func (r *registry) getChannelPeers(channelID, excludeClientID uuid.UUID) []*clie
 	return peers
 }
 
-func (e *clientEntry) enqueueRequest(f *frame) bool {
+func (e *clientEntry) enqueueRequest(f *frame) {
 	select {
 	case e.requestQueue <- f:
-		return true
 	default:
-		return false
+		putFrame(f)
 	}
 }
 
-func (e *clientEntry) dequeueRequest() (*frame, bool) {
-	select {
-	case f, ok := <-e.requestQueue:
-		return f, ok
-	default:
-		return nil, false
-	}
-}
-
-func (e *clientEntry) enqueueResponse(f *frame) bool {
+func (e *clientEntry) enqueueResponse(f *frame) {
 	select {
 	case e.responseQueue <- f:
-		return true
 	default:
-		return false
+		putFrame(f)
 	}
 }
 
@@ -161,16 +181,12 @@ func (e *clientEntry) processRequests() {
 	}
 }
 
-func (r *registry) createAckCollector(frameID, requestID, senderID uuid.UUID, frameType byte, expectedAcks int) *ackCollector {
+func (r *registry) createAckCollector(frameID uuid.UUID, expectedAcks int) *ackCollector {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	collector := &ackCollector{
 		frameID:      frameID,
-		requestID:    requestID,
-		senderID:     senderID,
-		frameType:    frameType,
 		expectedAcks: expectedAcks,
-		receivedAcks: 0,
 		done:         make(chan struct{}),
 	}
 	r.pendingAcks[frameID] = collector
@@ -186,7 +202,8 @@ func (r *registry) recordAck(frameID uuid.UUID) {
 	}
 	collector.mu.Lock()
 	collector.receivedAcks++
-	if collector.receivedAcks == collector.expectedAcks {
+	if collector.receivedAcks == collector.expectedAcks && !collector.closed {
+		collector.closed = true
 		close(collector.done)
 	}
 	collector.mu.Unlock()

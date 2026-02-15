@@ -2,7 +2,6 @@ package socket
 
 import (
 	"context"
-	"log"
 	"net"
 	"sync"
 	"syscall"
@@ -113,12 +112,17 @@ func (s *Server) handle(conn net.Conn) {
 			if clientID == uuid.Nil {
 				clientID = f.ClientID
 				channelID = f.ChannelID
-				log.Printf("[Server] Registering client %s on channel %s", clientID.String()[:8], channelID.String()[:8])
 				entry = s.registry.register(clientID, channelID, ctx)
+				// Send registration ack
+				ackF := getFrame()
+				ackF.Version = version1
+				ackF.Type = ackFrame
+				ackF.Flags = flagNone
+				ackF.ClientID = clientID
+				entry.enqueueResponse(ackF)
 			}
 
 			if f.Flags&flagAck != 0 {
-				log.Printf("[Server] Received ack from client %s, frameID=%s", clientID.String()[:8], f.FrameID.String()[:8])
 				s.registry.recordAck(f.FrameID)
 				putFrame(f)
 			} else if f.Flags&flagRequest != 0 {
@@ -131,9 +135,7 @@ func (s *Server) handle(conn net.Conn) {
 }
 
 func (s *Server) handleRequest(f *frame, clientID, channelID uuid.UUID, entry *clientEntry) {
-	log.Printf("[Server] Received request from client %s, reqID=%s", clientID.String()[:8], f.RequestID.String()[:8])
-	
-	peers := s.waitForReceivers(channelID, clientID, f.ClientTimeoutMs)
+	peers := s.registry.waitForReceivers(channelID, clientID, f.ClientTimeoutMs)
 	if len(peers) == 0 {
 		errFrame := newErrorFrame(f.RequestID, f.ClientID, "no receivers available", flagNone)
 		entry.enqueueResponse(errFrame)
@@ -143,7 +145,7 @@ func (s *Server) handleRequest(f *frame, clientID, channelID uuid.UUID, entry *c
 	
 	frameID := uuid.New()
 	f.FrameID = frameID
-	collector := s.registry.createAckCollector(frameID, f.RequestID, clientID, f.Type, len(peers))
+	collector := s.registry.createAckCollector(frameID, len(peers))
 	
 	for _, peer := range peers {
 		peer.enqueueRequest(cloneFrame(f))
@@ -167,23 +169,4 @@ func (s *Server) handleRequest(f *frame, clientID, channelID uuid.UUID, entry *c
 	
 	s.registry.removeAckCollector(frameID)
 	putFrame(f)
-}
-
-func (s *Server) waitForReceivers(channelID, clientID uuid.UUID, timeoutMs uint64) []*clientEntry {
-	timeout := time.After(time.Duration(timeoutMs) * time.Millisecond)
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	
-	for {
-		peers := s.registry.getChannelPeers(channelID, clientID)
-		if len(peers) > 0 {
-			return peers
-		}
-		
-		select {
-		case <-timeout:
-			return nil
-		case <-ticker.C:
-		}
-	}
 }
