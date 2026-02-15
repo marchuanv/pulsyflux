@@ -97,6 +97,8 @@ func TestClientEmptyPayload(t *testing.T) {
 		}
 	}()
 
+	time.Sleep(50 * time.Millisecond)
+
 	// Client1 sends
 	if err := client1.Send(strings.NewReader("")); err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -739,5 +741,35 @@ func testConcurrentSendRespond(t *testing.T, server *Server, channelID uuid.UUID
 }
 
 func TestTimeoutWithReceivers(t *testing.T) {
-	t.Skip("Cannot test slow receiver timeout without network-level delays or invasive test hooks")
+	server := NewServer("9201")
+	server.Start()
+	defer server.Stop()
+
+	channelID := uuid.New()
+	publisher, _ := NewClient("127.0.0.1:9201", channelID)
+	defer publisher.Close()
+
+	subscriber, _ := NewClient("127.0.0.1:9201", channelID)
+	defer subscriber.Close()
+
+	incoming := make(chan io.Reader, 1)
+	outgoing := make(chan io.Reader, 1)
+
+	go func() {
+		subscriber.Respond(incoming, outgoing)
+	}()
+
+	go func() {
+		<-incoming
+		time.Sleep(10 * time.Second)
+		outgoing <- strings.NewReader("delayed")
+	}()
+
+	err := publisher.Send(strings.NewReader("test"))
+	if err == nil {
+		t.Fatal("Expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("Expected timeout error, got: %v", err)
+	}
 }

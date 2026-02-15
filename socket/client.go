@@ -25,6 +25,9 @@ type Client struct {
 
 type assembledRequest struct {
 	payload []byte
+	frameIDs []uuid.UUID
+	reqID uuid.UUID
+	ackChan chan struct{}
 }
 
 func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
@@ -225,6 +228,7 @@ func (c *Client) Receive(incoming chan io.Reader) error {
 	select {
 	case req := <-c.incoming:
 		incoming <- bytes.NewReader(req.payload)
+		close(req.ackChan)
 		return nil
 	case <-c.ctx.closed:
 		return errClosed
@@ -235,6 +239,7 @@ func (c *Client) Respond(incoming chan io.Reader, outgoing chan io.Reader) error
 	select {
 	case req := <-c.incoming:
 		incoming <- bytes.NewReader(req.payload)
+		close(req.ackChan)
 		reader := <-outgoing
 		if reader == nil {
 			return nil
@@ -308,10 +313,7 @@ func (c *Client) processIncoming() {
 			return
 		}
 		reqID := startF.RequestID
-		if err := c.sendAck(startF.FrameID, reqID); err != nil {
-			putFrame(startF)
-			return
-		}
+		frameIDs := []uuid.UUID{startF.FrameID}
 		putFrame(startF)
 
 		var buf bytes.Buffer
@@ -326,10 +328,7 @@ func (c *Client) processIncoming() {
 			case <-c.ctx.closed:
 				return
 			}
-			if err := c.sendAck(chunkF.FrameID, reqID); err != nil {
-				putFrame(chunkF)
-				return
-			}
+			frameIDs = append(frameIDs, chunkF.FrameID)
 			buf.Write(chunkF.Payload)
 			isFinal := chunkF.isFinal()
 			putFrame(chunkF)
@@ -348,14 +347,28 @@ func (c *Client) processIncoming() {
 		case <-c.ctx.closed:
 			return
 		}
-		if err := c.sendAck(endF.FrameID, reqID); err != nil {
-			putFrame(endF)
-			return
-		}
+		frameIDs = append(frameIDs, endF.FrameID)
 		putFrame(endF)
 
+		ackChan := make(chan struct{})
 		select {
-		case c.incoming <- &assembledRequest{payload: buf.Bytes()}:
+		case c.incoming <- &assembledRequest{
+			payload: buf.Bytes(),
+			frameIDs: frameIDs,
+			reqID: reqID,
+			ackChan: ackChan,
+		}:
+		case <-c.ctx.closed:
+			return
+		}
+
+		select {
+		case <-ackChan:
+			for _, frameID := range frameIDs {
+				if err := c.sendAck(frameID, reqID); err != nil {
+					return
+				}
+			}
 		case <-c.ctx.closed:
 			return
 		}
