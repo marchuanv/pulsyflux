@@ -260,8 +260,13 @@ func BenchmarkSendReceive(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
-		client2.Stream(nil, &buf, nil)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		client2.Stream(nil, &buf, func(err error) {
+			wg.Done()
+		})
 		client1.Stream(bytes.NewReader(data), nil, nil)
+		wg.Wait()
 	}
 }
 
@@ -278,8 +283,13 @@ func BenchmarkSendReceive_1KB(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
-		client2.Stream(nil, &buf, nil)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		client2.Stream(nil, &buf, func(err error) {
+			wg.Done()
+		})
 		client1.Stream(bytes.NewReader(data), nil, nil)
+		wg.Wait()
 	}
 }
 
@@ -296,8 +306,13 @@ func BenchmarkSendReceive_64KB(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
-		client2.Stream(nil, &buf, nil)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		client2.Stream(nil, &buf, func(err error) {
+			wg.Done()
+		})
 		client1.Stream(bytes.NewReader(data), nil, nil)
+		wg.Wait()
 	}
 }
 
@@ -314,8 +329,13 @@ func BenchmarkSendReceive_1MB(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
-		client2.Stream(nil, &buf, nil)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		client2.Stream(nil, &buf, func(err error) {
+			wg.Done()
+		})
 		client1.Stream(bytes.NewReader(data), nil, nil)
+		wg.Wait()
 	}
 }
 
