@@ -24,7 +24,6 @@ type Client struct {
 	opWg      sync.WaitGroup
 	opErrors  chan error
 	wg        sync.WaitGroup
-	waitOnce  sync.Once
 }
 
 type assembledRequest struct {
@@ -419,17 +418,19 @@ func (c *Client) processIncoming() {
 }
 
 func (c *Client) Wait() error {
+	c.opWg.Wait()
+	
 	var firstErr error
-	c.waitOnce.Do(func() {
-		c.opWg.Wait()
-		close(c.opErrors)
-		for err := range c.opErrors {
+	for {
+		select {
+		case err := <-c.opErrors:
 			if err != nil && firstErr == nil {
 				firstErr = err
 			}
+		default:
+			return firstErr
 		}
-	})
-	return firstErr
+	}
 }
 
 func (c *Client) Close() error {
