@@ -3,9 +3,7 @@ package socket
 import (
 	"bytes"
 	"errors"
-	"io"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -39,7 +37,8 @@ func TestClientSendAfterClose(t *testing.T) {
 		t.Fatalf("Close failed: %v", err)
 	}
 
-	err = client.Send(strings.NewReader("test"))
+	client.Send(strings.NewReader("test"))
+	err = client.Wait()
 	if err != errClosed {
 		t.Errorf("Expected errClosed, got %v", err)
 	}
@@ -87,8 +86,9 @@ func TestClientEmptyPayload(t *testing.T) {
 	defer client2.Close()
 
 	var buf bytes.Buffer
-	client1.Send(strings.NewReader(""))
 	client2.Receive(&buf)
+	time.Sleep(100 * time.Millisecond) // Ensure both clients fully registered
+	client1.Send(strings.NewReader(""))
 
 	if err := client1.Wait(); err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -179,7 +179,12 @@ func TestClientBoundaryPayloadSizes(t *testing.T) {
 			var reqBuf, respBuf bytes.Buffer
 
 			client1.Send(bytes.NewReader(data))
-			client2.Respond(&reqBuf, bytes.NewReader(reqBuf.Bytes()))
+			
+			// Respond needs to create response after receiving request
+			go func() {
+				client2.Respond(&reqBuf, bytes.NewReader(data))
+			}()
+			
 			client1.Receive(&respBuf)
 
 			if err := client1.Wait(); err != nil {
@@ -225,10 +230,15 @@ func TestClientSequentialRequests(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		msg := "msg" + string(rune('0'+i))
+		data := []byte(msg)
 		var reqBuf, respBuf bytes.Buffer
 
 		client1.Send(strings.NewReader(msg))
-		client2.Respond(&reqBuf, strings.NewReader(reqBuf.String()+"-echo"))
+		
+		go func() {
+			client2.Respond(&reqBuf, bytes.NewReader(append(data, []byte("-echo")...)))
+		}()
+		
 		client1.Receive(&respBuf)
 
 		if err := client1.Wait(); err != nil {
@@ -540,7 +550,11 @@ func testSendThenRespond(t *testing.T, server *Server, channelID uuid.UUID) {
 
 	var reqBuf, respBuf bytes.Buffer
 	client1.Send(strings.NewReader("req"))
-	client2.Respond(&reqBuf, strings.NewReader(reqBuf.String()+"-resp"))
+	
+	go func() {
+		client2.Respond(&reqBuf, strings.NewReader("req-resp"))
+	}()
+	
 	client1.Receive(&respBuf)
 
 	if err := client1.Wait(); err != nil {
@@ -561,7 +575,11 @@ func testRespondThenSend(t *testing.T, server *Server, channelID uuid.UUID) {
 	defer client2.Close()
 
 	var reqBuf, respBuf bytes.Buffer
-	client2.Respond(&reqBuf, strings.NewReader(reqBuf.String()+"-resp"))
+	
+	go func() {
+		client2.Respond(&reqBuf, strings.NewReader("req-resp"))
+	}()
+	
 	client1.Send(strings.NewReader("req"))
 	client1.Receive(&respBuf)
 
@@ -605,7 +623,11 @@ func testConcurrentSendRespond(t *testing.T, server *Server, channelID uuid.UUID
 
 	var reqBuf, respBuf bytes.Buffer
 	client1.Send(strings.NewReader("req"))
-	client2.Respond(&reqBuf, strings.NewReader(reqBuf.String()+"-resp"))
+	
+	go func() {
+		client2.Respond(&reqBuf, strings.NewReader("req-resp"))
+	}()
+	
 	client1.Receive(&respBuf)
 
 	if err := client1.Wait(); err != nil {
