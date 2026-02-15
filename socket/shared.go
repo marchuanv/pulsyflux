@@ -11,5 +11,4 @@ var (
 	errFrame        = errors.New("error frame received")
 	errClosed       = errors.New("client closed")
 	errInvalidFrame = errors.New("invalid frame")
-	errOperationInProgress = errors.New("another operation in progress")
 )

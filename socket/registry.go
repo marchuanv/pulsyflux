@@ -1,10 +1,22 @@
 package socket
 
 import (
+	"log"
 	"sync"
 
 	"github.com/google/uuid"
 )
+
+type ackCollector struct {
+	frameID      uuid.UUID
+	requestID    uuid.UUID
+	senderID     uuid.UUID
+	frameType    byte
+	expectedAcks int
+	receivedAcks int
+	done         chan struct{}
+	mu           sync.Mutex
+}
 
 type clientEntry struct {
 	clientID       uuid.UUID
@@ -16,21 +28,25 @@ type clientEntry struct {
 }
 
 type registry struct {
-	mu       sync.RWMutex
-	clients  map[uuid.UUID]*clientEntry
-	channels map[uuid.UUID]map[uuid.UUID]*clientEntry
+	mu          sync.RWMutex
+	clients     map[uuid.UUID]*clientEntry
+	channels    map[uuid.UUID]map[uuid.UUID]*clientEntry
+	pendingAcks map[uuid.UUID]*ackCollector
 }
 
 func newRegistry() *registry {
 	return &registry{
-		clients:  make(map[uuid.UUID]*clientEntry),
-		channels: make(map[uuid.UUID]map[uuid.UUID]*clientEntry),
+		clients:     make(map[uuid.UUID]*clientEntry),
+		channels:    make(map[uuid.UUID]map[uuid.UUID]*clientEntry),
+		pendingAcks: make(map[uuid.UUID]*ackCollector),
 	}
 }
 
 func (r *registry) register(clientID, channelID uuid.UUID, ctx *connctx) *clientEntry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	log.Printf("[Registry] Registering client %s on channel %s", clientID.String()[:8], channelID.String()[:8])
 
 	entry := &clientEntry{
 		clientID:       clientID,
@@ -48,6 +64,7 @@ func (r *registry) register(clientID, channelID uuid.UUID, ctx *connctx) *client
 	r.channels[channelID][clientID] = entry
 
 	go entry.processResponses()
+	go entry.processRequests()
 	return entry
 }
 
@@ -131,4 +148,52 @@ func (e *clientEntry) processResponses() {
 			return
 		}
 	}
+}
+
+func (e *clientEntry) processRequests() {
+	for f := range e.requestQueue {
+		select {
+		case e.connctx.writes <- f:
+		case <-e.connctx.closed:
+			putFrame(f)
+			return
+		}
+	}
+}
+
+func (r *registry) createAckCollector(frameID, requestID, senderID uuid.UUID, frameType byte, expectedAcks int) *ackCollector {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	collector := &ackCollector{
+		frameID:      frameID,
+		requestID:    requestID,
+		senderID:     senderID,
+		frameType:    frameType,
+		expectedAcks: expectedAcks,
+		receivedAcks: 0,
+		done:         make(chan struct{}),
+	}
+	r.pendingAcks[frameID] = collector
+	return collector
+}
+
+func (r *registry) recordAck(frameID uuid.UUID) {
+	r.mu.Lock()
+	collector, ok := r.pendingAcks[frameID]
+	r.mu.Unlock()
+	if !ok {
+		return
+	}
+	collector.mu.Lock()
+	collector.receivedAcks++
+	if collector.receivedAcks >= collector.expectedAcks {
+		close(collector.done)
+	}
+	collector.mu.Unlock()
+}
+
+func (r *registry) removeAckCollector(frameID uuid.UUID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.pendingAcks, frameID)
 }
