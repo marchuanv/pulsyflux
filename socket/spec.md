@@ -26,7 +26,6 @@ The socket layer is a **broadcast-only pub-sub system**:
 - `flagNone (0x00)` - No flags (used for registration frame)
 - `flagRequest (0x01)` - Data frame being broadcast
 - `flagAck (0x02)` - Control frame - acknowledgment
-- `flagResponse (0x08)` - Control frame - used for errors
 
 ### Frame Header (84 bytes)
 ```
@@ -50,7 +49,7 @@ Bytes 80-83:  PayloadLength (4)
 
 **Control Frames** (protocol-level):
 - `ackFrame` - acknowledges receipt, no payload, uses `flagAck`
-- `errorFrame` - reports errors, payload contains error message, uses `flagResponse`
+- `errorFrame` - reports errors, payload contains error message, uses `flagNone`
 
 **Key Rule**: Application data ONLY goes in chunkFrame payload. Control frames never carry application data (except error messages).
 

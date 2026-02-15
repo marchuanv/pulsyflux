@@ -121,13 +121,6 @@ func (s *Server) handle(conn net.Conn) {
 				log.Printf("[Server] Received ack from client %s, frameID=%s", clientID.String()[:8], f.FrameID.String()[:8])
 				s.registry.recordAck(f.FrameID)
 				putFrame(f)
-			} else if f.Flags&flagResponse != 0 {
-				log.Printf("[Server] Received response from client %s", clientID.String()[:8])
-				if peer, ok := s.registry.get(f.ClientID); ok {
-					peer.enqueueResponse(f)
-				} else {
-					putFrame(f)
-				}
 			} else if f.Flags&flagRequest != 0 {
 				s.handleRequest(f, clientID, channelID, entry)
 			} else {
@@ -142,7 +135,7 @@ func (s *Server) handleRequest(f *frame, clientID, channelID uuid.UUID, entry *c
 	
 	peers := s.waitForReceivers(channelID, clientID, f.ClientTimeoutMs)
 	if len(peers) == 0 {
-		errFrame := newErrorFrame(f.RequestID, f.ClientID, "no receivers available", flagResponse)
+		errFrame := newErrorFrame(f.RequestID, f.ClientID, "no receivers available", flagNone)
 		entry.enqueueResponse(errFrame)
 		putFrame(f)
 		return
