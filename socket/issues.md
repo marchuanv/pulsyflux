@@ -394,9 +394,7 @@ func (s *Server) handle(conn net.Conn) {
 
 ```go
 func (c *Client) Send(r io.Reader) error {
-    if !c.opMu.TryLock() {
-        return errOperationInProgress
-    }
+    c.opMu.Lock()
     defer c.opMu.Unlock()
 
     reqID := uuid.New()
@@ -466,9 +464,7 @@ func (c *Client) waitForAck(reqID uuid.UUID, frameType uint8) error {
 ```go
 // Receive() - Just receive and ack, no response
 func (c *Client) Receive(incoming chan io.Reader) error {
-    if !c.opMu.TryLock() {
-        return errOperationInProgress
-    }
+    c.opMu.Lock()
     defer c.opMu.Unlock()
 
     // Wait for broadcast startFrame (server excludes our own messages)
@@ -708,7 +704,7 @@ client.Respond(incoming, outgoing)
 **Single Client Constraints**:
 - A client can only perform ONE operation at a time (enforced by `opMu` lock)
 - Valid operations: `Send()`, `Receive()`, or `Respond()`
-- Attempting concurrent operations on same client returns `errOperationInProgress`
+- Concurrent operations on same client are serialized (queued), not rejected
 
 **Valid Patterns**:
 ```go
@@ -731,15 +727,15 @@ client.Receive(incoming)    // OK - after Send() completes
 client.Send(response)       // OK - after Receive() completes
 ```
 
-**Invalid Patterns**:
+**Concurrent Patterns** (serialized automatically):
 ```go
-// INVALID: Concurrent operations on same client
-go client.Send(data1)
-go client.Send(data2)  // ERROR: errOperationInProgress
+// Concurrent operations on same client - serialized by opMu
+go client.Send(data1)        // Executes first
+go client.Send(data2)        // Waits for data1 to complete, then executes
 
-// INVALID: Send while Receive is blocked
+// Send while Receive is blocked - serialized
 go client.Receive(incoming)  // Blocks waiting for message
-client.Send(data)            // ERROR: errOperationInProgress
+client.Send(data)            // Waits for Receive() to complete, then executes
 ```
 
 **No Ordering Requirements Between Different Clients**:
@@ -777,11 +773,11 @@ client.Send(data)            // ERROR: errOperationInProgress
 - `ackCollector.mu` protects ack counting within each collector
 - Blocking on `ackCollector.done` channel for synchronization
 
-**Client-side** (already correct):
-- `opMu` on Client prevents concurrent Send()/Receive()/Respond()
-- This is a **business logic constraint**: a client can only perform one operation at a time
-- Attempting concurrent operations returns `errOperationInProgress`
-- Without lock: both operations would read from same `c.ctx.reads` channel and steal each other's frames
+**Client-side**:
+- `opMu` (Mutex) on Client serializes Send()/Receive()/Respond() operations
+- Concurrent calls to these methods on the same client will block and execute sequentially
+- No errors returned for concurrent attempts - operations are queued automatically
+- Without lock: operations would read from same `c.ctx.reads` channel and steal each other's frames
 - Lock is on Client (not connctx) because:
   - It enforces a logical rule about client operations, not just resource protection
   - connctx is a connection resource; Client is a logical participant
