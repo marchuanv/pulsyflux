@@ -321,13 +321,23 @@ func BenchmarkSendReceive(b *testing.B) {
 	data := []byte("test")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		var buf bytes.Buffer
+		var responseA bytes.Buffer
+		var requestB bytes.Buffer
 		var wg sync.WaitGroup
-		wg.Add(1)
-		client2.SubscriptionStream(&buf, func(err error) {
-			wg.Done()
+		wg.Add(2)
+
+		client2.SubscriptionStream(&requestB, func(err error) {
+			client2.BroadcastStream(bytes.NewReader(data), func(err error) {
+				wg.Done()
+			})
 		})
-		client1.BroadcastStream(bytes.NewReader(data), nil)
+
+		client1.BroadcastStream(bytes.NewReader(data), func(err error) {
+			client1.SubscriptionStream(&responseA, func(err error) {
+				wg.Done()
+			})
+		})
+
 		wg.Wait()
 	}
 }
@@ -344,13 +354,23 @@ func BenchmarkSendReceive_1KB(b *testing.B) {
 	data := bytes.Repeat([]byte("X"), 1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		var buf bytes.Buffer
+		var responseA bytes.Buffer
+		var requestB bytes.Buffer
 		var wg sync.WaitGroup
-		wg.Add(1)
-		client2.SubscriptionStream(&buf, func(err error) {
-			wg.Done()
+		wg.Add(2)
+
+		client2.SubscriptionStream(&requestB, func(err error) {
+			client2.BroadcastStream(bytes.NewReader(data), func(err error) {
+				wg.Done()
+			})
 		})
-		client1.BroadcastStream(bytes.NewReader(data), nil)
+
+		client1.BroadcastStream(bytes.NewReader(data), func(err error) {
+			client1.SubscriptionStream(&responseA, func(err error) {
+				wg.Done()
+			})
+		})
+
 		wg.Wait()
 	}
 }
@@ -367,13 +387,23 @@ func BenchmarkSendReceive_64KB(b *testing.B) {
 	data := bytes.Repeat([]byte("X"), 64*1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		var buf bytes.Buffer
+		var responseA bytes.Buffer
+		var requestB bytes.Buffer
 		var wg sync.WaitGroup
-		wg.Add(1)
-		client2.SubscriptionStream(&buf, func(err error) {
-			wg.Done()
+		wg.Add(2)
+
+		client2.SubscriptionStream(&requestB, func(err error) {
+			client2.BroadcastStream(bytes.NewReader(data), func(err error) {
+				wg.Done()
+			})
 		})
-		client1.BroadcastStream(bytes.NewReader(data), nil)
+
+		client1.BroadcastStream(bytes.NewReader(data), func(err error) {
+			client1.SubscriptionStream(&responseA, func(err error) {
+				wg.Done()
+			})
+		})
+
 		wg.Wait()
 	}
 }
@@ -390,13 +420,23 @@ func BenchmarkSendReceive_1MB(b *testing.B) {
 	data := bytes.Repeat([]byte("X"), 1024*1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		var buf bytes.Buffer
+		var responseA bytes.Buffer
+		var requestB bytes.Buffer
 		var wg sync.WaitGroup
-		wg.Add(1)
-		client2.SubscriptionStream(&buf, func(err error) {
-			wg.Done()
+		wg.Add(2)
+
+		client2.SubscriptionStream(&requestB, func(err error) {
+			client2.BroadcastStream(bytes.NewReader(data), func(err error) {
+				wg.Done()
+			})
 		})
-		client1.BroadcastStream(bytes.NewReader(data), nil)
+
+		client1.BroadcastStream(bytes.NewReader(data), func(err error) {
+			client1.SubscriptionStream(&responseA, func(err error) {
+				wg.Done()
+			})
+		})
+
 		wg.Wait()
 	}
 }
@@ -412,13 +452,23 @@ func TestNoGoroutineLeak(t *testing.T) {
 	client2, _ := NewClient("127.0.0.1:9600", channelID)
 
 	for i := 0; i < 10; i++ {
-		var buf bytes.Buffer
+		var responseA bytes.Buffer
+		var requestB bytes.Buffer
 		var wg sync.WaitGroup
-		wg.Add(1)
-		client2.SubscriptionStream(&buf, func(err error) {
-			wg.Done()
+		wg.Add(2)
+
+		client2.SubscriptionStream(&requestB, func(err error) {
+			client2.BroadcastStream(strings.NewReader("test"), func(err error) {
+				wg.Done()
+			})
 		})
-		client1.BroadcastStream(strings.NewReader("test"), nil)
+
+		client1.BroadcastStream(strings.NewReader("test"), func(err error) {
+			client1.SubscriptionStream(&responseA, func(err error) {
+				wg.Done()
+			})
+		})
+
 		wg.Wait()
 	}
 
@@ -448,13 +498,23 @@ func TestNoMemoryLeak(t *testing.T) {
 	client2, _ := NewClient("127.0.0.1:9601", channelID)
 
 	for i := 0; i < 100; i++ {
-		var buf bytes.Buffer
+		var responseA bytes.Buffer
+		var requestB bytes.Buffer
 		var wg sync.WaitGroup
-		wg.Add(1)
-		client2.SubscriptionStream(&buf, func(err error) {
-			wg.Done()
+		wg.Add(2)
+
+		client2.SubscriptionStream(&requestB, func(err error) {
+			client2.BroadcastStream(strings.NewReader("test"), func(err error) {
+				wg.Done()
+			})
 		})
-		client1.BroadcastStream(strings.NewReader("test"), nil)
+
+		client1.BroadcastStream(strings.NewReader("test"), func(err error) {
+			client1.SubscriptionStream(&responseA, func(err error) {
+				wg.Done()
+			})
+		})
+
 		wg.Wait()
 	}
 
@@ -504,17 +564,27 @@ func TestMemoryStressLargePayloads(t *testing.T) {
 
 	data := bytes.Repeat([]byte("X"), 5*1024*1024)
 	for i := 0; i < 10; i++ {
-		var buf bytes.Buffer
+		var responseA bytes.Buffer
+		var requestB bytes.Buffer
 		iter := i
 		var wg sync.WaitGroup
-		wg.Add(1)
-		client2.SubscriptionStream(&buf, func(err error) {
-			if buf.Len() != len(data) {
-				t.Fatalf("Iteration %d: expected %d bytes, got %d", iter, len(data), buf.Len())
+		wg.Add(2)
+
+		client2.SubscriptionStream(&requestB, func(err error) {
+			if requestB.Len() != len(data) {
+				t.Fatalf("Iteration %d: expected %d bytes, got %d", iter, len(data), requestB.Len())
 			}
-			wg.Done()
+			client2.BroadcastStream(bytes.NewReader(data), func(err error) {
+				wg.Done()
+			})
 		})
-		client1.BroadcastStream(bytes.NewReader(data), nil)
+
+		client1.BroadcastStream(bytes.NewReader(data), func(err error) {
+			client1.SubscriptionStream(&responseA, func(err error) {
+				wg.Done()
+			})
+		})
+
 		wg.Wait()
 	}
 }
@@ -528,13 +598,23 @@ func TestMemoryStressConcurrent(t *testing.T) {
 	client2, _ := NewClient("127.0.0.1:9604", channelID)
 
 	for i := 0; i < 50; i++ {
-		var buf bytes.Buffer
+		var responseA bytes.Buffer
+		var requestB bytes.Buffer
 		var wg sync.WaitGroup
-		wg.Add(1)
-		client2.SubscriptionStream(&buf, func(err error) {
-			wg.Done()
+		wg.Add(2)
+
+		client2.SubscriptionStream(&requestB, func(err error) {
+			client2.BroadcastStream(strings.NewReader("test"), func(err error) {
+				wg.Done()
+			})
 		})
-		client1.BroadcastStream(strings.NewReader("test"), nil)
+
+		client1.BroadcastStream(strings.NewReader("test"), func(err error) {
+			client1.SubscriptionStream(&responseA, func(err error) {
+				wg.Done()
+			})
+		})
+
 		wg.Wait()
 	}
 	server.Stop()
@@ -554,13 +634,23 @@ func TestMemoryPoolEfficiency(t *testing.T) {
 
 	data := bytes.Repeat([]byte("X"), 1024)
 	for i := 0; i < 1000; i++ {
-		var buf bytes.Buffer
+		var responseA bytes.Buffer
+		var requestB bytes.Buffer
 		var wg sync.WaitGroup
-		wg.Add(1)
-		client2.SubscriptionStream(&buf, func(err error) {
-			wg.Done()
+		wg.Add(2)
+
+		client2.SubscriptionStream(&requestB, func(err error) {
+			client2.BroadcastStream(bytes.NewReader(data), func(err error) {
+				wg.Done()
+			})
 		})
-		client1.BroadcastStream(bytes.NewReader(data), nil)
+
+		client1.BroadcastStream(bytes.NewReader(data), func(err error) {
+			client1.SubscriptionStream(&responseA, func(err error) {
+				wg.Done()
+			})
+		})
+
 		wg.Wait()
 	}
 
@@ -588,13 +678,23 @@ func TestMemoryLeakUnderLoad(t *testing.T) {
 	client2, _ := NewClient("127.0.0.1:9606", channelID)
 
 	for i := 0; i < 500; i++ {
-		var buf bytes.Buffer
+		var responseA bytes.Buffer
+		var requestB bytes.Buffer
 		var wg sync.WaitGroup
-		wg.Add(1)
-		client2.SubscriptionStream(&buf, func(err error) {
-			wg.Done()
+		wg.Add(2)
+
+		client2.SubscriptionStream(&requestB, func(err error) {
+			client2.BroadcastStream(strings.NewReader("load test"), func(err error) {
+				wg.Done()
+			})
 		})
-		client1.BroadcastStream(strings.NewReader("load test"), nil)
+
+		client1.BroadcastStream(strings.NewReader("load test"), func(err error) {
+			client1.SubscriptionStream(&responseA, func(err error) {
+				wg.Done()
+			})
+		})
+
 		wg.Wait()
 	}
 
