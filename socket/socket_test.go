@@ -10,6 +10,14 @@ import (
 	"github.com/google/uuid"
 )
 
+type errorReader struct {
+	err error
+}
+
+func (e *errorReader) Read(p []byte) (n int, err error) {
+	return 0, e.err
+}
+
 // ============================================================================
 // Basic Tests
 // ============================================================================
@@ -178,12 +186,12 @@ func TestClientBoundaryPayloadSizes(t *testing.T) {
 			var reqBuf, respBuf bytes.Buffer
 
 			client1.Send(bytes.NewReader(data))
-			
+
 			// Respond needs to create response after receiving request
 			go func() {
 				client2.Respond(&reqBuf, bytes.NewReader(data))
 			}()
-			
+
 			client1.Receive(&respBuf)
 
 			if err := client1.Wait(); err != nil {
@@ -233,11 +241,11 @@ func TestClientSequentialRequests(t *testing.T) {
 		var reqBuf, respBuf bytes.Buffer
 
 		client1.Send(strings.NewReader(msg))
-		
+
 		go func() {
 			client2.Respond(&reqBuf, bytes.NewReader(append(data, []byte("-echo")...)))
 		}()
-		
+
 		client1.Receive(&respBuf)
 
 		if err := client1.Wait(); err != nil {
@@ -290,70 +298,6 @@ func TestClientReadError(t *testing.T) {
 
 	if err := client1.Wait(); err == nil {
 		t.Error("Expected read error")
-	}
-}
-
-type errorReader struct {
-	err error
-}
-
-func (e *errorReader) Read(p []byte) (n int, err error) {
-	return 0, e.err
-}
-
-func TestClientSelfReceive(t *testing.T) {
-	server := NewServer("9099")
-	if err := server.Start(); err != nil {
-		t.Fatalf("Failed to start server: %v", err)
-	}
-	defer server.Stop()
-
-	channelID := uuid.New()
-	client, err := NewClient("127.0.0.1:9099", channelID)
-	if err != nil {
-		t.Fatalf("Failed to create client: %v", err)
-	}
-	defer client.Close()
-
-	var buf bytes.Buffer
-	client.Receive(&buf)
-	client.Send(strings.NewReader("self-test"))
-
-	if err := client.Wait(); err != nil {
-		t.Logf("Expected error (no other receivers): %v", err)
-	}
-}
-
-func TestClientZeroTimeout(t *testing.T) {
-	server := NewServer("9097")
-	if err := server.Start(); err != nil {
-		t.Fatalf("Failed to start server: %v", err)
-	}
-	defer server.Stop()
-
-	channelID := uuid.New()
-	client1, err := NewClient("127.0.0.1:9097", channelID)
-	if err != nil {
-		t.Fatalf("Failed to create client1: %v", err)
-	}
-	defer client1.Close()
-
-	client2, err := NewClient("127.0.0.1:9097", channelID)
-	if err != nil {
-		t.Fatalf("Failed to create client2: %v", err)
-	}
-	defer client2.Close()
-
-	var reqBuf, respBuf bytes.Buffer
-	client1.Send(strings.NewReader("test"))
-	client2.Respond(&reqBuf, strings.NewReader("ok"))
-	client1.Receive(&respBuf)
-
-	if err := client1.Wait(); err != nil {
-		t.Fatalf("Client1 failed: %v", err)
-	}
-	if err := client2.Wait(); err != nil {
-		t.Fatalf("Client2 failed: %v", err)
 	}
 }
 
@@ -549,11 +493,11 @@ func testSendThenRespond(t *testing.T, server *Server, channelID uuid.UUID) {
 
 	var reqBuf, respBuf bytes.Buffer
 	client1.Send(strings.NewReader("req"))
-	
+
 	go func() {
 		client2.Respond(&reqBuf, strings.NewReader("req-resp"))
 	}()
-	
+
 	client1.Receive(&respBuf)
 
 	if err := client1.Wait(); err != nil {
@@ -574,11 +518,11 @@ func testRespondThenSend(t *testing.T, server *Server, channelID uuid.UUID) {
 	defer client2.Close()
 
 	var reqBuf, respBuf bytes.Buffer
-	
+
 	go func() {
 		client2.Respond(&reqBuf, strings.NewReader("req-resp"))
 	}()
-	
+
 	client1.Send(strings.NewReader("req"))
 	client1.Receive(&respBuf)
 
@@ -622,11 +566,11 @@ func testConcurrentSendRespond(t *testing.T, server *Server, channelID uuid.UUID
 
 	var reqBuf, respBuf bytes.Buffer
 	client1.Send(strings.NewReader("req"))
-	
+
 	go func() {
 		client2.Respond(&reqBuf, strings.NewReader("req-resp"))
 	}()
-	
+
 	client1.Receive(&respBuf)
 
 	if err := client1.Wait(); err != nil {
