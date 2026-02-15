@@ -163,9 +163,6 @@ type ackCollector struct {
 **Send(r io.Reader) error**:
 ```go
 func (c *Client) Send(r io.Reader) error {
-    c.opMu.Lock()  // Serialize operations
-    defer c.opMu.Unlock()
-
     reqID := uuid.New()
     
     // Send start + wait for ack
@@ -189,39 +186,33 @@ func (c *Client) Send(r io.Reader) error {
 **Receive(incoming chan io.Reader) error**:
 ```go
 func (c *Client) Receive(incoming chan io.Reader) error {
-    c.opMu.Lock()  // Serialize operations
-    defer c.opMu.Unlock()
-
-    // Receive start + send ack
-    startF := receiveFrame(startFrame, uuid.Nil)
-    sendAck(startF.FrameID, startF.RequestID)
-    
-    // Receive chunks + send ack after each
-    for each chunk {
-        chunkF := receiveFrame(chunkFrame, reqID)
-        sendAck(chunkF.FrameID, reqID)
-        append to buffer
-        if isFinal break
+    // Reads from pre-assembled incoming channel
+    // Background processIncoming() handles frame reception and acks
+    select {
+    case req := <-c.incoming:
+        incoming <- bytes.NewReader(req.payload)
+        return nil
+    case <-c.ctx.closed:
+        return errClosed
     }
-    
-    // Receive end + send ack
-    endF := receiveFrame(endFrame, reqID)
-    sendAck(endF.FrameID, reqID)
-    
-    incoming <- bytes.NewReader(buffer)
-    return nil
 }
 ```
 
 **Respond(incoming, outgoing chan io.Reader) error**:
 ```go
 func (c *Client) Respond(incoming, outgoing chan io.Reader) error {
-    Receive(incoming)  // Receive and ack
-    reader := <-outgoing  // Wait for response
-    if reader != nil {
-        Send(reader)  // Broadcast response
+    // Receive from pre-assembled incoming channel
+    select {
+    case req := <-c.incoming:
+        incoming <- bytes.NewReader(req.payload)
+        reader := <-outgoing
+        if reader != nil {
+            return c.Send(reader)
+        }
+        return nil
+    case <-c.ctx.closed:
+        return errClosed
     }
-    return nil
 }
 ```
 
@@ -238,6 +229,7 @@ func (c *Client) Respond(incoming, outgoing chan io.Reader) error {
 - Discards non-matching frames
 
 **waitForAck**:
+- Reads from `responses` channel (routed by routeFrames)
 - Waits for `ackFrame` with matching RequestID
 - Handles `errorFrame` (extracts error message from payload)
 - Returns error on timeout or closed connection
@@ -246,12 +238,25 @@ func (c *Client) Respond(incoming, outgoing chan io.Reader) error {
 - Sends `ackFrame` with `flagAck`
 - Includes FrameID and RequestID for correlation
 
+**routeFrames** (background goroutine):
+- Reads from `ctx.reads` channel
+- Routes frames based on `flagRequest`:
+  - Frames WITH `flagRequest` → `requests` channel
+  - Frames WITHOUT `flagRequest` → `responses` channel
+
+**processIncoming** (background goroutine):
+- Reads from `requests` channel
+- Receives start frame, sends ack
+- Receives chunk frames, sends acks, assembles payload
+- Receives end frame, sends ack
+- Queues assembled request to `incoming` channel
+
 ### Concurrency Control
 
-**opMu Lock**:
-- Serializes `Send()`, `Receive()`, `Respond()` on same client
-- Prevents frame stealing from shared `ctx.reads` channel
-- Concurrent calls block and execute sequentially (not rejected)
+**No Operation Lock**:
+- `Send()`, `Receive()`, `Respond()` can be called concurrently
+- Operations are independent and non-blocking
+- Background goroutines handle frame routing and request assembly
 
 **Connection Context** (`connctx`):
 - Separate reader/writer goroutines per connection
@@ -263,6 +268,15 @@ func (c *Client) Respond(incoming, outgoing chan io.Reader) error {
 - Writer prioritizes error frames
 - Read timeout: 2 minutes per frame
 - Write timeout: 5 seconds per frame
+
+**Client Channels**:
+- `requests` - incoming request frames with `flagRequest` (buffered 1024)
+- `responses` - ack/error frames without `flagRequest` (buffered 1024)
+- `incoming` - assembled requests ready for consumption (buffered 16)
+
+**Background Goroutines**:
+- `routeFrames()` - routes frames from `ctx.reads` to `requests` or `responses`
+- `processIncoming()` - assembles incoming requests and queues to `incoming`
 
 ## Buffer Pooling
 
@@ -352,8 +366,9 @@ client.Respond(incoming, outgoing)
 5. **FrameID Tracking**: Each broadcast frame gets unique FrameID for ack correlation
 6. **RequestID Purpose**: Groups frames together (start/chunk/end) and enables frame filtering
 7. **Sequence Field**: Chunk index (31 bits) + isFinal flag (1 bit)
-8. **Operation Serialization**: `opMu` prevents concurrent operations on same client
-9. **No Client-Side Filtering**: Server handles sender exclusion
-10. **Consolidated Frame Methods**: Single `sendFrame()` and `receiveFrame()` for all types
-11. **Error in Payload**: Error frames carry error message in payload field
-12. **No flagResponse**: Removed as redundant - frame type is sufficient
+8. **No Operation Serialization**: `Send()`, `Receive()`, `Respond()` can be called concurrently
+9. **Frame Routing**: `routeFrames()` separates request frames from response frames
+10. **Background Request Processing**: `processIncoming()` automatically receives and assembles requests
+11. **No Client-Side Filtering**: Server handles sender exclusion
+12. **Consolidated Frame Methods**: Single `sendFrame()` and `receiveFrame()` for all types
+13. **Error in Payload**: Error frames carry error message in payload field

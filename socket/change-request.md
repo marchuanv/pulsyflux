@@ -1,4 +1,13 @@
-# Change Request: Remove Operation Ordering Requirement
+# Change Request: Remove Operation Ordering Requirement ✅ COMPLETED
+
+## Status: IMPLEMENTED AND TESTED
+
+All objectives achieved:
+- ✅ Operations can be called in any order
+- ✅ No frame stealing
+- ✅ Concurrent operations supported
+- ✅ All tests pass including `TestOperationOrderIndependence`
+- ✅ Backward compatible API
 
 ## Problem Statement
 
@@ -168,3 +177,51 @@ Existing code using these methods will continue to work and will benefit from th
 3. **No connctx Changes**: All changes are contained in `client.go` - `connctx.go` remains unchanged as required
 
 4. **Minimal Code**: The solution adds only ~80 lines of code for maximum benefit
+
+## Testing
+
+**New Tests Added**:
+- `TestOperationOrderIndependence` - comprehensive test suite with 6 scenarios:
+  - `SendThenReceive` - ✅ PASS
+  - `ReceiveThenSend` - ✅ PASS
+  - `SendThenRespond` - ✅ PASS
+  - `RespondThenSend` - ✅ PASS
+  - `ConcurrentSendReceive` - ✅ PASS
+  - `ConcurrentSendRespond` - ✅ PASS
+- `TestTimeoutNoReceivers` - validates timeout when no receivers available - ✅ PASS
+- `TestTimeoutWithReceivers` - skipped (see Limitations)
+
+**All Existing Tests**: ✅ PASS
+
+## Limitations
+
+**Testing Slow Receivers**:
+- Cannot test timeout scenarios where receivers take too long to acknowledge
+- Background `processIncoming()` automatically processes frames and sends acks immediately
+- No mechanism to pause/delay automatic acknowledgment for testing purposes
+- `TestTimeoutWithReceivers` is skipped due to this limitation
+- Would require test-only mode or network-level delays to simulate slow acknowledgments
+
+---
+
+# Next Focus: Timeout Testing Enhancement
+
+## Problem
+
+Current architecture makes it impossible to test scenarios where receivers exist but take too long to acknowledge frames. The background `processIncoming()` goroutine automatically sends acknowledgments immediately upon receiving frames.
+
+## Required Changes
+
+To enable testing of slow receiver scenarios, we need:
+
+1. **Test-Only Mode**: Add mechanism to disable/delay automatic acknowledgments in `processIncoming()`
+2. **Configurable Ack Delay**: Allow tests to inject delays before sending acknowledgments
+3. **Manual Ack Control**: Provide test hooks to control when acknowledgments are sent
+
+## Test Scenarios Needed
+
+- `TestTimeoutWithReceivers` - receiver exists but doesn't ack within timeout
+- Validate server properly handles partial acks (some receivers ack, others timeout)
+- Validate sender receives appropriate timeout error
+
+## Status: PENDING
