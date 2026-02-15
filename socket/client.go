@@ -218,7 +218,7 @@ func (c *Client) idleMonitor() {
 			c.activityMu.Lock()
 			idle := time.Since(c.lastActive)
 			c.activityMu.Unlock()
-			if idle > 15*time.Second {
+			if idle > 60*time.Second {
 				c.close()
 				return
 			}

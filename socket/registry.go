@@ -1,6 +1,7 @@
 package socket
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -99,7 +100,7 @@ func (r *registry) unregister(clientID uuid.UUID) {
 	}
 }
 
-func (r *registry) waitForReceivers(channelID, excludeClientID uuid.UUID, timeoutMs uint64) []*clientEntry {
+func (r *registry) waitForReceivers(ctx context.Context, channelID, excludeClientID uuid.UUID, timeoutMs uint64) []*clientEntry {
 	r.mu.Lock()
 	peers := r.getChannelPeersLocked(channelID, excludeClientID)
 	if len(peers) > 0 {
@@ -107,7 +108,6 @@ func (r *registry) waitForReceivers(channelID, excludeClientID uuid.UUID, timeou
 		return peers
 	}
 	
-	// No receivers yet, register for notification
 	notifyCh := make(chan struct{}, 1)
 	r.channelNotify[channelID] = append(r.channelNotify[channelID], notifyCh)
 	r.mu.Unlock()
@@ -115,6 +115,8 @@ func (r *registry) waitForReceivers(channelID, excludeClientID uuid.UUID, timeou
 	timeout := time.After(time.Duration(timeoutMs) * time.Millisecond)
 	for {
 		select {
+		case <-ctx.Done():
+			return nil
 		case <-notifyCh:
 			r.mu.Lock()
 			peers := r.getChannelPeersLocked(channelID, excludeClientID)
@@ -146,6 +148,8 @@ func (r *registry) getChannelPeersLocked(channelID, excludeClientID uuid.UUID) [
 func (e *clientEntry) enqueueRequest(f *frame) {
 	select {
 	case e.requestQueue <- f:
+	case <-e.connctx.closed:
+		putFrame(f)
 	default:
 		putFrame(f)
 	}
@@ -154,6 +158,8 @@ func (e *clientEntry) enqueueRequest(f *frame) {
 func (e *clientEntry) enqueueResponse(f *frame) {
 	select {
 	case e.responseQueue <- f:
+	case <-e.connctx.closed:
+		putFrame(f)
 	default:
 		putFrame(f)
 	}

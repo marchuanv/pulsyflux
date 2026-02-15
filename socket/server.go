@@ -11,12 +11,13 @@ import (
 )
 
 type Server struct {
-	port     string
-	ln       net.Listener
-	ctx      context.Context
-	cancel   context.CancelFunc
-	conns    sync.WaitGroup
-	registry *registry
+	port       string
+	ln         net.Listener
+	ctx        context.Context
+	cancel     context.CancelFunc
+	conns      sync.WaitGroup
+	registry   *registry
+	active     sync.WaitGroup
 }
 
 func NewServer(port string) *Server {
@@ -49,8 +50,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop() error {
-	s.cancel()
 	s.ln.Close()
+	s.cancel()
+	s.active.Wait()
 	s.conns.Wait()
 	return nil
 }
@@ -91,13 +93,14 @@ func (s *Server) handle(conn net.Conn) {
 	var entry *clientEntry
 
 	defer func() {
+		close(ctx.closed)
+		conn.Close()
 		if clientID != uuid.Nil {
 			s.registry.unregister(clientID)
 		}
+		ctx.wg.Wait()
 		close(ctx.writes)
 		close(ctx.errors)
-		ctx.wg.Wait()
-		conn.Close()
 	}()
 
 	for {
@@ -135,7 +138,10 @@ func (s *Server) handle(conn net.Conn) {
 }
 
 func (s *Server) handleRequest(f *frame, clientID, channelID uuid.UUID, entry *clientEntry) {
-	peers := s.registry.waitForReceivers(channelID, clientID, f.ClientTimeoutMs)
+	s.active.Add(1)
+	defer s.active.Done()
+	
+	peers := s.registry.waitForReceivers(s.ctx, channelID, clientID, f.ClientTimeoutMs)
 	if peers == nil {
 		errFrame := newErrorFrame(f.RequestID, f.ClientID, "no receivers available", flagNone)
 		entry.enqueueResponse(errFrame)
@@ -153,6 +159,8 @@ func (s *Server) handleRequest(f *frame, clientID, channelID uuid.UUID, entry *c
 	
 	timeout := time.After(time.Duration(f.ClientTimeoutMs) * time.Millisecond)
 	select {
+	case <-s.ctx.Done():
+		// Server shutting down
 	case <-collector.done:
 		ackF := getFrame()
 		ackF.Version = version1
