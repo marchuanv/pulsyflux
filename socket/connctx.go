@@ -26,7 +26,6 @@ const (
 	flagNone                 uint16 = 0x00
 	flagRequest              uint16 = 0x01
 	flagAck                  uint16 = 0x02
-	flagReceive              uint16 = 0x04
 	flagResponse             uint16 = 0x08
 	defaultClientTimeoutMs   uint64 = 30000
 )

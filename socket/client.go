@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"log"
 	"net"
 	"sync"
 
@@ -51,7 +50,8 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 	go c.ctx.startWriter()
 	go c.ctx.startReader()
 
-	if err := c.register(); err != nil {
+	// Send registration frame to trigger server-side registration
+	if err := c.sendRegistration(); err != nil {
 		c.Close()
 		return nil, err
 	}
@@ -59,11 +59,11 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) register() error {
+func (c *Client) sendRegistration() error {
 	f := getFrame()
 	f.Version = version1
 	f.Type = startFrame
-	f.Flags = flagReceive
+	f.Flags = flagNone
 	f.ClientID = c.clientID
 	f.ChannelID = c.channelID
 	f.RequestID = uuid.Nil
@@ -76,79 +76,40 @@ func (c *Client) register() error {
 	}
 }
 
-func (c *Client) sendStartFrame(reqID uuid.UUID, clientID uuid.UUID, timeoutMs uint64, flags uint16) error {
+func (c *Client) sendFrame(frameType byte, reqID uuid.UUID, timeoutMs uint64, flags uint16, payload []byte, index int, isFinal bool) error {
 	select {
 	case <-c.ctx.closed:
 		return errClosed
 	default:
 	}
+	
 	f := getFrame()
 	f.Version = version1
-	f.Type = startFrame
+	f.Type = frameType
 	f.RequestID = reqID
-	f.ClientID = clientID
+	f.ClientID = c.clientID
 	f.ChannelID = c.channelID
 	f.ClientTimeoutMs = timeoutMs
 	f.Flags = flags
-	f.setSequence(0, true)
+	if payload != nil {
+		f.Payload = make([]byte, len(payload))
+		copy(f.Payload, payload)
+	}
+	if frameType == chunkFrame {
+		f.setSequence(index, isFinal)
+	} else {
+		f.setSequence(0, true)
+	}
 	select {
 	case c.ctx.writes <- f:
+		return nil
 	case <-c.ctx.closed:
 		putFrame(f)
 		return errClosed
 	}
-	return nil
 }
 
-func (c *Client) receiveStartFrame(reqID uuid.UUID) (*frame, error) {
-	for {
-		select {
-		case f := <-c.ctx.reads:
-			log.Printf("[Client %s] receiveStartFrame: got frame type=%d reqID=%s (expecting reqID=%s)", c.clientID.String()[:8], f.Type, f.RequestID.String()[:8], reqID.String()[:8])
-			if f.RequestID == reqID || reqID == uuid.Nil {
-				if f.Type == errorFrame {
-					log.Printf("[Client %s] receiveStartFrame: ERROR FRAME", c.clientID.String()[:8])
-					putFrame(f)
-					return nil, errFrame
-				}
-				if f.Type != startFrame {
-					log.Printf("[Client %s] receiveStartFrame: INVALID FRAME - expected startFrame(4), got type=%d", c.clientID.String()[:8], f.Type)
-					putFrame(f)
-					return nil, errInvalidFrame
-				}
-				log.Printf("[Client %s] receiveStartFrame: SUCCESS", c.clientID.String()[:8])
-				return f, nil
-			}
-			log.Printf("[Client %s] receiveStartFrame: SKIPPING frame with wrong reqID", c.clientID.String()[:8])
-			putFrame(f)
-		case <-c.ctx.closed:
-			return nil, errClosed
-		}
-	}
-}
-
-func (c *Client) sendChunkFrame(reqID uuid.UUID, clientID uuid.UUID, timeoutMs uint64, index int, isFinal bool, payload []byte, flags uint16) error {
-	f := getFrame()
-	f.Version = version1
-	f.Type = chunkFrame
-	f.RequestID = reqID
-	f.ClientID = clientID
-	f.ChannelID = c.channelID
-	f.Flags = flags
-	f.ClientTimeoutMs = timeoutMs
-	f.Payload = make([]byte, len(payload))
-	copy(f.Payload, payload)
-	f.setSequence(index, isFinal)
-	select {
-	case c.ctx.writes <- f:
-	case <-c.ctx.closed:
-		putFrame(f)
-		return errClosed
-	}
-	return nil
-}
-
-func (c *Client) receiveChunkFrame(reqID uuid.UUID) (*frame, error) {
+func (c *Client) receiveFrame(frameType byte, reqID uuid.UUID) (*frame, error) {
 	for {
 		select {
 		case f := <-c.ctx.reads:
@@ -157,7 +118,7 @@ func (c *Client) receiveChunkFrame(reqID uuid.UUID) (*frame, error) {
 					putFrame(f)
 					return nil, errFrame
 				}
-				if f.Type != chunkFrame {
+				if f.Type != frameType {
 					putFrame(f)
 					return nil, errInvalidFrame
 				}
@@ -170,46 +131,9 @@ func (c *Client) receiveChunkFrame(reqID uuid.UUID) (*frame, error) {
 	}
 }
 
-func (c *Client) sendEndFrame(reqID uuid.UUID, clientID uuid.UUID, timeoutMs uint64, flags uint16) error {
-	f := getFrame()
-	f.Version = version1
-	f.Type = endFrame
-	f.RequestID = reqID
-	f.ClientID = clientID
-	f.ChannelID = c.channelID
-	f.ClientTimeoutMs = timeoutMs
-	f.Flags = flags
-	f.setSequence(0, true)
-	select {
-	case c.ctx.writes <- f:
-	case <-c.ctx.closed:
-		putFrame(f)
-		return errClosed
-	}
-	return nil
-}
 
-func (c *Client) receiveEndFrame(reqID uuid.UUID) (*frame, error) {
-	for {
-		select {
-		case f := <-c.ctx.reads:
-			if f.RequestID == reqID || reqID == uuid.Nil {
-				if f.Type == errorFrame {
-					putFrame(f)
-					return nil, errFrame
-				}
-				if f.Type != endFrame {
-					putFrame(f)
-					return nil, errInvalidFrame
-				}
-				return f, nil
-			}
-			putFrame(f)
-		case <-c.ctx.closed:
-			return nil, errClosed
-		}
-	}
-}
+
+
 
 func (c *Client) Send(r io.Reader) error {
 	c.opMu.Lock()
@@ -218,7 +142,7 @@ func (c *Client) Send(r io.Reader) error {
 	reqID := uuid.New()
 	timeoutMs := uint64(defaultTimeout.Milliseconds())
 
-	if err := c.sendStartFrame(reqID, c.clientID, timeoutMs, flagRequest); err != nil {
+	if err := c.sendFrame(startFrame, reqID, timeoutMs, flagRequest, nil, 0, false); err != nil {
 		return err
 	}
 	if err := c.waitForAck(reqID); err != nil {
@@ -232,7 +156,7 @@ func (c *Client) Send(r io.Reader) error {
 		n, err := r.Read(*buf)
 		if n > 0 {
 			isFinal := err == io.EOF
-			if err := c.sendChunkFrame(reqID, c.clientID, timeoutMs, index, isFinal, (*buf)[:n], flagRequest); err != nil {
+			if err := c.sendFrame(chunkFrame, reqID, timeoutMs, flagRequest, (*buf)[:n], index, isFinal); err != nil {
 				return err
 			}
 			if err := c.waitForAck(reqID); err != nil {
@@ -245,7 +169,7 @@ func (c *Client) Send(r io.Reader) error {
 		}
 		if err == io.EOF {
 			if n == 0 {
-				if err := c.sendChunkFrame(reqID, c.clientID, timeoutMs, index, true, nil, flagRequest); err != nil {
+				if err := c.sendFrame(chunkFrame, reqID, timeoutMs, flagRequest, nil, index, true); err != nil {
 					return err
 				}
 				if err := c.waitForAck(reqID); err != nil {
@@ -259,7 +183,7 @@ func (c *Client) Send(r io.Reader) error {
 		}
 	}
 
-	if err := c.sendEndFrame(reqID, c.clientID, timeoutMs, flagRequest); err != nil {
+	if err := c.sendFrame(endFrame, reqID, timeoutMs, flagRequest, nil, 0, false); err != nil {
 		return err
 	}
 	return c.waitForAck(reqID)
@@ -291,8 +215,7 @@ func (c *Client) Receive(incoming chan io.Reader) error {
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
 
-	log.Printf("[Client %s] Receive: Waiting for startFrame", c.clientID.String()[:8])
-	rcvF, err := c.receiveStartFrame(uuid.Nil)
+	rcvF, err := c.receiveFrame(startFrame, uuid.Nil)
 	if err != nil {
 		return err
 	}
@@ -308,7 +231,7 @@ func (c *Client) Receive(incoming chan io.Reader) error {
 		return err
 	}
 
-	endF, err := c.receiveEndFrame(reqID)
+	endF, err := c.receiveFrame(endFrame, reqID)
 	if err != nil {
 		return err
 	}
@@ -353,7 +276,7 @@ func (c *Client) sendAck(frameID, reqID uuid.UUID) error {
 func (c *Client) receiveAssembledChunkFramesWithAck(reqID uuid.UUID) (bytes.Buffer, error) {
 	var buff bytes.Buffer
 	for {
-		f, err := c.receiveChunkFrame(reqID)
+		f, err := c.receiveFrame(chunkFrame, reqID)
 		if err != nil {
 			return buff, err
 		}

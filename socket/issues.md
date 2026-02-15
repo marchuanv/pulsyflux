@@ -52,8 +52,7 @@ The socket layer is a **broadcast-only pub-sub system**:
 
 **Frame Flags**:
 - `flagRequest (0x01)`: Data frame being broadcast
-- `flagAck (0x02)`: Control frame - acknowledgment (NEW)
-- `flagReceive (0x04)`: DEPRECATED - will be removed
+- `flagAck (0x02)`: Control frame - acknowledgment
 - `flagResponse (0x08)`: Control frame - used for errors
 
 **Critical Distinction**:
@@ -61,6 +60,24 @@ The socket layer is a **broadcast-only pub-sub system**:
 - **Control frames** use `flagAck` or `flagResponse` and contain protocol metadata
 - **Ack frames** are sent by receivers to acknowledge receipt of data frames
 - **Server aggregates acks**: N receivers → N ack frames → 1 ack frame to sender
+
+**Client Registration Flow**:
+```
+Client                  Server
+  |
+  +--NewClient()--------->|
+  | (connect TCP)         |
+  | (start reader/writer) |
+  |                       |
+  +--Send/Receive-------->|
+  | (first frame)         |
+  |                       +--registry.register()
+  |                       | (implicit registration)
+  |                       |
+  | (client ready)        |
+```
+
+**Purpose**: Client registration is **implicit** - the server automatically registers a client when it receives the first frame from that client. No explicit registration frame is needed.
 
 **Frame Flow Example**:
 ```
@@ -126,8 +143,27 @@ Sender                  Server                  Receiver
 - `isFinal` flag indicates last frame in sequence
 - Receivers use this to know when to send acks
 
-**Example with 3 clients**:
+**Complete Flow with Implicit Registration and 3 Clients**:
 ```
+[IMPLICIT REGISTRATION ON FIRST FRAME]
+ClientA             Server              ClientB             ClientC
+  |
+  +--Send/Receive---->|  (any frame)
+  | (first frame)     +--register clientA
+  |                   |  (implicit)
+  | (ready)           |
+  |                   |<--Send/Receive-------+
+  |                   |  (any frame)         |
+  |                   +--register clientB    |
+  |                   |  (implicit)          |
+  |                   |  (ready)             |
+  |                   |                      |<--Send/Receive---+
+  |                   |                      |  (any frame)     |
+  |                   +--register clientC    |  (first frame)   |
+  |                   |  (implicit)          |                  |
+  |                   |                      |  (ready)         |
+
+[BROADCAST PHASE]
 ClientA (sender)    Server              ClientB (rcv)       ClientC (rcv)
      |                |                      |                   |
      +--startFrame--->|  (DATA, no payload)  |                   |
@@ -185,6 +221,26 @@ ClientA (sender)    Server              ClientB (rcv)       ClientC (rcv)
 ### Message Flow Example
 
 ```
+[IMPLICIT REGISTRATION]
+ClientA          Server          ClientB         ClientC         ClientD
+  |
+  +--first frame-->|  (any operation)
+  | (ready)        +--register A
+  |                |  (implicit)
+  |                |
+  |                |<--first frame---+
+  |                +--register B     |
+  |                |  (implicit)     |
+  |                |  (ready)        |
+  |                |                 |<--first frame---+
+  |                +--register C     |                 |
+  |                |  (implicit)     |                 |<--first frame--+
+  |                |  (ready)        |                 +--register D    |
+  |                +--register D     |                 |  (implicit)    |
+  |                |  (implicit)     |                 |  (ready)       |
+  |                |  (ready)        |                 |                |
+
+[BROADCAST]
 ClientA (pub)    Server          ClientB (sub)   ClientC (sub)   ClientD (sub)
     |              |                  |               |               |
     +--Send------->|                  |               |               |
@@ -247,12 +303,6 @@ Receiver 2 error: invalid frame
 3. **Receive() uses wrong requestID for chunks**: After getting startFrame with reqID=X, it uses origReqID (receiver's own ID) instead of reqID when receiving chunks.
 
 4. **Receive() sends response with flagResponse**: Should broadcast response with flagRequest to all clients, not send to specific client with flagResponse.
-
-5. **Complex flagReceive polling**: The flagReceive mechanism is unnecessary for pure broadcast - just read from channel.
-
-6. **Server doesn't track receiver count**: Server needs to know how many receivers to wait for acks from.
-
-7. **Server doesn't exclude sender**: Server broadcasts to all clients including sender, requiring client-side filtering.
 
 ---
 

@@ -121,9 +121,6 @@ func (s *Server) handle(conn net.Conn) {
 				log.Printf("[Server] Received ack from client %s, frameID=%s", clientID.String()[:8], f.FrameID.String()[:8])
 				s.registry.recordAck(f.FrameID)
 				putFrame(f)
-			} else if f.Flags&flagReceive != 0 {
-				log.Printf("[Server] Received registration/ready frame from client %s", clientID.String()[:8])
-				putFrame(f)
 			} else if f.Flags&flagResponse != 0 {
 				log.Printf("[Server] Received response from client %s", clientID.String()[:8])
 				if peer, ok := s.registry.get(f.ClientID); ok {
@@ -132,61 +129,62 @@ func (s *Server) handle(conn net.Conn) {
 					putFrame(f)
 				}
 			} else if f.Flags&flagRequest != 0 {
-				log.Printf("[Server] Received request from client %s, reqID=%s", clientID.String()[:8], f.RequestID.String()[:8])
-				
-				timeout := time.After(time.Duration(f.ClientTimeoutMs) * time.Millisecond)
-				ticker := time.NewTicker(100 * time.Millisecond)
-				
-				var peers []*clientEntry
-				timedOut := false
-				for {
-					peers = s.registry.getChannelPeers(channelID, clientID)
-					if len(peers) > 0 {
-						break
-					}
-					
-					select {
-					case <-timeout:
-						timedOut = true
-						break
-					case <-ticker.C:
-					}
-					if timedOut {
-						break
-					}
-				}
-				ticker.Stop()
-				
-				if timedOut {
-					errFrame := newErrorFrame(f.RequestID, f.ClientID, "no receivers available", flagResponse)
-					entry.enqueueResponse(errFrame)
-					putFrame(f)
-				} else {
-					frameID := uuid.New()
-					f.FrameID = frameID
-					collector := s.registry.createAckCollector(frameID, f.RequestID, clientID, f.Type, len(peers))
-					
-					for _, peer := range peers {
-						clonedFrame := cloneFrame(f)
-						peer.enqueueRequest(clonedFrame)
-					}
-					
-					<-collector.done
-					
-					ackF := getFrame()
-					ackF.Version = version1
-					ackF.Type = ackFrame
-					ackF.Flags = flagAck
-					ackF.RequestID = f.RequestID
-					ackF.ClientID = f.ClientID
-					ackF.FrameID = frameID
-					entry.enqueueResponse(ackF)
-					s.registry.removeAckCollector(frameID)
-					putFrame(f)
-				}
+				s.handleRequest(f, clientID, channelID, entry)
 			} else {
 				putFrame(f)
 			}
+		}
+	}
+}
+
+func (s *Server) handleRequest(f *frame, clientID, channelID uuid.UUID, entry *clientEntry) {
+	log.Printf("[Server] Received request from client %s, reqID=%s", clientID.String()[:8], f.RequestID.String()[:8])
+	
+	peers := s.waitForReceivers(channelID, clientID, f.ClientTimeoutMs)
+	if len(peers) == 0 {
+		errFrame := newErrorFrame(f.RequestID, f.ClientID, "no receivers available", flagResponse)
+		entry.enqueueResponse(errFrame)
+		putFrame(f)
+		return
+	}
+	
+	frameID := uuid.New()
+	f.FrameID = frameID
+	collector := s.registry.createAckCollector(frameID, f.RequestID, clientID, f.Type, len(peers))
+	
+	for _, peer := range peers {
+		peer.enqueueRequest(cloneFrame(f))
+	}
+	
+	<-collector.done
+	
+	ackF := getFrame()
+	ackF.Version = version1
+	ackF.Type = ackFrame
+	ackF.Flags = flagAck
+	ackF.RequestID = f.RequestID
+	ackF.ClientID = f.ClientID
+	ackF.FrameID = frameID
+	entry.enqueueResponse(ackF)
+	s.registry.removeAckCollector(frameID)
+	putFrame(f)
+}
+
+func (s *Server) waitForReceivers(channelID, clientID uuid.UUID, timeoutMs uint64) []*clientEntry {
+	timeout := time.After(time.Duration(timeoutMs) * time.Millisecond)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	
+	for {
+		peers := s.registry.getChannelPeers(channelID, clientID)
+		if len(peers) > 0 {
+			return peers
+		}
+		
+		select {
+		case <-timeout:
+			return nil
+		case <-ticker.C:
 		}
 	}
 }
