@@ -239,10 +239,26 @@ func (c *Client) waitForAck(reqID uuid.UUID) error {
 	}
 }
 
-func (c *Client) Receive(incoming chan io.Reader) error {
+func (c *Client) Receive(r io.Reader) error {
+	c.opWg.Add(1)
+	go func() {
+		defer c.opWg.Done()
+		if err := c.doReceive(r); err != nil {
+			select {
+			case c.opErrors <- err:
+			default:
+			}
+		}
+	}()
+	return nil
+}
+
+func (c *Client) doReceive(r io.Reader) error {
 	select {
 	case req := <-c.incoming:
-		incoming <- bytes.NewReader(req.payload)
+		if w, ok := r.(io.Writer); ok {
+			w.Write(req.payload)
+		}
 		close(req.ackDone)
 		return nil
 	case <-c.ctx.closed:
@@ -250,16 +266,30 @@ func (c *Client) Receive(incoming chan io.Reader) error {
 	}
 }
 
-func (c *Client) Respond(incoming chan io.Reader, outgoing chan io.Reader) error {
-	select {
-	case req := <-c.incoming:
-		incoming <- bytes.NewReader(req.payload)
-		close(req.ackDone)
-		reader := <-outgoing
-		if reader == nil {
-			return nil
+func (c *Client) Respond(req io.Reader, resp io.Reader) error {
+	c.opWg.Add(1)
+	go func() {
+		defer c.opWg.Done()
+		if err := c.doRespond(req, resp); err != nil {
+			select {
+			case c.opErrors <- err:
+			default:
+			}
 		}
-		go c.Send(reader)
+	}()
+	return nil
+}
+
+func (c *Client) doRespond(req io.Reader, resp io.Reader) error {
+	select {
+	case r := <-c.incoming:
+		if w, ok := req.(io.Writer); ok {
+			w.Write(r.payload)
+		}
+		close(r.ackDone)
+		if resp != nil {
+			c.Send(resp)
+		}
 		return nil
 	case <-c.ctx.closed:
 		return errClosed

@@ -72,7 +72,7 @@ This caused frame stealing - whichever operation read from `ctx.reads` first wou
 
 ## Solution
 
-Refactored the client infrastructure to support concurrent, order-independent operations by adding frame routing:
+Refactored the client infrastructure to support concurrent, order-independent operations by adding frame routing and making all operations async:
 
 ### Key Changes
 
@@ -86,6 +86,7 @@ Refactored the client infrastructure to support concurrent, order-independent op
    - `requests chan *frame` - for incoming request frames from other clients
    - `responses chan *frame` - for response frames (acks, errors)
    - `incoming chan *assembledRequest` - for fully assembled requests ready for consumption
+   - `opErrors chan error` - for collecting errors from async operations
 
 3. **Added Background Request Processing with Delayed Acknowledgment**
    - `processIncoming()` goroutine runs continuously
@@ -95,10 +96,13 @@ Refactored the client infrastructure to support concurrent, order-independent op
    - Queues assembled requests with `ackDone` signal channel to `incoming`
    - Sends acknowledgments ONLY after consumer signals via `ackDone`
 
-4. **Modified Public API Methods for Delayed Acknowledgment**
-   - `Receive()` - reads from pre-assembled `incoming` channel, signals `ackDone` after reading
-   - `Respond()` - reads from `incoming`, signals `ackDone` after reading (BEFORE waiting for response), then calls `Send()`
-   - `Send()` - unchanged externally, uses `responses` channel via `waitForAck()`
+4. **Made All Operations Async**
+   - `Send(r io.Reader)` - spawns goroutine, returns immediately
+   - `Receive(r io.Reader)` - spawns goroutine, writes payload to r (must be io.Writer)
+   - `Respond(req io.Reader, resp io.Reader)` - spawns goroutine, writes request to req, sends resp
+   - All operations tracked via `opWg` (sync.WaitGroup)
+   - Errors collected in `opErrors` channel
+   - `Wait()` blocks until all operations complete, returns first error
 
 ## Architecture
 
@@ -139,21 +143,23 @@ Client
 - `requests chan *frame` - channel for incoming request frames
 - `responses chan *frame` - channel for response frames (acks, errors)
 - `incoming chan *assembledRequest` - buffered channel (16) for assembled requests
+- `opErrors chan error` - buffered channel (100) for async operation errors
 - `assembledRequest` struct with `payload []byte` and `ackDone chan struct{}`
 - `routeFrames()` - goroutine that routes frames by flag
 - `processIncoming()` - goroutine that assembles incoming requests with delayed acks
+- `doSend()` - internal sync implementation of Send
+- `doReceive()` - internal sync implementation of Receive
+- `doRespond()` - internal sync implementation of Respond
+- `Wait()` - blocks until all async operations complete
 - `wg sync.WaitGroup` - tracks background goroutines
+- `opWg sync.WaitGroup` - tracks async operations
 
 **Modified**:
 - `NewClient()` - starts `routeFrames()` and `processIncoming()` goroutines
-- `Send()` - unchanged (still uses `waitForAck()`)
-- `waitForAck()` - reads from `responses` channel instead of `ctx.reads`
-- `Receive()` - reads from `incoming` channel and signals `ackDone`
-- `Respond()` - reads from `incoming`, signals `ackDone`, then waits for response and calls `Send()`
+- `Send(r io.Reader)` - now async, spawns goroutine calling `doSend()`
+- `Receive(r io.Reader)` - now async, spawns goroutine calling `doReceive()`, writes to r
+- `Respond(req io.Reader, resp io.Reader)` - now async, spawns goroutine calling `doRespond()`
 - `Close()` - waits for background goroutines, closes new channels
-
-**Removed**:
-- No methods removed, only internal logic simplified
 
 ### connctx.go
 
@@ -163,10 +169,11 @@ Client
 
 1. **Test Flexibility**: Tests no longer need to call operations in specific order
 2. **No Frame Stealing**: Frames are routed to correct channel based on type
-3. **Concurrent Operations**: `Send()` and `Receive()` can run simultaneously
+3. **Concurrent Operations**: All operations are async and non-blocking
 4. **Controllable Acknowledgments**: Acks sent only when consumer is ready
 5. **Timeout Testing**: Can simulate slow/unresponsive receivers
 6. **Cleaner Separation**: Request processing and response handling are independent
+7. **Error Handling**: All async errors collected via `Wait()`
 
 ## Testing Impact
 
@@ -174,7 +181,9 @@ Client
 ```go
 // HAD to call Receive() before Send() to avoid frame stealing
 go func() {
+    incoming := make(chan io.Reader, 1)
     client2.Receive(incoming)  // Must be called first
+    msg := <-incoming
 }()
 time.Sleep(50 * time.Millisecond)  // Ensure Receive is waiting
 client1.Send(data)  // Now safe to send
@@ -182,16 +191,12 @@ client1.Send(data)  // Now safe to send
 
 ### After
 ```go
-// Can call in any order - background goroutine handles incoming frames
-client1.Send(data)  // Send first - no problem!
-go func() {
-    client2.Receive(incoming)  // Can be called anytime
-}()
-// OR
-go func() {
-    client2.Receive(incoming)  // Call first
-}()
-client1.Send(data)  // Send later - also works!
+// Can call in any order - all operations are async
+var buf bytes.Buffer
+client1.Send(data)  // Returns immediately
+client2.Receive(&buf)  // Returns immediately
+client1.Wait()  // Block until send completes
+client2.Wait()  // Block until receive completes
 ```
 
 ## Performance Considerations
@@ -204,20 +209,24 @@ client1.Send(data)  // Send later - also works!
   - `requests` (1024 buffer)
   - `responses` (1024 buffer)
   - `incoming` (16 buffer)
+  - `opErrors` (100 buffer)
+- One goroutine per async operation (Send/Receive/Respond)
 
 **Benefits**:
 - Eliminates frame stealing and blocking
 - Better CPU utilization with concurrent operations
 - Simpler test code
+- All operations return immediately
 
 ## Backward Compatibility
 
-The public API remains unchanged:
+The public API remains unchanged in signature:
 - `Send(r io.Reader) error`
-- `Receive(incoming chan io.Reader) error`
-- `Respond(incoming, outgoing chan io.Reader) error`
+- `Receive(r io.Reader) error`
+- `Respond(req io.Reader, resp io.Reader) error`
+- `Wait() error` - NEW method to block until operations complete
 
-Existing code using these methods will continue to work and will benefit from the ability to call them in any order.
+All operations are now async and return immediately. Use `Wait()` to block until completion and get errors.
 
 ## Implementation Notes
 

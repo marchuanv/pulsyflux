@@ -7,9 +7,10 @@ This document describes the socket package implementation - a TCP-based pub-sub 
 ## Architecture
 
 The socket layer is a **broadcast-only pub-sub system**:
-- `Send(r io.Reader) error` - broadcasts message to ALL other clients on channel (excludes sender)
-- `Receive(incoming chan io.Reader) error` - receives broadcasts from other clients
-- `Respond(incoming, outgoing chan io.Reader) error` - receives broadcasts, processes, and broadcasts response
+- `Send(r io.Reader) error` - async, broadcasts message to ALL other clients on channel (excludes sender)
+- `Receive(r io.Reader) error` - async, receives broadcasts from other clients, writes payload to r (must be io.Writer)
+- `Respond(req io.Reader, resp io.Reader) error` - async, receives broadcasts, writes request to req, broadcasts response
+- `Wait() error` - blocks until all async operations complete, returns first error
 - Server broadcasts frames to ALL clients EXCEPT the sender
 - Clients don't need to filter out their own messages (server handles exclusion)
 
@@ -164,56 +165,49 @@ type ackCollector struct {
 **Send(r io.Reader) error**:
 ```go
 func (c *Client) Send(r io.Reader) error {
-    reqID := uuid.New()
-    
-    // Send start + wait for ack
-    sendFrame(startFrame, reqID, ...)
-    waitForAck(reqID)
-    
-    // Send chunks + wait for ack after each
-    for each chunk {
-        sendFrame(chunkFrame, reqID, payload, ...)
-        waitForAck(reqID)
-    }
-    
-    // Send end + wait for ack
-    sendFrame(endFrame, reqID, ...)
-    waitForAck(reqID)
-    
+    // Async - returns immediately
+    // Spawns goroutine that:
+    //   - Sends start frame + waits for ack
+    //   - Sends chunk frames + waits for ack after each
+    //   - Sends end frame + waits for ack
+    // Errors captured in opErrors channel
     return nil
 }
 ```
 
-**Receive(incoming chan io.Reader) error**:
+**Receive(r io.Reader) error**:
 ```go
-func (c *Client) Receive(incoming chan io.Reader) error {
-    // Reads from pre-assembled incoming channel
-    // Background processIncoming() handles frame reception and acks
-    select {
-    case req := <-c.incoming:
-        incoming <- bytes.NewReader(req.payload)
-        return nil
-    case <-c.ctx.closed:
-        return errClosed
-    }
+func (c *Client) Receive(r io.Reader) error {
+    // Async - returns immediately
+    // Spawns goroutine that:
+    //   - Reads from pre-assembled incoming channel
+    //   - Writes payload to r (must be io.Writer)
+    //   - Signals ackDone to send acknowledgments
+    // Errors captured in opErrors channel
+    return nil
 }
 ```
 
-**Respond(incoming, outgoing chan io.Reader) error**:
+**Respond(req io.Reader, resp io.Reader) error**:
 ```go
-func (c *Client) Respond(incoming, outgoing chan io.Reader) error {
-    // Receive from pre-assembled incoming channel
-    select {
-    case req := <-c.incoming:
-        incoming <- bytes.NewReader(req.payload)
-        reader := <-outgoing
-        if reader != nil {
-            return c.Send(reader)
-        }
-        return nil
-    case <-c.ctx.closed:
-        return errClosed
-    }
+func (c *Client) Respond(req io.Reader, resp io.Reader) error {
+    // Async - returns immediately
+    // Spawns goroutine that:
+    //   - Reads from pre-assembled incoming channel
+    //   - Writes request payload to req (must be io.Writer)
+    //   - Signals ackDone to send acknowledgments
+    //   - Calls Send(resp) if resp != nil
+    // Errors captured in opErrors channel
+    return nil
+}
+```
+
+**Wait() error**:
+```go
+func (c *Client) Wait() error {
+    // Blocks until all async operations complete
+    // Returns first error from opErrors channel
+    // Returns nil if no errors
 }
 ```
 
@@ -255,8 +249,10 @@ func (c *Client) Respond(incoming, outgoing chan io.Reader) error {
 ### Concurrency Control
 
 **No Operation Lock**:
-- `Send()`, `Receive()`, `Respond()` can be called concurrently
-- Operations are independent and non-blocking
+- `Send()`, `Receive()`, `Respond()` are all async and return immediately
+- All operations tracked via `opWg` (sync.WaitGroup)
+- Errors collected in `opErrors` channel (buffered 100)
+- `Wait()` blocks until all operations complete and returns first error
 - Background goroutines handle frame routing and request assembly
 
 **Connection Context** (`connctx`):
@@ -330,7 +326,8 @@ func (c *Client) Respond(incoming, outgoing chan io.Reader) error {
 client, _ := NewClient("127.0.0.1:9090", channelID)
 defer client.Close()
 
-err := client.Send(strings.NewReader("hello"))
+client.Send(strings.NewReader("hello"))
+err := client.Wait() // Block until send completes
 ```
 
 **Receive only**:
@@ -338,14 +335,10 @@ err := client.Send(strings.NewReader("hello"))
 client, _ := NewClient("127.0.0.1:9090", channelID)
 defer client.Close()
 
-incoming := make(chan io.Reader, 1)
-go func() {
-    msg := <-incoming
-    data, _ := io.ReadAll(msg)
-    fmt.Println(string(data))
-}()
-
-client.Receive(incoming)
+var buf bytes.Buffer
+client.Receive(&buf)
+client.Wait() // Block until receive completes
+fmt.Println(buf.String())
 ```
 
 **Respond (request-response)**:
@@ -353,17 +346,10 @@ client.Receive(incoming)
 client, _ := NewClient("127.0.0.1:9090", channelID)
 defer client.Close()
 
-incoming := make(chan io.Reader, 1)
-outgoing := make(chan io.Reader, 1)
-
-go func() {
-    req := <-incoming
-    data, _ := io.ReadAll(req)
-    response := process(data)
-    outgoing <- bytes.NewReader(response)
-}()
-
-client.Respond(incoming, outgoing)
+var reqBuf bytes.Buffer
+respData := process(reqBuf.Bytes())
+client.Respond(&reqBuf, bytes.NewReader(respData))
+client.Wait() // Block until respond completes
 ```
 
 ## Key Implementation Details
@@ -375,9 +361,9 @@ client.Respond(incoming, outgoing)
 5. **FrameID Tracking**: Each broadcast frame gets unique FrameID for ack correlation
 6. **RequestID Purpose**: Groups frames together (start/chunk/end) and enables frame filtering
 7. **Sequence Field**: Chunk index (31 bits) + isFinal flag (1 bit)
-8. **No Operation Serialization**: `Send()`, `Receive()`, `Respond()` can be called concurrently
-9. **Frame Routing**: `routeFrames()` separates request frames from response frames
-10. **Background Request Processing**: `processIncoming()` automatically receives and assembles requests
+8. **Async Operations**: All operations (`Send`, `Receive`, `Respond`) are async and return immediately
+9. **Operation Tracking**: `opWg` tracks all async operations, `Wait()` blocks until complete
+10. **Frame Routing**: `routeFrames()` separates request frames from response frames
 11. **No Client-Side Filtering**: Server handles sender exclusion
 12. **Consolidated Frame Methods**: Single `sendFrame()` and `receiveFrame()` for all types
 13. **Error in Payload**: Error frames carry error message in payload field
