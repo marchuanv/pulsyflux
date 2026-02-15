@@ -392,6 +392,173 @@ for i := 0; i < 5; i++ {
 time.Sleep(100 * time.Millisecond) // Allow operations to complete
 ```
 
+## Server Shutdown Procedure
+
+The server implements a graceful shutdown sequence that ensures all active operations complete before termination.
+
+### Shutdown Sequence
+
+```
+Server.Stop() called
+  |
+  +--1. Close listener (s.ln.Close())
+  |    - Stops accepting new connections
+  |    - acceptLoop() exits on next Accept() error
+  |
+  +--2. Cancel context (s.cancel())
+  |    - Signals all goroutines to stop
+  |    - handle() goroutines check <-s.ctx.Done()
+  |    - handleRequest() goroutines check <-s.ctx.Done()
+  |    - waitForReceivers() returns nil on context cancellation
+  |
+  +--3. Wait for active requests (s.active.Wait())
+  |    - Blocks until all handleRequest() goroutines complete
+  |    - Each handleRequest increments/decrements active WaitGroup
+  |    - Ensures in-flight broadcasts finish or timeout
+  |
+  +--4. Wait for connections (s.conns.Wait())
+       - Blocks until all handle() goroutines complete
+       - Each connection increments/decrements conns WaitGroup
+       - Ensures all client handlers have cleaned up
+```
+
+### Per-Connection Cleanup (handle defer)
+
+When each `handle()` goroutine exits, its defer block executes:
+
+```go
+defer func() {
+    close(ctx.closed)        // 1. Signal connection closed
+    conn.Close()             // 2. Close TCP connection
+    if clientID != uuid.Nil {
+        s.registry.unregister(clientID)  // 3. Remove from registry
+    }
+    ctx.wg.Wait()            // 4. Wait for reader/writer goroutines
+    close(ctx.writes)        // 5. Close write channel
+    close(ctx.errors)        // 6. Close error channel
+}()
+```
+
+**Cleanup Steps**:
+1. **Close ctx.closed**: Signals startReader() and startWriter() to exit
+2. **Close TCP connection**: Unblocks any pending I/O operations
+3. **Unregister client**: Removes from registry maps, closes request/response queues
+4. **Wait for goroutines**: Ensures reader/writer have exited cleanly
+5. **Close channels**: Prevents goroutine leaks from blocked sends
+
+### Registry Cleanup (unregister)
+
+```go
+func (r *registry) unregister(clientID uuid.UUID) {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    
+    if entry, ok := r.clients[clientID]; ok {
+        close(entry.requestQueue)   // Stop processRequests goroutine
+        close(entry.responseQueue)  // Stop processResponses goroutine
+        delete(r.clients, clientID) // Remove from client map
+        
+        // Remove from channel map
+        if ch := r.channels[entry.channelID]; ch != nil {
+            delete(ch, clientID)
+            if len(ch) == 0 {
+                delete(r.channels, entry.channelID)
+            }
+        }
+    }
+}
+```
+
+### Shutdown Timing
+
+**Fast Shutdown** (no active operations):
+- Listener closes immediately
+- Context cancelled immediately  
+- active.Wait() returns immediately (no pending requests)
+- conns.Wait() returns after all handle() defers complete
+- Total time: ~milliseconds
+
+**Graceful Shutdown** (with active operations):
+- Listener closes immediately
+- Context cancelled immediately
+- active.Wait() blocks until:
+  - All handleRequest() complete their broadcast/ack cycle
+  - OR handleRequest() detects ctx.Done() and exits early
+- conns.Wait() blocks until all connections cleaned up
+- Total time: depends on slowest operation (max ClientTimeoutMs)
+
+### Shutdown Guarantees
+
+**What is guaranteed**:
+1. No new connections accepted after Stop() called
+2. All active handleRequest() operations complete or abort
+3. All client connections properly closed
+4. All registry entries removed
+5. All goroutines terminated
+6. All channels closed
+
+**What is NOT guaranteed**:
+1. In-flight messages will be delivered (context cancellation aborts)
+2. Clients will receive graceful disconnect notification
+3. Pending ackCollectors will complete (they may be abandoned)
+
+### Shutdown Edge Cases
+
+**Case 1: Shutdown during waitForReceivers()**
+- waitForReceivers() checks `<-ctx.Done()` in select
+- Returns nil immediately
+- handleRequest() sends "no receivers available" error
+- Request completes, active.Done() called
+
+**Case 2: Shutdown during ack collection**
+- handleRequest() checks `<-s.ctx.Done()` in select
+- Exits without sending ack or error
+- Collector abandoned (not removed from pendingAcks)
+- Client may timeout waiting for ack
+
+**Case 3: Shutdown with blocked writers**
+- ctx.closed signal causes startWriter() to exit
+- Pending writes in channel are dropped
+- TCP connection closed, unblocking any I/O
+
+**Case 4: Multiple Stop() calls**
+- ln.Close() is idempotent (returns error on subsequent calls)
+- cancel() is idempotent (no-op on subsequent calls)
+- WaitGroups wait for same goroutines
+- Safe to call multiple times
+
+### Recommended Shutdown Pattern
+
+```go
+server := NewServer("9090")
+if err := server.Start(); err != nil {
+    log.Fatal(err)
+}
+
+// Setup signal handling
+sigChan := make(chan os.Signal, 1)
+signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+// Wait for shutdown signal
+<-sigChan
+log.Println("Shutting down server...")
+
+// Graceful shutdown with timeout
+shutdownDone := make(chan struct{})
+go func() {
+    server.Stop()
+    close(shutdownDone)
+}()
+
+select {
+case <-shutdownDone:
+    log.Println("Server stopped gracefully")
+case <-time.After(30 * time.Second):
+    log.Println("Shutdown timeout - forcing exit")
+    os.Exit(1)
+}
+```
+
 ## Key Implementation Details
 
 1. **Implicit Registration**: Client sends registration frame (startFrame with flagNone) on connect, waits for ack with 2s timeout
