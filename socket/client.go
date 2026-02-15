@@ -17,7 +17,14 @@ type Client struct {
 	ctx       *connctx
 	done      chan struct{}
 	connMu    sync.Mutex
-	opMu      sync.Mutex
+	incoming  chan *assembledRequest
+	requests  chan *frame
+	responses chan *frame
+	wg        sync.WaitGroup
+}
+
+type assembledRequest struct {
+	payload []byte
 }
 
 func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
@@ -36,6 +43,9 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 		clientID:  uuid.New(),
 		channelID: channelID,
 		done:      make(chan struct{}),
+		incoming:  make(chan *assembledRequest, 16),
+		requests:  make(chan *frame, 1024),
+		responses: make(chan *frame, 1024),
 		ctx: &connctx{
 			conn:   conn,
 			writes: make(chan *frame, 1024),
@@ -49,6 +59,9 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 	c.ctx.wg.Add(2)
 	go c.ctx.startWriter()
 	go c.ctx.startReader()
+	c.wg.Add(2)
+	go c.routeFrames()
+	go c.processIncoming()
 
 	// Send registration frame to trigger server-side registration
 	if err := c.sendRegistration(); err != nil {
@@ -136,9 +149,6 @@ func (c *Client) receiveFrame(frameType byte, reqID uuid.UUID) (*frame, error) {
 
 
 func (c *Client) Send(r io.Reader) error {
-	c.opMu.Lock()
-	defer c.opMu.Unlock()
-
 	reqID := uuid.New()
 	timeoutMs := uint64(defaultTimeout.Milliseconds())
 
@@ -192,7 +202,7 @@ func (c *Client) Send(r io.Reader) error {
 func (c *Client) waitForAck(reqID uuid.UUID) error {
 	for {
 		select {
-		case f := <-c.ctx.reads:
+		case f := <-c.responses:
 			if f.RequestID == reqID {
 				if f.Type == ackFrame && f.Flags&flagAck != 0 {
 					putFrame(f)
@@ -212,48 +222,27 @@ func (c *Client) waitForAck(reqID uuid.UUID) error {
 }
 
 func (c *Client) Receive(incoming chan io.Reader) error {
-	c.opMu.Lock()
-	defer c.opMu.Unlock()
-
-	rcvF, err := c.receiveFrame(startFrame, uuid.Nil)
-	if err != nil {
-		return err
+	select {
+	case req := <-c.incoming:
+		incoming <- bytes.NewReader(req.payload)
+		return nil
+	case <-c.ctx.closed:
+		return errClosed
 	}
-	reqID := rcvF.RequestID
-	if err := c.sendAck(rcvF.FrameID, reqID); err != nil {
-		putFrame(rcvF)
-		return err
-	}
-	putFrame(rcvF)
-
-	reqBuf, err := c.receiveAssembledChunkFramesWithAck(reqID)
-	if err != nil {
-		return err
-	}
-
-	endF, err := c.receiveFrame(endFrame, reqID)
-	if err != nil {
-		return err
-	}
-	if err := c.sendAck(endF.FrameID, reqID); err != nil {
-		putFrame(endF)
-		return err
-	}
-	putFrame(endF)
-
-	incoming <- bytes.NewReader(reqBuf.Bytes())
-	return nil
 }
 
 func (c *Client) Respond(incoming chan io.Reader, outgoing chan io.Reader) error {
-	if err := c.Receive(incoming); err != nil {
-		return err
+	select {
+	case req := <-c.incoming:
+		incoming <- bytes.NewReader(req.payload)
+		reader := <-outgoing
+		if reader == nil {
+			return nil
+		}
+		return c.Send(reader)
+	case <-c.ctx.closed:
+		return errClosed
 	}
-	reader := <-outgoing
-	if reader == nil {
-		return nil
-	}
-	return c.Send(reader)
 }
 
 func (c *Client) sendAck(frameID, reqID uuid.UUID) error {
@@ -273,25 +262,104 @@ func (c *Client) sendAck(frameID, reqID uuid.UUID) error {
 	}
 }
 
-func (c *Client) receiveAssembledChunkFramesWithAck(reqID uuid.UUID) (bytes.Buffer, error) {
-	var buff bytes.Buffer
+func (c *Client) routeFrames() {
+	defer c.wg.Done()
 	for {
-		f, err := c.receiveFrame(chunkFrame, reqID)
-		if err != nil {
-			return buff, err
-		}
-		if err := c.sendAck(f.FrameID, reqID); err != nil {
-			putFrame(f)
-			return buff, err
-		}
-		buff.Write(f.Payload)
-		isFinal := f.isFinal()
-		putFrame(f)
-		if isFinal {
-			break
+		select {
+		case f := <-c.ctx.reads:
+			if f.Flags&flagRequest != 0 {
+				select {
+				case c.requests <- f:
+				case <-c.ctx.closed:
+					putFrame(f)
+					return
+				}
+			} else {
+				select {
+				case c.responses <- f:
+				case <-c.ctx.closed:
+					putFrame(f)
+					return
+				}
+			}
+		case <-c.ctx.closed:
+			return
 		}
 	}
-	return buff, nil
+}
+
+func (c *Client) processIncoming() {
+	defer c.wg.Done()
+	for {
+		select {
+		case <-c.ctx.closed:
+			return
+		default:
+		}
+
+		var startF *frame
+		select {
+		case startF = <-c.requests:
+			if startF.Type != startFrame {
+				putFrame(startF)
+				continue
+			}
+		case <-c.ctx.closed:
+			return
+		}
+		reqID := startF.RequestID
+		if err := c.sendAck(startF.FrameID, reqID); err != nil {
+			putFrame(startF)
+			return
+		}
+		putFrame(startF)
+
+		var buf bytes.Buffer
+		for {
+			var chunkF *frame
+			select {
+			case chunkF = <-c.requests:
+				if chunkF.Type != chunkFrame || chunkF.RequestID != reqID {
+					putFrame(chunkF)
+					continue
+				}
+			case <-c.ctx.closed:
+				return
+			}
+			if err := c.sendAck(chunkF.FrameID, reqID); err != nil {
+				putFrame(chunkF)
+				return
+			}
+			buf.Write(chunkF.Payload)
+			isFinal := chunkF.isFinal()
+			putFrame(chunkF)
+			if isFinal {
+				break
+			}
+		}
+
+		var endF *frame
+		select {
+		case endF = <-c.requests:
+			if endF.Type != endFrame || endF.RequestID != reqID {
+				putFrame(endF)
+				continue
+			}
+		case <-c.ctx.closed:
+			return
+		}
+		if err := c.sendAck(endF.FrameID, reqID); err != nil {
+			putFrame(endF)
+			return
+		}
+		putFrame(endF)
+
+		select {
+		case c.incoming <- &assembledRequest{payload: buf.Bytes()}:
+		case <-c.ctx.closed:
+			return
+		}
+	}
 }
 
 func (c *Client) Close() error {
@@ -311,8 +379,12 @@ func (c *Client) Close() error {
 			c.ctx.conn.Close()
 		}
 		c.ctx.wg.Wait()
+		c.wg.Wait()
 		close(c.ctx.writes)
 		close(c.ctx.errors)
+		close(c.incoming)
+		close(c.requests)
+		close(c.responses)
 		c.ctx.conn = nil
 	}
 	return nil
