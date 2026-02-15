@@ -47,8 +47,7 @@ func TestClientSendAfterClose(t *testing.T) {
 		t.Fatalf("Close failed: %v", err)
 	}
 
-	client.Send(strings.NewReader("test"))
-	err = client.Wait()
+	err = client.Stream(strings.NewReader("test"), nil)
 	if err != errClosed {
 		t.Errorf("Expected errClosed, got %v", err)
 	}
@@ -96,14 +95,10 @@ func TestClientEmptyPayload(t *testing.T) {
 	defer client2.Close()
 
 	var buf bytes.Buffer
-	client2.Receive(&buf)
-	client1.Send(strings.NewReader(""))
+	go client2.Stream(nil, &buf)
 
-	if err := client1.Wait(); err != nil {
+	if err := client1.Stream(strings.NewReader(""), nil); err != nil {
 		t.Fatalf("Send failed: %v", err)
-	}
-	if err := client2.Wait(); err != nil {
-		t.Fatalf("Receive failed: %v", err)
 	}
 	if buf.Len() != 0 {
 		t.Errorf("Expected empty payload, got %d bytes", buf.Len())
@@ -133,14 +128,10 @@ func TestClientLargePayload(t *testing.T) {
 	largeData := bytes.Repeat([]byte("X"), 5*1024*1024)
 	var buf bytes.Buffer
 
-	client1.Send(bytes.NewReader(largeData))
-	client2.Receive(&buf)
+	go client2.Stream(nil, &buf)
 
-	if err := client1.Wait(); err != nil {
+	if err := client1.Stream(bytes.NewReader(largeData), nil); err != nil {
 		t.Fatalf("Send failed: %v", err)
-	}
-	if err := client2.Wait(); err != nil {
-		t.Fatalf("Receive failed: %v", err)
 	}
 	if buf.Len() != len(largeData) {
 		t.Errorf("Expected %d bytes, got %d", len(largeData), buf.Len())
@@ -187,20 +178,12 @@ func TestClientBoundaryPayloadSizes(t *testing.T) {
 			data := bytes.Repeat([]byte("A"), tc.size)
 			var reqBuf, respBuf bytes.Buffer
 
-			client1.Send(bytes.NewReader(data))
-
-			// Respond needs to create response after receiving request
 			go func() {
-				client2.Respond(&reqBuf, bytes.NewReader(data))
+				client2.Stream(bytes.NewReader(data), &reqBuf)
 			}()
 
-			client1.Receive(&respBuf)
-
-			if err := client1.Wait(); err != nil {
+			if err := client1.Stream(bytes.NewReader(data), &respBuf); err != nil {
 				t.Fatalf("Client1 failed: %v", err)
-			}
-			if err := client2.Wait(); err != nil {
-				t.Fatalf("Client2 failed: %v", err)
 			}
 
 			if reqBuf.Len() != tc.size {
@@ -242,19 +225,12 @@ func TestClientSequentialRequests(t *testing.T) {
 		data := []byte(msg)
 		var reqBuf, respBuf bytes.Buffer
 
-		client1.Send(strings.NewReader(msg))
-
 		go func() {
-			client2.Respond(&reqBuf, bytes.NewReader(append(data, []byte("-echo")...)))
+			client2.Stream(bytes.NewReader(append(data, []byte("-echo")...)), &reqBuf)
 		}()
 
-		client1.Receive(&respBuf)
-
-		if err := client1.Wait(); err != nil {
+		if err := client1.Stream(strings.NewReader(msg), &respBuf); err != nil {
 			t.Fatalf("Client1 %d failed: %v", i, err)
-		}
-		if err := client2.Wait(); err != nil {
-			t.Fatalf("Client2 %d failed: %v", i, err)
 		}
 
 		expected := msg + "-echo"
@@ -280,20 +256,11 @@ func TestClientMultipleConcurrent(t *testing.T) {
 	defer client3.Close()
 
 	var buf2, buf3 bytes.Buffer
-	client2.Receive(&buf2)
-	client3.Receive(&buf3)
+	go client2.Stream(nil, &buf2)
+	go client3.Stream(nil, &buf3)
 
-	// Send will wait for receivers to be available
-	client1.Send(strings.NewReader("broadcast"))
-
-	if err := client1.Wait(); err != nil {
+	if err := client1.Stream(strings.NewReader("broadcast"), nil); err != nil {
 		t.Fatalf("Client1 failed: %v", err)
-	}
-	if err := client2.Wait(); err != nil {
-		t.Fatalf("Client2 failed: %v", err)
-	}
-	if err := client3.Wait(); err != nil {
-		t.Fatalf("Client3 failed: %v", err)
 	}
 
 	if buf2.String() != "broadcast" {
@@ -329,12 +296,11 @@ func TestClientReadError(t *testing.T) {
 	defer client2.Close()
 
 	var buf bytes.Buffer
-	client2.Respond(&buf, nil)
+	go client2.Stream(nil, &buf)
 
 	errReader := &errorReader{err: errors.New("read error")}
-	client1.Send(errReader)
+	err = client1.Stream(errReader, nil)
 
-	err = client1.Wait()
 	if err == nil {
 		t.Fatal("Expected read error")
 	}
@@ -356,8 +322,7 @@ func TestTimeoutNoReceivers(t *testing.T) {
 	publisher, _ := NewClient("127.0.0.1:9200", channelID)
 	defer publisher.Close()
 
-	publisher.Send(strings.NewReader("test"))
-	err := publisher.Wait()
+	err := publisher.Stream(strings.NewReader("test"), nil)
 	if err == nil {
 		t.Fatal("Expected no receivers error")
 	}
@@ -385,10 +350,8 @@ func BenchmarkSendReceive(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(bytes.NewReader(data))
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(nil, &buf)
+		client1.Stream(bytes.NewReader(data), nil)
 	}
 }
 
@@ -407,10 +370,8 @@ func BenchmarkSendReceive_1KB(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(bytes.NewReader(data))
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(nil, &buf)
+		client1.Stream(bytes.NewReader(data), nil)
 	}
 }
 
@@ -429,10 +390,8 @@ func BenchmarkSendReceive_64KB(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(bytes.NewReader(data))
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(nil, &buf)
+		client1.Stream(bytes.NewReader(data), nil)
 	}
 }
 
@@ -451,10 +410,8 @@ func BenchmarkSendReceive_1MB(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(bytes.NewReader(data))
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(nil, &buf)
+		client1.Stream(bytes.NewReader(data), nil)
 	}
 }
 
@@ -474,10 +431,8 @@ func BenchmarkSendReceive_Throughput(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(bytes.NewReader(data))
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(nil, &buf)
+		client1.Stream(bytes.NewReader(data), nil)
 	}
 }
 
@@ -498,12 +453,9 @@ func BenchmarkBroadcast_MultipleReceivers(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf2, buf3 bytes.Buffer
-		client2.Receive(&buf2)
-		client3.Receive(&buf3)
-		client1.Send(bytes.NewReader(data))
-		client1.Wait()
-		client2.Wait()
-		client3.Wait()
+		go client2.Stream(nil, &buf2)
+		go client3.Stream(nil, &buf3)
+		client1.Stream(bytes.NewReader(data), nil)
 	}
 }
 
@@ -522,10 +474,8 @@ func BenchmarkSendReceive_Sequential(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(bytes.NewReader(data))
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(nil, &buf)
+		client1.Stream(bytes.NewReader(data), nil)
 	}
 }
 
@@ -549,14 +499,10 @@ func BenchmarkMultipleChannels(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf1, buf2 bytes.Buffer
-		c1b.Receive(&buf1)
-		c2b.Receive(&buf2)
-		c1a.Send(bytes.NewReader(data))
-		c2a.Send(bytes.NewReader(data))
-		c1a.Wait()
-		c2a.Wait()
-		c1b.Wait()
-		c2b.Wait()
+		go c1b.Stream(nil, &buf1)
+		go c2b.Stream(nil, &buf2)
+		c1a.Stream(bytes.NewReader(data), nil)
+		c2a.Stream(bytes.NewReader(data), nil)
 	}
 }
 
@@ -575,13 +521,8 @@ func BenchmarkRespond_RequestResponse(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var reqBuf, respBuf bytes.Buffer
-		client1.Send(bytes.NewReader(data))
-		go func() {
-			client2.Respond(&reqBuf, bytes.NewReader([]byte("response")))
-		}()
-		client1.Receive(&respBuf)
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(bytes.NewReader([]byte("response")), &reqBuf)
+		client1.Stream(bytes.NewReader(data), &respBuf)
 	}
 }
 
@@ -601,10 +542,8 @@ func BenchmarkSendReceive_RateMetric(b *testing.B) {
 	start := time.Now()
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(bytes.NewReader(data))
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(nil, &buf)
+		client1.Stream(bytes.NewReader(data), nil)
 	}
 	duration := time.Since(start)
 	b.ReportMetric(float64(b.N)/duration.Seconds(), "ops/s")
@@ -626,10 +565,8 @@ func BenchmarkSendReceive_Bandwidth(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(bytes.NewReader(data))
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(nil, &buf)
+		client1.Stream(bytes.NewReader(data), nil)
 	}
 }
 
@@ -650,15 +587,12 @@ func BenchmarkBroadcast_MultipleSenders(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
-		receiver.Receive(&buf)
+		go receiver.Stream(nil, &buf)
 		if i%2 == 0 {
-			sender1.Send(bytes.NewReader(data))
-			sender1.Wait()
+			sender1.Stream(bytes.NewReader(data), nil)
 		} else {
-			sender2.Send(bytes.NewReader(data))
-			sender2.Wait()
+			sender2.Stream(bytes.NewReader(data), nil)
 		}
-		receiver.Wait()
 	}
 }
 
@@ -679,10 +613,8 @@ func BenchmarkSendReceive_Latency(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		start := time.Now()
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(bytes.NewReader(data))
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(nil, &buf)
+		client1.Stream(bytes.NewReader(data), nil)
 		latencies = append(latencies, time.Since(start))
 	}
 	if len(latencies) > 0 {
@@ -708,21 +640,16 @@ func TestNoGoroutineLeak(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		client1, _ := NewClient("127.0.0.1:9600", channelID)
 		client2, _ := NewClient("127.0.0.1:9600", channelID)
-		
+
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(strings.NewReader("test"))
-		
-		err1 := client1.Wait()
-		err2 := client2.Wait()
-		
+		go client2.Stream(nil, &buf)
+
+		err1 := client1.Stream(strings.NewReader("test"), nil)
+
 		if err1 != nil {
-			t.Fatalf("client1.Wait() error: %v", err1)
+			t.Fatalf("client1.Stream() error: %v", err1)
 		}
-		if err2 != nil {
-			t.Fatalf("client2.Wait() error: %v", err2)
-		}
-		
+
 		client1.Close()
 		client2.Close()
 	}
@@ -752,10 +679,8 @@ func TestNoMemoryLeak(t *testing.T) {
 		client1, _ := NewClient("127.0.0.1:9601", channelID)
 		client2, _ := NewClient("127.0.0.1:9601", channelID)
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(strings.NewReader("test"))
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(nil, &buf)
+		client1.Stream(strings.NewReader("test"), nil)
 		client1.Close()
 		client2.Close()
 	}
@@ -779,10 +704,8 @@ func TestConnectionCleanup(t *testing.T) {
 	client2, _ := NewClient("127.0.0.1:9602", channelID)
 
 	var buf bytes.Buffer
-	client2.Receive(&buf)
-	client1.Send(strings.NewReader("test"))
-	client1.Wait()
-	client2.Wait()
+	go client2.Stream(nil, &buf)
+	client1.Stream(strings.NewReader("test"), nil)
 
 	client1.Close()
 	client2.Close()
@@ -810,10 +733,8 @@ func TestMemoryStressLargePayloads(t *testing.T) {
 	data := bytes.Repeat([]byte("X"), 5*1024*1024)
 	for i := 0; i < 10; i++ {
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(bytes.NewReader(data))
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(nil, &buf)
+		client1.Stream(bytes.NewReader(data), nil)
 		if buf.Len() != len(data) {
 			t.Fatalf("Iteration %d: expected %d bytes, got %d", i, len(data), buf.Len())
 		}
@@ -837,10 +758,8 @@ func TestMemoryStressConcurrent(t *testing.T) {
 			defer client2.Close()
 			for j := 0; j < 10; j++ {
 				var buf bytes.Buffer
-				client2.Receive(&buf)
-				client1.Send(strings.NewReader("test"))
-				client1.Wait()
-				client2.Wait()
+				go client2.Stream(nil, &buf)
+				client1.Stream(strings.NewReader("test"), nil)
 			}
 		}()
 	}
@@ -865,10 +784,8 @@ func TestMemoryPoolEfficiency(t *testing.T) {
 	data := bytes.Repeat([]byte("X"), 1024)
 	for i := 0; i < 1000; i++ {
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(bytes.NewReader(data))
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(nil, &buf)
+		client1.Stream(bytes.NewReader(data), nil)
 	}
 
 	runtime.GC()
@@ -897,10 +814,8 @@ func TestMemoryLeakUnderLoad(t *testing.T) {
 
 	for i := 0; i < 500; i++ {
 		var buf bytes.Buffer
-		client2.Receive(&buf)
-		client1.Send(strings.NewReader("load test"))
-		client1.Wait()
-		client2.Wait()
+		go client2.Stream(nil, &buf)
+		client1.Stream(strings.NewReader("load test"), nil)
 	}
 
 	runtime.GC()
@@ -950,14 +865,10 @@ func testSendThenReceive(t *testing.T, server *Server, channelID uuid.UUID) {
 	defer client2.Close()
 
 	var buf bytes.Buffer
-	client1.Send(strings.NewReader("test"))
-	client2.Receive(&buf)
+	go client2.Stream(nil, &buf)
 
-	if err := client1.Wait(); err != nil {
+	if err := client1.Stream(strings.NewReader("test"), nil); err != nil {
 		t.Fatalf("Send failed: %v", err)
-	}
-	if err := client2.Wait(); err != nil {
-		t.Fatalf("Receive failed: %v", err)
 	}
 	if buf.String() != "test" {
 		t.Errorf("Expected 'test', got '%s'", buf.String())
@@ -971,14 +882,10 @@ func testReceiveThenSend(t *testing.T, server *Server, channelID uuid.UUID) {
 	defer client2.Close()
 
 	var buf bytes.Buffer
-	client2.Receive(&buf)
-	client1.Send(strings.NewReader("test"))
+	go client2.Stream(nil, &buf)
 
-	if err := client1.Wait(); err != nil {
+	if err := client1.Stream(strings.NewReader("test"), nil); err != nil {
 		t.Fatalf("Send failed: %v", err)
-	}
-	if err := client2.Wait(); err != nil {
-		t.Fatalf("Receive failed: %v", err)
 	}
 	if buf.String() != "test" {
 		t.Errorf("Expected 'test', got '%s'", buf.String())
@@ -992,19 +899,13 @@ func testSendThenRespond(t *testing.T, server *Server, channelID uuid.UUID) {
 	defer client2.Close()
 
 	var reqBuf, respBuf bytes.Buffer
-	client1.Send(strings.NewReader("req"))
 
 	go func() {
-		client2.Respond(&reqBuf, strings.NewReader("req-resp"))
+		client2.Stream(strings.NewReader("req-resp"), &reqBuf)
 	}()
 
-	client1.Receive(&respBuf)
-
-	if err := client1.Wait(); err != nil {
+	if err := client1.Stream(strings.NewReader("req"), &respBuf); err != nil {
 		t.Fatalf("Client1 failed: %v", err)
-	}
-	if err := client2.Wait(); err != nil {
-		t.Fatalf("Client2 failed: %v", err)
 	}
 	if respBuf.String() != "req-resp" {
 		t.Errorf("Expected 'req-resp', got '%s'", respBuf.String())
@@ -1020,17 +921,11 @@ func testRespondThenSend(t *testing.T, server *Server, channelID uuid.UUID) {
 	var reqBuf, respBuf bytes.Buffer
 
 	go func() {
-		client2.Respond(&reqBuf, strings.NewReader("req-resp"))
+		client2.Stream(strings.NewReader("req-resp"), &reqBuf)
 	}()
 
-	client1.Send(strings.NewReader("req"))
-	client1.Receive(&respBuf)
-
-	if err := client1.Wait(); err != nil {
+	if err := client1.Stream(strings.NewReader("req"), &respBuf); err != nil {
 		t.Fatalf("Client1 failed: %v", err)
-	}
-	if err := client2.Wait(); err != nil {
-		t.Fatalf("Client2 failed: %v", err)
 	}
 	if respBuf.String() != "req-resp" {
 		t.Errorf("Expected 'req-resp', got '%s'", respBuf.String())
@@ -1044,14 +939,10 @@ func testConcurrentSendReceive(t *testing.T, server *Server, channelID uuid.UUID
 	defer client2.Close()
 
 	var buf bytes.Buffer
-	client1.Send(strings.NewReader("test"))
-	client2.Receive(&buf)
+	go client2.Stream(nil, &buf)
 
-	if err := client1.Wait(); err != nil {
+	if err := client1.Stream(strings.NewReader("test"), nil); err != nil {
 		t.Fatalf("Send failed: %v", err)
-	}
-	if err := client2.Wait(); err != nil {
-		t.Fatalf("Receive failed: %v", err)
 	}
 	if buf.String() != "test" {
 		t.Errorf("Expected 'test', got '%s'", buf.String())
@@ -1065,19 +956,13 @@ func testConcurrentSendRespond(t *testing.T, server *Server, channelID uuid.UUID
 	defer client2.Close()
 
 	var reqBuf, respBuf bytes.Buffer
-	client1.Send(strings.NewReader("req"))
 
 	go func() {
-		client2.Respond(&reqBuf, strings.NewReader("req-resp"))
+		client2.Stream(strings.NewReader("req-resp"), &reqBuf)
 	}()
 
-	client1.Receive(&respBuf)
-
-	if err := client1.Wait(); err != nil {
+	if err := client1.Stream(strings.NewReader("req"), &respBuf); err != nil {
 		t.Fatalf("Client1 failed: %v", err)
-	}
-	if err := client2.Wait(); err != nil {
-		t.Fatalf("Client2 failed: %v", err)
 	}
 	if respBuf.String() != "req-resp" {
 		t.Errorf("Expected 'req-resp', got '%s'", respBuf.String())

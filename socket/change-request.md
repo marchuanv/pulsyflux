@@ -20,60 +20,69 @@ Deadlock from delayed acknowledgments - `processIncoming()` was waiting for cons
 
 ---
 
-## New Request: True Stream-Like Experience for Socket Consumers
+## Completed: Unified Stream API ✅
 
-### Goal
-Provide a stream-oriented API that feels natural for continuous message processing, similar to reading from a file or network stream.
+### What Was Done
 
-### Current State
-- Operations are transactional with explicit `Wait()` calls
-- Each `Receive()` requires a separate call and `Wait()`
-- No built-in loop for continuous message consumption
+**Problem Solved:**
+Three separate methods (`Send`, `Receive`, `Respond`) with async operations and explicit `Wait()` calls created complexity and required careful coordination.
 
-### Proposed Enhancement
+**Solution:**
+Consolidated into a single synchronous `Stream(in io.Reader, out io.Writer) error` method:
+- `Stream(in, nil)` - Send only (replaces `Send` + `Wait`)
+- `Stream(nil, out)` - Receive only (replaces `Receive` + `Wait`)
+- `Stream(in, out)` - Respond pattern (replaces `Respond` + `Wait`)
 
-Add streaming methods that handle multiple messages automatically:
+**Implementation Details:**
+- Synchronous blocking operation - returns error directly
+- Creates new session on each call to prevent message leakage
+- Checks for unconsumed messages from previous session
+- Removed `opWg` and `opErrors` - no longer needed for async tracking
+- Added `sessionMu` for thread-safe session management
 
+**Result:**
+- Simpler API: one method instead of four (`Send`, `Receive`, `Respond`, `Wait`)
+- Cleaner code: no manual async coordination
+- Safer: automatic session isolation per call
+- All tests updated and passing
+
+### Usage Examples
+
+**Before:**
 ```go
-// Stream continuously receives messages until error or close
-func (c *Client) Stream(handler func([]byte) error) error
+// Send
+client.Send(strings.NewReader("hello"))
+err := client.Wait()
 
-// StreamRespond continuously receives and responds
-func (c *Client) StreamRespond(handler func([]byte) ([]byte, error)) error
+// Receive
+var buf bytes.Buffer
+client.Receive(&buf)
+err := client.Wait()
+
+// Respond
+var reqBuf bytes.Buffer
+client.Respond(&reqBuf, strings.NewReader("response"))
+err := client.Wait()
 ```
 
-### Use Cases
-
-**Current approach** (transactional):
+**After:**
 ```go
-for i := 0; i < 10; i++ {
-    var buf bytes.Buffer
-    client.Receive(&buf)
-    if err := client.Wait(); err != nil {
-        return err
-    }
-    process(buf.Bytes())
-}
-```
+// Send
+err := client.Stream(strings.NewReader("hello"), nil)
 
-**Proposed approach** (streaming):
-```go
-err := client.Stream(func(data []byte) error {
-    return process(data)
-})
+// Receive
+var buf bytes.Buffer
+err := client.Stream(nil, &buf)
+
+// Respond
+var reqBuf bytes.Buffer
+err := client.Stream(strings.NewReader("response"), &reqBuf)
 ```
 
 ### Benefits
 
-1. **Simpler code**: No manual loop management
-2. **Automatic error handling**: Stream stops on first error
-3. **Resource efficient**: Single goroutine handles all messages
-4. **Familiar pattern**: Similar to HTTP handlers, gRPC streams
-5. **Backward compatible**: Existing transactional API unchanged
-
-### Implementation Notes
-
-- Stream methods would be blocking (like `Wait()`)
-- Handler called for each incoming message
-- Stream ends on handler error, client close, or context cancellation
-- Could add context support: `StreamContext(ctx, handler)`
+1. **Simpler**: One method with clear semantics
+2. **Safer**: Automatic session management prevents bugs
+3. **Cleaner**: No async coordination needed
+4. **Intuitive**: Parameters determine behavior (in=send, out=receive)
+5. **Consistent**: All operations follow same pattern

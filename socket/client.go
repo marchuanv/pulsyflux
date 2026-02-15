@@ -18,10 +18,9 @@ type Client struct {
 	ctx        *connctx
 	done       chan struct{}
 	connMu     sync.Mutex
+	sessionMu  sync.Mutex
 	requests   chan *frame
 	responses  chan *frame
-	opWg       sync.WaitGroup
-	opErrors   chan error
 	wg         sync.WaitGroup
 	registered chan struct{}
 	session    *session
@@ -53,7 +52,6 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 		done:       make(chan struct{}),
 		requests:   make(chan *frame, 1024),
 		responses:  make(chan *frame, 1024),
-		opErrors:   make(chan error, 100),
 		registered: make(chan struct{}),
 		session:    &session{incoming: make(chan *assembledRequest, 1024)},
 		ctx: &connctx{
@@ -161,17 +159,39 @@ func (c *Client) receiveFrame(frameType byte, reqID uuid.UUID) (*frame, error) {
 		}
 	}
 }
-func (c *Client) Send(r io.Reader) {
-	c.opWg.Add(1)
-	go func() {
-		defer c.opWg.Done()
-		if err := c.doSend(r); err != nil {
-			select {
-			case c.opErrors <- err:
-			default:
-			}
+func (c *Client) Stream(in io.Reader, out io.Writer) error {
+	c.sessionMu.Lock()
+	select {
+	case <-c.session.incoming:
+		c.sessionMu.Unlock()
+		return errors.New("session has unconsumed messages")
+	default:
+	}
+	c.session = &session{incoming: make(chan *assembledRequest, 1024)}
+	c.sessionMu.Unlock()
+
+	if in != nil && out != nil {
+		select {
+		case req := <-c.session.incoming:
+			out.Write(req.payload)
+			return c.doSend(in)
+		case <-c.ctx.closed:
+			return errClosed
 		}
-	}()
+	}
+	if in != nil {
+		return c.doSend(in)
+	}
+	if out != nil {
+		select {
+		case req := <-c.session.incoming:
+			out.Write(req.payload)
+			return nil
+		case <-c.ctx.closed:
+			return errClosed
+		}
+	}
+	return nil
 }
 
 func (c *Client) doSend(r io.Reader) error {
@@ -247,58 +267,7 @@ func (c *Client) waitForAck(reqID uuid.UUID) error {
 	}
 }
 
-func (c *Client) Receive(r io.Reader) {
-	c.opWg.Add(1)
-	go func() {
-		defer c.opWg.Done()
-		if err := c.doReceive(r); err != nil {
-			select {
-			case c.opErrors <- err:
-			default:
-			}
-		}
-	}()
-}
 
-func (c *Client) doReceive(r io.Reader) error {
-	select {
-	case req := <-c.session.incoming:
-		if w, ok := r.(io.Writer); ok {
-			w.Write(req.payload)
-		}
-		return nil
-	case <-c.ctx.closed:
-		return errClosed
-	}
-}
-
-func (c *Client) Respond(req io.Reader, resp io.Reader) {
-	c.opWg.Add(1)
-	go func() {
-		defer c.opWg.Done()
-		if err := c.doRespond(req, resp); err != nil {
-			select {
-			case c.opErrors <- err:
-			default:
-			}
-		}
-	}()
-}
-
-func (c *Client) doRespond(req io.Reader, resp io.Reader) error {
-	select {
-	case r := <-c.session.incoming:
-		if w, ok := req.(io.Writer); ok {
-			w.Write(r.payload)
-		}
-		if resp != nil {
-			c.Send(resp)
-		}
-		return nil
-	case <-c.ctx.closed:
-		return errClosed
-	}
-}
 
 func (c *Client) sendAck(frameID, reqID uuid.UUID) error {
 	f := getFrame()
@@ -418,31 +387,7 @@ func (c *Client) processIncoming() {
 	}
 }
 
-func (c *Client) Wait() error {
-	c.opWg.Wait()
-	
-	// Check for unconsumed messages - this indicates a bug
-	select {
-	case <-c.session.incoming:
-		return errors.New("session has unconsumed messages after Wait")
-	default:
-	}
-	
-	// Create new session for next set of operations
-	c.session = &session{incoming: make(chan *assembledRequest, 1024)}
-	
-	var firstErr error
-	for {
-		select {
-		case err := <-c.opErrors:
-			if err != nil && firstErr == nil {
-				firstErr = err
-			}
-		default:
-			return firstErr
-		}
-	}
-}
+
 
 func (c *Client) Close() error {
 	c.connMu.Lock()
