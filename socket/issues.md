@@ -69,7 +69,7 @@ The server needs to:
 
 ---
 
-## Proposed Solution: Request Assignment Tracking
+## Proposed Solution: Request Assignment Tracking with Shared Channel Queue
 
 **Status**: PROPOSED
 
@@ -88,75 +88,211 @@ This causes frame interleaving:
 - Both receivers get chunkFrames from BOTH requests
 - Result: "invalid frame" errors
 
-### Solution: Request-to-Receiver Assignment
+**Additional problem**: Current flagReceive implementation spawns a polling goroutine:
+```go
+go func() {
+    for {
+        if req, ok := entry.dequeueRequest(); ok { ... }
+        time.Sleep(10 * time.Millisecond)  // Wasteful polling!
+    }
+}()
+```
+With N receivers, this creates N goroutines polling every 10ms = 10N polls/second doing nothing.
 
-**Core Idea**: Once a receiver dequeues a startFrame, assign that entire request to that receiver only.
+### Solution: Shared Channel Queue + Request Assignment
+
+**Core Ideas**:
+1. Use ONE shared queue per channel for startFrames (eliminates polling)
+2. Receivers block on shared queue (efficient, no busy-waiting)
+3. Once receiver dequeues startFrame, assign entire request to that receiver
+4. Route subsequent frames (chunk/end) directly to assigned receiver
 
 **Implementation**:
 
-1. Add `requestAssignments map[uuid.UUID]uuid.UUID` to registry (requestID → receiverClientID)
+1. **Add to registry**:
+   - `channelQueues map[uuid.UUID]chan *frame` - shared queue per channel for startFrames
+   - `requestAssignments map[uuid.UUID]uuid.UUID` - tracks requestID → receiverClientID
 
-2. **When receiver polls (flagReceive)**:
-   - Dequeue frame from requestQueue
-   - If frame is startFrame: `assignRequest(requestID, receiverClientID)`
+2. **When sender sends startFrame (flagRequest)**:
+   - Enqueue to shared channel queue (not to individual peer queues)
+   - All receivers waiting on that channel queue compete for it
+   - First available receiver gets it (natural load balancing)
+
+3. **When receiver polls (flagReceive)**:
+   - Spawn goroutine that BLOCKS on shared channel queue (no polling!)
+   - When frame received: `assignRequest(requestID, receiverClientID)`
    - Send frame to receiver via responseQueue
 
-3. **When sender sends frames (flagRequest)**:
-   - If startFrame: Broadcast to ALL peers (current behavior)
-   - If chunk/endFrame: Check if requestID is assigned
-     - If assigned: Route ONLY to assigned receiver
-     - If not assigned: Broadcast to ALL peers (fallback)
+4. **When sender sends chunk/endFrame (flagRequest)**:
+   - Check if requestID is assigned
+   - If assigned: Route ONLY to assigned receiver's responseQueue
+   - If not assigned: Error condition (shouldn't happen)
 
-4. **When request completes**:
+5. **When request completes**:
    - On endFrame with flagResponse: `unassignRequest(requestID)`
 
-### Message Flow
+### Detailed Frame Flow
+
+#### Scenario: 3 Senders, 2 Receivers on same channel
 
 ```
-Sender              Server                  Receiver
-  |                   |                         |
-  |--startFrame------>|                         |
-  |  [flagRequest]    |--broadcast to ALL------>|
-  |                   |                         |
-  |                   |         <--poll---------|
-  |                   |  dequeue startFrame     |
-  |                   |  *** ASSIGN reqID->rcvID|
-  |                   |--send to receiver------>|
-  |                   |                         |
-  |--chunkFrame------>|                         |
-  |  [flagRequest]    |--check assignment------>|
-  |                   |  route to assigned ONLY |
-  |                   |                         |
-  |--endFrame-------->|                         |
-  |  [flagRequest]    |--check assignment------>|
-  |                   |  route to assigned ONLY |
-  |                   |                         |
-  |                   |         <--endFrame-----|
-  |                   |  [flagResponse]         |
-  |                   |  *** UNASSIGN reqID     |
+Sender1          Sender2          Server                 Receiver1        Receiver2
+  |                |                  |                        |               |
+  |                |                  | <--flagReceive---------+               |
+  |                |                  |   spawn goroutine      |               |
+  |                |                  |   BLOCKS on channelQ   |               |
+  |                |                  |                        |               |
+  |                |                  | <--flagReceive--------------------+   |
+  |                |                  |   spawn goroutine                 |   |
+  |                |                  |   BLOCKS on channelQ              |   |
+  |                |                  |                        |           |   |
+  +--startFrame--->|                  |                        |           |   |
+  |  [reqA]        |                  |                        |           |   |
+  |  [flagRequest] |                  |                        |           |   |
+  |                |                  +--enqueue to channelQ   |           |   |
+  |                |                  |                        |           |   |
+  |                |                  +--goroutine1 unblocks-->|           |   |
+  |                |                  |  ASSIGN reqA->Rcv1     |           |   |
+  |                |                  +--send via responseQ--->|           |   |
+  |                |                  |                        |           |   |
+  |                +--startFrame----->|                        |           |   |
+  |                |  [reqB]          |                        |           |   |
+  |                |  [flagRequest]   |                        |           |   |
+  |                |                  +--enqueue to channelQ   |           |   |
+  |                |                  |                        |           |   |
+  |                |                  +--goroutine2 unblocks-------------->|   |
+  |                |                  |  ASSIGN reqB->Rcv2                |   |
+  |                |                  +--send via responseQ--------------->|   |
+  |                |                  |                        |           |   |
+  +--chunkFrame--->|                  |                        |           |   |
+  |  [reqA]        |                  |                        |           |   |
+  |  [flagRequest] |                  |                        |           |   |
+  |                |                  +--check assignment      |           |   |
+  |                |                  |  reqA->Rcv1            |           |   |
+  |                |                  +--route to Rcv1 ONLY--->|           |   |
+  |                |                  |  (NOT to Rcv2)         |           |   |
+  |                |                  |                        |           |   |
+  |                +--chunkFrame----->|                        |           |   |
+  |                |  [reqB]          |                        |           |   |
+  |                |  [flagRequest]   |                        |           |   |
+  |                |                  +--check assignment      |           |   |
+  |                |                  |  reqB->Rcv2                        |   |
+  |                |                  +--route to Rcv2 ONLY--------------->|   |
+  |                |                  |  (NOT to Rcv1)         |           |   |
+  |                |                  |                        |           |   |
+  +--endFrame----->|                  |                        |           |   |
+  |  [reqA]        |                  |                        |           |   |
+  |  [flagRequest] |                  |                        |           |   |
+  |                |                  +--check assignment      |           |   |
+  |                |                  |  reqA->Rcv1            |           |   |
+  |                |                  +--route to Rcv1-------->|           |   |
+  |                |                  |                        |           |   |
+  |                |                  |                        +--endFrame-+   |
+  |                |                  | <----------------------+  [reqA]   |   |
+  |                |                  |  [flagResponse]        |           |   |
+  |                |                  +--UNASSIGN reqA         |           |   |
+  |                |                  +--route to Sender1----->|           |   |
+  | <--endFrame----+                  |                        |           |   |
+  |  [reqA]        |                  |                        |           |   |
 ```
 
-### Key Benefits
+### Key Changes to Frame Routing
 
-1. **No starvation**: All receivers can pick up new requests (startFrames are broadcast)
-2. **No interleaving**: Once assigned, all frames for a request go to one receiver
-3. **Minimal changes**: Only ~20 lines of code added
-4. **Backward compatible**: Fallback to broadcast if no assignment exists
+**BEFORE (Current - Broken)**:
+```go
+// All flagRequest frames broadcast to ALL peers
+if f.Flags&flagRequest != 0 {
+    peers := s.registry.getChannelPeers(entry.channelID, clientID)
+    for _, peer := range peers {
+        peer.enqueueRequest(f)  // BROADCAST - causes interleaving
+    }
+}
+
+// flagReceive spawns polling goroutine
+if f.Flags&flagReceive != 0 {
+    go func() {
+        for {
+            if req, ok := entry.dequeueRequest(); ok { ... }
+            time.Sleep(10 * time.Millisecond)  // WASTEFUL POLLING
+        }
+    }()
+}
+```
+
+**AFTER (Proposed - Fixed)**:
+```go
+// startFrame goes to shared channel queue
+if f.Flags&flagRequest != 0 && f.Type == startFrame {
+    channelQueue := s.registry.getChannelQueue(entry.channelID)
+    channelQueue <- f  // Single queue, no broadcast
+}
+
+// chunk/endFrame goes to assigned receiver only
+if f.Flags&flagRequest != 0 && (f.Type == chunkFrame || f.Type == endFrame) {
+    if receiverID, ok := s.registry.getAssignedReceiver(f.RequestID); ok {
+        if receiver, ok := s.registry.get(receiverID); ok {
+            receiver.enqueueResponse(f)  // Direct routing, no broadcast
+        }
+    }
+}
+
+// flagReceive blocks on shared queue (no polling!)
+if f.Flags&flagReceive != 0 {
+    go func() {
+        channelQueue := s.registry.getChannelQueue(entry.channelID)
+        req := <-channelQueue  // BLOCKS until request available
+        s.registry.assignRequest(req.RequestID, clientID)
+        entry.enqueueResponse(req)
+    }()
+}
+```
+
+### Impact on Client-Server Interaction
+
+**Client-side**: NO CHANGES
+- Clients continue to send/receive frames exactly as before
+- Client code is unaware of server-side routing changes
+
+**Server-side**: Routing logic changes
+1. **startFrame routing**: Shared queue instead of broadcast
+2. **chunk/endFrame routing**: Direct to assigned receiver instead of broadcast
+3. **flagReceive handling**: Blocking instead of polling
+4. **Request assignment**: New tracking to maintain request→receiver mapping
+
+**Performance improvements**:
+- Eliminates wasteful polling (10N polls/second → 0)
+- Reduces memory pressure (fewer queued duplicate frames)
+- Natural load balancing (first available receiver gets request)
+- Scales efficiently with any number of receivers
+
+**Correctness improvements**:
+- Eliminates frame interleaving (each request goes to exactly one receiver)
+- Prevents "invalid frame" errors in concurrent scenarios
+- Maintains FIFO ordering per request
 
 ### Code Changes Required
 
 **SERVER-SIDE ONLY - NO CLIENT CHANGES NEEDED**
 
 **registry.go**:
-- Add `requestAssignments map[uuid.UUID]uuid.UUID`
+- Add `channelQueues map[uuid.UUID]chan *frame` - shared queue per channel
+- Add `requestAssignments map[uuid.UUID]uuid.UUID` - request to receiver mapping
+- Add `getChannelQueue(channelID uuid.UUID) chan *frame` - get or create channel queue
 - Add `assignRequest(requestID, receiverClientID uuid.UUID)`
 - Add `getAssignedReceiver(requestID uuid.UUID) (uuid.UUID, bool)`
 - Add `unassignRequest(requestID uuid.UUID)`
+- Cleanup channel queues and assignments on unregister
 
 **server.go**:
-- Modify flagRequest handler: check assignment for chunk/endFrame
-- Modify flagReceive polling: call assignRequest() after dequeuing startFrame
-- Modify flagResponse handler: call unassignRequest() on endFrame
+- Modify flagRequest handler:
+  - If startFrame: enqueue to shared channel queue (not broadcast)
+  - If chunk/endFrame: check assignment, route to assigned receiver only
+- Modify flagReceive handler:
+  - Spawn goroutine that blocks on shared channel queue (no polling loop!)
+  - After receiving frame: call assignRequest()
+  - Send frame to receiver via responseQueue
+- Modify flagResponse handler:
+  - On endFrame: call unassignRequest() to cleanup
 
 **client.go**:
 - No changes required - clients already filter frames by requestID
