@@ -190,30 +190,29 @@ ClientA (pub)    Server          ClientB (sub)   ClientC (sub)   ClientD (sub)
     +--Send------->|                  |               |               |
     | reqA,        |                  |               |               |
     | clientA      +--broadcast------>+-------------->+-------------->+
+    |              |  (excludes A)    |               |               |
+    |              |           (B,C,D receive reqA from clientA)     |
     |              |                  |               |               |
-    | (A filters   |           (B,C,D receive reqA from clientA)     |
-    |  out reqA    |                  |               |               |
-    |  clientA)    |               process         process         process
+    |              |               process         process         process
     |              |                  |               |               |
     |              | <--Send----------+               |               |
     |              |  reqB, clientB   |               |               |
-    +<-------------+                  |               |               |
+    +<-------------+  (A receives)    |               |               |
     |              +--------------------------------->+-------------->+
-    |              |                  |               |               |
- (A,C,D receive reqB from clientB)   | (B filters    |               |
-    |              |                  |  out reqB     |               |
- process        process               |  clientB)  process         process
+    |              |  (excludes B)    |               |               |
+ (A,C,D receive reqB from clientB)   |                               |
+    |              |                  |                               |
+ process        process               |                            process
     |              |                  |               |               |
     +--Send------->|                  |               |               |
     | reqA2,       |                  |               |               |
     | clientA      +--broadcast------>+-------------->+-------------->+
-    |              |                  |               |               |
+    |              |  (excludes A)    |               |               |
 ```
 
 **Key points**:
 - ALL clients receive ALL messages (broadcast) EXCEPT sender doesn't receive own messages
-- Server excludes sender from broadcast
-- No client-side filtering needed
+- Server excludes sender from broadcast (no client-side filtering needed)
 - Pure pub-sub pattern
 
 ## Analysis of Current Implementation Issues
@@ -704,6 +703,62 @@ client.Respond(incoming, outgoing)
 8. **Sender exclusion**: Server's getChannelPeers() excludes sender from peer list
 9. **Receivers join after Send() starts**: Server polls for new receivers every 100ms during wait
 
+### Operation Ordering and Concurrency
+
+**Single Client Constraints**:
+- A client can only perform ONE operation at a time (enforced by `opMu` lock)
+- Valid operations: `Send()`, `Receive()`, or `Respond()`
+- Attempting concurrent operations on same client returns `errOperationInProgress`
+
+**Valid Patterns**:
+```go
+// Pattern 1: Send only
+client.Send(data)  // OK
+
+// Pattern 2: Receive only (listen loop)
+for {
+    client.Receive(incoming)  // OK - sequential calls
+}
+
+// Pattern 3: Respond only (request-response loop)
+for {
+    client.Respond(incoming, outgoing)  // OK - sequential calls
+}
+
+// Pattern 4: Mixed (but sequential)
+client.Send(data)           // OK
+client.Receive(incoming)    // OK - after Send() completes
+client.Send(response)       // OK - after Receive() completes
+```
+
+**Invalid Patterns**:
+```go
+// INVALID: Concurrent operations on same client
+go client.Send(data1)
+go client.Send(data2)  // ERROR: errOperationInProgress
+
+// INVALID: Send while Receive is blocked
+go client.Receive(incoming)  // Blocks waiting for message
+client.Send(data)            // ERROR: errOperationInProgress
+```
+
+**No Ordering Requirements Between Different Clients**:
+- ClientA can `Send()` before any receivers call `Receive()`
+  - Server waits for receivers with timeout
+  - Sends error frame if timeout expires
+- ClientB can call `Receive()` before any senders call `Send()`
+  - Blocks waiting for broadcast message
+  - No timeout (waits indefinitely)
+- Multiple clients can `Send()` concurrently (different clients)
+  - Each Send() is independent
+  - Server handles each sequentially per sender
+
+**Server Behavior**:
+- **Does NOT queue operations** - handles frames as they arrive
+- **Sender blocks** if no receivers (waits with timeout)
+- **Receiver blocks** if no messages (waits indefinitely)
+- **No global ordering** - each client-server interaction is independent
+
 ### API Design Rationale: Separate Receive() and Respond()
 
 **This is the chosen design** - separated methods for clarity and composability.
@@ -723,10 +778,12 @@ client.Respond(incoming, outgoing)
 - Blocking on `ackCollector.done` channel for synchronization
 
 **Client-side** (already correct):
-- `opMu` on Client prevents concurrent Send()/Receive()
-- This is a **business logic constraint**: a client can't be both sender and receiver simultaneously
+- `opMu` on Client prevents concurrent Send()/Receive()/Respond()
+- This is a **business logic constraint**: a client can only perform one operation at a time
+- Attempting concurrent operations returns `errOperationInProgress`
 - Without lock: both operations would read from same `c.ctx.reads` channel and steal each other's frames
 - Lock is on Client (not connctx) because:
-  - It enforces a logical rule about client roles, not just resource protection
+  - It enforces a logical rule about client operations, not just resource protection
   - connctx is a connection resource; Client is a logical participant
   - The protocol design requires one operation per client at a time
+- Operations are sequential per client, but multiple clients can operate concurrently
