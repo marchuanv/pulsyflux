@@ -66,3 +66,120 @@ The server needs to:
 2. Check how frames are enqueued to peer queues
 3. Ensure each request is assigned to exactly one receiver
 4. Add request-to-receiver mapping to prevent frame interleaving
+
+---
+
+## Proposed Solution: Request Assignment Tracking
+
+**Status**: PROPOSED
+
+### Problem Summary
+
+Current behavior broadcasts ALL flagRequest frames to ALL receivers:
+```go
+for _, peer := range peers {
+    peer.enqueueRequest(f)  // Broadcasts to ALL
+}
+```
+
+This causes frame interleaving:
+- Receiver A gets startFrame for request X
+- Receiver B gets startFrame for request Y
+- Both receivers get chunkFrames from BOTH requests
+- Result: "invalid frame" errors
+
+### Solution: Request-to-Receiver Assignment
+
+**Core Idea**: Once a receiver dequeues a startFrame, assign that entire request to that receiver only.
+
+**Implementation**:
+
+1. Add `requestAssignments map[uuid.UUID]uuid.UUID` to registry (requestID → receiverClientID)
+
+2. **When receiver polls (flagReceive)**:
+   - Dequeue frame from requestQueue
+   - If frame is startFrame: `assignRequest(requestID, receiverClientID)`
+   - Send frame to receiver via responseQueue
+
+3. **When sender sends frames (flagRequest)**:
+   - If startFrame: Broadcast to ALL peers (current behavior)
+   - If chunk/endFrame: Check if requestID is assigned
+     - If assigned: Route ONLY to assigned receiver
+     - If not assigned: Broadcast to ALL peers (fallback)
+
+4. **When request completes**:
+   - On endFrame with flagResponse: `unassignRequest(requestID)`
+
+### Message Flow
+
+```
+Sender              Server                  Receiver
+  |                   |                         |
+  |--startFrame------>|                         |
+  |  [flagRequest]    |--broadcast to ALL------>|
+  |                   |                         |
+  |                   |         <--poll---------|
+  |                   |  dequeue startFrame     |
+  |                   |  *** ASSIGN reqID->rcvID|
+  |                   |--send to receiver------>|
+  |                   |                         |
+  |--chunkFrame------>|                         |
+  |  [flagRequest]    |--check assignment------>|
+  |                   |  route to assigned ONLY |
+  |                   |                         |
+  |--endFrame-------->|                         |
+  |  [flagRequest]    |--check assignment------>|
+  |                   |  route to assigned ONLY |
+  |                   |                         |
+  |                   |         <--endFrame-----|
+  |                   |  [flagResponse]         |
+  |                   |  *** UNASSIGN reqID     |
+```
+
+### Key Benefits
+
+1. **No starvation**: All receivers can pick up new requests (startFrames are broadcast)
+2. **No interleaving**: Once assigned, all frames for a request go to one receiver
+3. **Minimal changes**: Only ~20 lines of code added
+4. **Backward compatible**: Fallback to broadcast if no assignment exists
+
+### Code Changes Required
+
+**SERVER-SIDE ONLY - NO CLIENT CHANGES NEEDED**
+
+**registry.go**:
+- Add `requestAssignments map[uuid.UUID]uuid.UUID`
+- Add `assignRequest(requestID, receiverClientID uuid.UUID)`
+- Add `getAssignedReceiver(requestID uuid.UUID) (uuid.UUID, bool)`
+- Add `unassignRequest(requestID uuid.UUID)`
+
+**server.go**:
+- Modify flagRequest handler: check assignment for chunk/endFrame
+- Modify flagReceive polling: call assignRequest() after dequeuing startFrame
+- Modify flagResponse handler: call unassignRequest() on endFrame
+
+**client.go**:
+- No changes required - clients already filter frames by requestID
+
+### Edge Cases Handled
+
+1. **Multiple concurrent requests**: Each gets its own assignment
+2. **Receiver disconnects mid-request**: Assignment cleanup on unregister
+3. **Late-arriving frames**: Fallback to broadcast if no assignment
+4. **Concurrent map access**: Use existing registry.mu (RWMutex) for thread-safe map operations
+
+### Locking Strategy
+
+**Server-side** (this solution):
+- Reuse existing `registry.mu` (RWMutex) for `requestAssignments` map access
+- Read lock for checking assignments (frequent)
+- Write lock for assign/unassign operations (infrequent)
+
+**Client-side** (already exists, necessary):
+- `opMu` on Client (not connctx) prevents concurrent Send()/Receive()
+- This is a **business logic constraint**: a client can't be both sender and receiver simultaneously
+- Without lock: both operations would read from same `c.ctx.reads` channel and steal each other's frames
+- Lock is on Client (not connctx) because:
+  - It enforces a logical rule about client roles, not just resource protection
+  - connctx is a connection resource; Client is a logical participant
+  - The protocol design requires one operation per client at a time
