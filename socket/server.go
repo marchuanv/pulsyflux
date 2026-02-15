@@ -136,7 +136,7 @@ func (s *Server) handle(conn net.Conn) {
 
 func (s *Server) handleRequest(f *frame, clientID, channelID uuid.UUID, entry *clientEntry) {
 	peers := s.registry.waitForReceivers(channelID, clientID, f.ClientTimeoutMs)
-	if len(peers) == 0 {
+	if peers == nil {
 		errFrame := newErrorFrame(f.RequestID, f.ClientID, "no receivers available", flagNone)
 		entry.enqueueResponse(errFrame)
 		putFrame(f)
