@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -367,7 +368,7 @@ func TestTimeoutNoReceivers(t *testing.T) {
 // Benchmarks
 // ============================================================================
 
-func BenchmarkSingleRequest(b *testing.B) {
+func BenchmarkSendReceive(b *testing.B) {
 	server := NewServer("9300")
 	server.Start()
 	defer server.Stop()
@@ -380,7 +381,7 @@ func BenchmarkSingleRequest(b *testing.B) {
 
 	data := []byte("test")
 	b.ResetTimer()
-	for i := 0; i < b.N && i < 10; i++ {
+	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
 		client2.Receive(&buf)
 		client1.Send(bytes.NewReader(data))
@@ -389,7 +390,7 @@ func BenchmarkSingleRequest(b *testing.B) {
 	}
 }
 
-func BenchmarkSmallPayload(b *testing.B) {
+func BenchmarkSendReceive_1KB(b *testing.B) {
 	server := NewServer("9301")
 	server.Start()
 	defer server.Stop()
@@ -402,7 +403,7 @@ func BenchmarkSmallPayload(b *testing.B) {
 
 	data := bytes.Repeat([]byte("X"), 1024)
 	b.ResetTimer()
-	for i := 0; i < b.N && i < 10; i++ {
+	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
 		client2.Receive(&buf)
 		client1.Send(bytes.NewReader(data))
@@ -411,7 +412,7 @@ func BenchmarkSmallPayload(b *testing.B) {
 	}
 }
 
-func BenchmarkMediumPayload(b *testing.B) {
+func BenchmarkSendReceive_64KB(b *testing.B) {
 	server := NewServer("9302")
 	server.Start()
 	defer server.Stop()
@@ -424,7 +425,7 @@ func BenchmarkMediumPayload(b *testing.B) {
 
 	data := bytes.Repeat([]byte("X"), 64*1024)
 	b.ResetTimer()
-	for i := 0; i < b.N && i < 10; i++ {
+	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
 		client2.Receive(&buf)
 		client1.Send(bytes.NewReader(data))
@@ -433,7 +434,7 @@ func BenchmarkMediumPayload(b *testing.B) {
 	}
 }
 
-func BenchmarkLargePayload(b *testing.B) {
+func BenchmarkSendReceive_1MB(b *testing.B) {
 	server := NewServer("9303")
 	server.Start()
 	defer server.Stop()
@@ -446,7 +447,7 @@ func BenchmarkLargePayload(b *testing.B) {
 
 	data := bytes.Repeat([]byte("X"), 1024*1024)
 	b.ResetTimer()
-	for i := 0; i < b.N && i < 5; i++ {
+	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
 		client2.Receive(&buf)
 		client1.Send(bytes.NewReader(data))
@@ -455,7 +456,7 @@ func BenchmarkLargePayload(b *testing.B) {
 	}
 }
 
-func BenchmarkThroughput(b *testing.B) {
+func BenchmarkSendReceive_Throughput(b *testing.B) {
 	server := NewServer("9304")
 	server.Start()
 	defer server.Stop()
@@ -469,7 +470,7 @@ func BenchmarkThroughput(b *testing.B) {
 	data := bytes.Repeat([]byte("X"), 8192)
 	b.SetBytes(int64(len(data)))
 	b.ResetTimer()
-	for i := 0; i < b.N && i < 10; i++ {
+	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
 		client2.Receive(&buf)
 		client1.Send(bytes.NewReader(data))
@@ -478,7 +479,7 @@ func BenchmarkThroughput(b *testing.B) {
 	}
 }
 
-func BenchmarkParallelConsumers(b *testing.B) {
+func BenchmarkBroadcast_MultipleReceivers(b *testing.B) {
 	server := NewServer("9305")
 	server.Start()
 	defer server.Stop()
@@ -493,7 +494,7 @@ func BenchmarkParallelConsumers(b *testing.B) {
 
 	data := []byte("test")
 	b.ResetTimer()
-	for i := 0; i < b.N && i < 10; i++ {
+	for i := 0; i < b.N; i++ {
 		var buf2, buf3 bytes.Buffer
 		client2.Receive(&buf2)
 		client3.Receive(&buf3)
@@ -504,32 +505,191 @@ func BenchmarkParallelConsumers(b *testing.B) {
 	}
 }
 
-func BenchmarkConcurrentRequests(b *testing.B) {
-	b.Skip("Benchmark needs to be redesigned")
+func BenchmarkSendReceive_Sequential(b *testing.B) {
+	server := NewServer("9306")
+	server.Start()
+	defer server.Stop()
+
+	channelID := uuid.New()
+	client1, _ := NewClient("127.0.0.1:9306", channelID)
+	defer client1.Close()
+	client2, _ := NewClient("127.0.0.1:9306", channelID)
+	defer client2.Close()
+
+	data := []byte("test")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var buf bytes.Buffer
+		client2.Receive(&buf)
+		client1.Send(bytes.NewReader(data))
+		client1.Wait()
+		client2.Wait()
+	}
 }
 
 func BenchmarkMultipleChannels(b *testing.B) {
-	b.Skip("Benchmark needs to be redesigned")
+	server := NewServer("9307")
+	server.Start()
+	defer server.Stop()
+
+	channel1 := uuid.New()
+	channel2 := uuid.New()
+	c1a, _ := NewClient("127.0.0.1:9307", channel1)
+	defer c1a.Close()
+	c1b, _ := NewClient("127.0.0.1:9307", channel1)
+	defer c1b.Close()
+	c2a, _ := NewClient("127.0.0.1:9307", channel2)
+	defer c2a.Close()
+	c2b, _ := NewClient("127.0.0.1:9307", channel2)
+	defer c2b.Close()
+
+	data := []byte("test")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var buf1, buf2 bytes.Buffer
+		c1b.Receive(&buf1)
+		c2b.Receive(&buf2)
+		c1a.Send(bytes.NewReader(data))
+		c2a.Send(bytes.NewReader(data))
+		c1a.Wait()
+		c2a.Wait()
+		c1b.Wait()
+		c2b.Wait()
+	}
 }
 
-func BenchmarkEchoPayload(b *testing.B) {
-	b.Skip("Benchmark needs to be redesigned")
+func BenchmarkRespond_RequestResponse(b *testing.B) {
+	server := NewServer("9308")
+	server.Start()
+	defer server.Stop()
+
+	channelID := uuid.New()
+	client1, _ := NewClient("127.0.0.1:9308", channelID)
+	defer client1.Close()
+	client2, _ := NewClient("127.0.0.1:9308", channelID)
+	defer client2.Close()
+
+	data := []byte("request")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var reqBuf, respBuf bytes.Buffer
+		client1.Send(bytes.NewReader(data))
+		go func() {
+			client2.Respond(&reqBuf, bytes.NewReader([]byte("response")))
+		}()
+		client1.Receive(&respBuf)
+		client1.Wait()
+		client2.Wait()
+	}
 }
 
-func BenchmarkRequestsPerSecond(b *testing.B) {
-	b.Skip("Benchmark needs to be redesigned")
+func BenchmarkSendReceive_RateMetric(b *testing.B) {
+	server := NewServer("9309")
+	server.Start()
+	defer server.Stop()
+
+	channelID := uuid.New()
+	client1, _ := NewClient("127.0.0.1:9309", channelID)
+	defer client1.Close()
+	client2, _ := NewClient("127.0.0.1:9309", channelID)
+	defer client2.Close()
+
+	data := []byte("test")
+	b.ResetTimer()
+	start := time.Now()
+	for i := 0; i < b.N; i++ {
+		var buf bytes.Buffer
+		client2.Receive(&buf)
+		client1.Send(bytes.NewReader(data))
+		client1.Wait()
+		client2.Wait()
+	}
+	duration := time.Since(start)
+	b.ReportMetric(float64(b.N)/duration.Seconds(), "ops/s")
 }
 
-func BenchmarkBandwidth(b *testing.B) {
-	b.Skip("Benchmark needs to be redesigned")
+func BenchmarkSendReceive_Bandwidth(b *testing.B) {
+	server := NewServer("9310")
+	server.Start()
+	defer server.Stop()
+
+	channelID := uuid.New()
+	client1, _ := NewClient("127.0.0.1:9310", channelID)
+	defer client1.Close()
+	client2, _ := NewClient("127.0.0.1:9310", channelID)
+	defer client2.Close()
+
+	data := bytes.Repeat([]byte("X"), 1024*1024)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var buf bytes.Buffer
+		client2.Receive(&buf)
+		client1.Send(bytes.NewReader(data))
+		client1.Wait()
+		client2.Wait()
+	}
 }
 
-func BenchmarkMultipleProviders(b *testing.B) {
-	b.Skip("Benchmark needs to be redesigned")
+func BenchmarkBroadcast_MultipleSenders(b *testing.B) {
+	server := NewServer("9311")
+	server.Start()
+	defer server.Stop()
+
+	channelID := uuid.New()
+	receiver, _ := NewClient("127.0.0.1:9311", channelID)
+	defer receiver.Close()
+	sender1, _ := NewClient("127.0.0.1:9311", channelID)
+	defer sender1.Close()
+	sender2, _ := NewClient("127.0.0.1:9311", channelID)
+	defer sender2.Close()
+
+	data := []byte("test")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var buf bytes.Buffer
+		receiver.Receive(&buf)
+		if i%2 == 0 {
+			sender1.Send(bytes.NewReader(data))
+			sender1.Wait()
+		} else {
+			sender2.Send(bytes.NewReader(data))
+			sender2.Wait()
+		}
+		receiver.Wait()
+	}
 }
 
-func BenchmarkLatency(b *testing.B) {
-	b.Skip("Benchmark needs to be redesigned")
+func BenchmarkSendReceive_Latency(b *testing.B) {
+	server := NewServer("9312")
+	server.Start()
+	defer server.Stop()
+
+	channelID := uuid.New()
+	client1, _ := NewClient("127.0.0.1:9312", channelID)
+	defer client1.Close()
+	client2, _ := NewClient("127.0.0.1:9312", channelID)
+	defer client2.Close()
+
+	data := []byte("test")
+	var latencies []time.Duration
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		start := time.Now()
+		var buf bytes.Buffer
+		client2.Receive(&buf)
+		client1.Send(bytes.NewReader(data))
+		client1.Wait()
+		client2.Wait()
+		latencies = append(latencies, time.Since(start))
+	}
+	if len(latencies) > 0 {
+		var sum time.Duration
+		for _, l := range latencies {
+			sum += l
+		}
+		b.ReportMetric(float64(sum/time.Duration(len(latencies)))/float64(time.Microsecond), "μs/op")
+	}
 }
 
 // ============================================================================

@@ -12,19 +12,24 @@ import (
 )
 
 type Client struct {
-	addr      string
-	clientID  uuid.UUID
-	channelID uuid.UUID
-	ctx       *connctx
-	done      chan struct{}
-	connMu    sync.Mutex
-	incoming  chan *assembledRequest
-	requests  chan *frame
-	responses chan *frame
-	opWg      sync.WaitGroup
-	opErrors  chan error
-	wg        sync.WaitGroup
+	addr       string
+	clientID   uuid.UUID
+	channelID  uuid.UUID
+	ctx        *connctx
+	done       chan struct{}
+	connMu     sync.Mutex
+	requests   chan *frame
+	responses  chan *frame
+	opWg       sync.WaitGroup
+	opErrors   chan error
+	wg         sync.WaitGroup
 	registered chan struct{}
+	sessionMu  sync.Mutex
+	session    *session
+}
+
+type session struct {
+	incoming chan *assembledRequest
 }
 
 type assembledRequest struct {
@@ -47,7 +52,6 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 		clientID:   uuid.New(),
 		channelID:  channelID,
 		done:       make(chan struct{}),
-		incoming:   make(chan *assembledRequest, 16),
 		requests:   make(chan *frame, 1024),
 		responses:  make(chan *frame, 1024),
 		opErrors:   make(chan error, 100),
@@ -158,6 +162,12 @@ func (c *Client) receiveFrame(frameType byte, reqID uuid.UUID) (*frame, error) {
 	}
 }
 func (c *Client) Send(r io.Reader) {
+	c.sessionMu.Lock()
+	if c.session == nil {
+		c.session = &session{incoming: make(chan *assembledRequest, 1)}
+	}
+	c.sessionMu.Unlock()
+	
 	c.opWg.Add(1)
 	go func() {
 		defer c.opWg.Done()
@@ -244,6 +254,12 @@ func (c *Client) waitForAck(reqID uuid.UUID) error {
 }
 
 func (c *Client) Receive(r io.Reader) {
+	c.sessionMu.Lock()
+	if c.session == nil {
+		c.session = &session{incoming: make(chan *assembledRequest, 1)}
+	}
+	c.sessionMu.Unlock()
+	
 	c.opWg.Add(1)
 	go func() {
 		defer c.opWg.Done()
@@ -258,7 +274,7 @@ func (c *Client) Receive(r io.Reader) {
 
 func (c *Client) doReceive(r io.Reader) error {
 	select {
-	case req := <-c.incoming:
+	case req := <-c.session.incoming:
 		if w, ok := r.(io.Writer); ok {
 			w.Write(req.payload)
 		}
@@ -269,6 +285,12 @@ func (c *Client) doReceive(r io.Reader) error {
 }
 
 func (c *Client) Respond(req io.Reader, resp io.Reader) {
+	c.sessionMu.Lock()
+	if c.session == nil {
+		c.session = &session{incoming: make(chan *assembledRequest, 1)}
+	}
+	c.sessionMu.Unlock()
+	
 	c.opWg.Add(1)
 	go func() {
 		defer c.opWg.Done()
@@ -283,7 +305,7 @@ func (c *Client) Respond(req io.Reader, resp io.Reader) {
 
 func (c *Client) doRespond(req io.Reader, resp io.Reader) error {
 	select {
-	case r := <-c.incoming:
+	case r := <-c.session.incoming:
 		if w, ok := req.(io.Writer); ok {
 			w.Write(r.payload)
 		}
@@ -406,16 +428,25 @@ func (c *Client) processIncoming() {
 		c.sendAck(endF.FrameID, reqID)
 		putFrame(endF)
 
-		select {
-		case c.incoming <- &assembledRequest{payload: buf.Bytes()}:
-		case <-c.ctx.closed:
-			return
+		c.sessionMu.Lock()
+		sess := c.session
+		c.sessionMu.Unlock()
+		if sess != nil {
+			select {
+			case sess.incoming <- &assembledRequest{payload: buf.Bytes()}:
+			case <-c.ctx.closed:
+				return
+			}
 		}
 	}
 }
 
 func (c *Client) Wait() error {
 	c.opWg.Wait()
+	
+	c.sessionMu.Lock()
+	c.session = nil
+	c.sessionMu.Unlock()
 	
 	var firstErr error
 	for {
@@ -450,7 +481,6 @@ func (c *Client) Close() error {
 		c.wg.Wait()
 		close(c.ctx.writes)
 		close(c.ctx.errors)
-		close(c.incoming)
 		close(c.requests)
 		close(c.responses)
 		c.ctx.conn = nil
