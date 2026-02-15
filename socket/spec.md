@@ -7,12 +7,13 @@ This document describes the socket package implementation - a TCP-based pub-sub 
 ## Architecture
 
 The socket layer is a **broadcast-only pub-sub system**:
-- `Send(r io.Reader)` - async, broadcasts message to ALL other clients on channel (excludes sender)
-- `Receive(r io.Reader)` - async, receives broadcasts from other clients, writes payload to r (must be io.Writer)
-- `Respond(req io.Reader, resp io.Reader)` - async, receives broadcasts, writes request to req, broadcasts response
-- `Wait() error` - blocks until all async operations complete, returns first error
+- `Stream(in io.Reader, out io.Writer, onComplete func(error))` - unified async method that handles send, receive, and respond patterns
+  - `in != nil, out == nil` - send mode: broadcasts message to ALL other clients on channel (excludes sender)
+  - `in == nil, out != nil` - receive mode: receives broadcasts from other clients, writes payload to out
+  - `in != nil, out != nil` - respond mode: receives broadcast, writes request to out, broadcasts response from in
 - Server broadcasts frames to ALL clients EXCEPT the sender
 - Clients don't need to filter out their own messages (server handles exclusion)
+- Session is recreated on each Stream call to prevent unconsumed message issues
 
 ## Frame Protocol
 
@@ -68,10 +69,12 @@ Client                  Server
   +--registration frame-->|
   | (flagNone)            +--registry.register()
   |                       | (implicit registration)
+  |<--registration ack----+
+  | (flagNone)            | (send ack with flagNone)
   | (client ready)        |
 ```
 
-The client sends a registration frame (startFrame with flagNone) immediately after connecting to trigger server-side registration.
+The client sends a registration frame (startFrame with flagNone) immediately after connecting. Server registers the client and sends back an ack frame with flagNone. Client waits for this ack with 2-second timeout before becoming ready.
 
 ## Frame-by-Frame Acknowledgment Flow
 
@@ -149,9 +152,13 @@ type ackCollector struct {
    - Cleanup collector
 
 **waitForReceivers**:
-- Polls every 100ms for receivers
-- Returns peer list when found
-- Returns nil on timeout
+- Uses notification-based approach (no polling)
+- Immediately returns peer list if receivers exist
+- If no receivers, registers notification channel in `channelNotify` map
+- Blocks on notification channel until receiver joins or timeout
+- When new receiver registers, all waiting senders are notified via their channels
+- Returns peer list when notified and receivers exist
+- Returns nil on timeout or context cancellation
 
 **recordAck** (for `flagAck` frames):
 - Finds ackCollector by FrameID
@@ -162,51 +169,45 @@ type ackCollector struct {
 
 ### API Methods
 
-**Send(r io.Reader)**:
+**Stream(in io.Reader, out io.Writer, onComplete func(error))**:
 ```go
-func (c *Client) Send(r io.Reader) {
+func (c *Client) Stream(in io.Reader, out io.Writer, onComplete func(error)) {
     // Async - returns immediately
+    // Recreates session to prevent unconsumed message issues
     // Spawns goroutine that:
-    //   - Sends start frame + waits for ack
-    //   - Sends chunk frames + waits for ack after each
-    //   - Sends end frame + waits for ack
-    // Errors captured in opErrors channel
+    //   - If in != nil && out != nil: waits for incoming request, writes to out, sends response from in
+    //   - If in != nil && out == nil: sends message from in (broadcast)
+    //   - If in == nil && out != nil: waits for incoming request, writes to out (receive)
+    // Calls onComplete(error) when operation finishes
+    // If onComplete is nil, uses no-op function
 }
 ```
 
-**Receive(r io.Reader)**:
+**Usage Patterns**:
 ```go
-func (c *Client) Receive(r io.Reader) {
-    // Async - returns immediately
-    // Spawns goroutine that:
-    //   - Reads from pre-assembled incoming channel
-    //   - Writes payload to r (must be io.Writer)
-    // Errors captured in opErrors channel
-}
-```
+// Send only
+client.Stream(strings.NewReader("hello"), nil, func(err error) {
+    if err != nil {
+        log.Printf("Send failed: %v", err)
+    }
+})
 
-**Respond(req io.Reader, resp io.Reader)**:
-```go
-func (c *Client) Respond(req io.Reader, resp io.Reader) {
-    // Async - returns immediately
-    // Spawns goroutine that:
-    //   - Reads from pre-assembled incoming channel
-    //   - Writes request payload to req (must be io.Writer)
-    //   - Calls Send(resp) if resp != nil
-    // Errors captured in opErrors channel
-}
-```
+// Receive only
+var buf bytes.Buffer
+client.Stream(nil, &buf, func(err error) {
+    if err != nil {
+        log.Printf("Receive failed: %v", err)
+    }
+    fmt.Println(buf.String())
+})
 
-**Wait() error**:
-```go
-func (c *Client) Wait() error {
-    // Transactional - can be called multiple times
-    // Blocks until all pending async operations complete
-    // Drains opErrors channel and returns first error
-    // Returns nil if no errors
-    // After Wait() returns, new operations can be started
-    // Session persists across Wait() calls for client lifetime
-}
+// Respond (request-response)
+var reqBuf bytes.Buffer
+client.Stream(bytes.NewReader(respData), &reqBuf, func(err error) {
+    if err != nil {
+        log.Printf("Respond failed: %v", err)
+    }
+})
 ```
 
 ### Helper Methods
@@ -248,19 +249,16 @@ func (c *Client) Wait() error {
 ### Concurrency Control
 
 **Session Management**:
-- Session created once at client initialization with buffered `incoming` channel (1024)
-- Session persists for entire client lifetime
-- Operations can be called in any order (Send, Receive, Respond)
-- Multiple Receive/Respond can run concurrently reading from same session
-- `Wait()` does not end or replace session
+- Session recreated on each `Stream()` call with buffered `incoming` channel (1024)
+- Prevents unconsumed message issues by checking for pending messages before recreating
+- Returns error "session has unconsumed messages" if previous session has unread data
+- Each Stream operation gets a fresh session
 
-**Transactional Wait Pattern**:
-- `Send()`, `Receive()`, `Respond()` are all async and return immediately
-- All operations tracked via `opWg` (sync.WaitGroup)
-- Errors collected in `opErrors` channel (buffered 100)
-- `Wait()` blocks until all operations complete and returns first error
-- `Wait()` can be called multiple times - each call waits for pending operations
-- After `Wait()` returns, new operations can be started
+**Callback Pattern**:
+- `Stream()` is async and returns immediately
+- Spawns goroutine to handle the operation
+- Calls `onComplete(error)` callback when operation finishes
+- If onComplete is nil, uses no-op function to prevent panics
 - Background goroutines handle frame routing and request assembly
 
 **Connection Context** (`connctx`):
@@ -268,7 +266,7 @@ func (c *Client) Wait() error {
 - Channels:
   - `writes` - outgoing frames (buffered 1024)
   - `reads` - incoming frames (buffered 1024)
-  - `errors` - priority error frames (buffered 512)
+  - `errors` - priority error frames (buffered 256)
   - `closed` - shutdown signal
 - Writer prioritizes error frames
 - Read timeout: 2 minutes per frame
@@ -278,10 +276,13 @@ func (c *Client) Wait() error {
 - `requests` - incoming request frames with `flagRequest` (buffered 1024)
 - `responses` - ack/error frames without `flagRequest` (buffered 1024)
 - `session.incoming` - assembled requests ready for consumption (buffered 1024)
+- `registered` - unbuffered channel for registration ack signal
+- `done` - unbuffered channel for shutdown signal
 
 **Background Goroutines**:
-- `routeFrames()` - routes frames from `ctx.reads` to `requests` or `responses`
+- `routeFrames()` - routes frames from `ctx.reads` to `requests` or `responses`, handles registration ack
 - `processIncoming()` - assembles incoming requests and queues to `incoming`
+- `idleMonitor()` - monitors client activity and closes connection after 60 seconds of inactivity
 
 ## Buffer Pooling
 
@@ -325,67 +326,92 @@ func (c *Client) Wait() error {
 - **Frame write timeout**: 5 seconds (`defaultFrameWriteTimeout`)
 - **Client timeout**: 5 seconds default (`defaultTimeout`)
 - **ClientTimeoutMs**: 30000ms default in frame header
-- **Receiver wait polling**: 100ms interval
+- **Registration timeout**: 2 seconds (client waits for server registration ack)
+- **Idle timeout**: 60 seconds (client closes after inactivity)
+- **Idle check interval**: 5 seconds (idleMonitor ticker)
 
 ## Usage Examples
 
 **Send only**:
 ```go
 client, _ := NewClient("127.0.0.1:9090", channelID)
-defer client.Close()
+// No explicit close - idleMonitor handles lifecycle
 
-client.Send(strings.NewReader("hello"))
-err := client.Wait() // Block until send completes
+var wg sync.WaitGroup
+wg.Add(1)
+client.Stream(strings.NewReader("hello"), nil, func(err error) {
+    if err != nil {
+        log.Printf("Send failed: %v", err)
+    }
+    wg.Done()
+})
+wg.Wait() // Block until send completes
 ```
 
 **Receive only**:
 ```go
 client, _ := NewClient("127.0.0.1:9090", channelID)
-defer client.Close()
 
 var buf bytes.Buffer
-client.Receive(&buf)
-client.Wait() // Block until receive completes
-fmt.Println(buf.String())
+var wg sync.WaitGroup
+wg.Add(1)
+client.Stream(nil, &buf, func(err error) {
+    if err != nil {
+        log.Printf("Receive failed: %v", err)
+    }
+    fmt.Println(buf.String())
+    wg.Done()
+})
+wg.Wait() // Block until receive completes
 ```
 
 **Respond (request-response)**:
 ```go
 client, _ := NewClient("127.0.0.1:9090", channelID)
-defer client.Close()
 
 var reqBuf bytes.Buffer
-respData := process(reqBuf.Bytes())
-client.Respond(&reqBuf, bytes.NewReader(respData))
-client.Wait() // Block until respond completes
+respData := []byte("response")
+var wg sync.WaitGroup
+wg.Add(1)
+client.Stream(bytes.NewReader(respData), &reqBuf, func(err error) {
+    if err != nil {
+        log.Printf("Respond failed: %v", err)
+    }
+    wg.Done()
+})
+wg.Wait() // Block until respond completes
 ```
 
-**Multiple transactions**:
+**Multiple transactions** (simplified with nil callback):
 ```go
 client, _ := NewClient("127.0.0.1:9090", channelID)
-defer client.Close()
 
 for i := 0; i < 5; i++ {
-    client.Send(strings.NewReader(fmt.Sprintf("msg%d", i)))
-    client.Wait() // Wait for this send to complete
+    client.Stream(strings.NewReader(fmt.Sprintf("msg%d", i)), nil, nil)
 }
+time.Sleep(100 * time.Millisecond) // Allow operations to complete
 ```
 
 ## Key Implementation Details
 
-1. **Implicit Registration**: Client sends registration frame (startFrame with flagNone) on connect
-2. **Server Excludes Sender**: `getChannelPeers()` excludes sender from peer list
-3. **Frame-by-Frame Sync**: Sender blocks after each frame until all acks received
-4. **Ack Aggregation**: N receivers → N acks → 1 ack to sender
-5. **FrameID Tracking**: Each broadcast frame gets unique FrameID for ack correlation
-6. **RequestID Purpose**: Groups frames together (start/chunk/end) and enables frame filtering
-7. **Sequence Field**: Chunk index (31 bits) + isFinal flag (1 bit)
-8. **Async Operations**: All operations (`Send`, `Receive`, `Respond`) are async and return immediately
-9. **Operation Tracking**: `opWg` tracks all async operations, `Wait()` blocks until complete
-10. **Frame Routing**: `routeFrames()` separates request frames from response frames
-11. **No Client-Side Filtering**: Server handles sender exclusion
-12. **Consolidated Frame Methods**: Single `sendFrame()` and `receiveFrame()` for all types
-13. **Error in Payload**: Error frames carry error message in payload field
-14. **Immediate Acknowledgment**: `processIncoming()` sends acks immediately upon receiving frames, not waiting for consumer
-15. **Transactional Wait**: `Wait()` is transactional - blocks until operations complete, can be called multiple times
-16. **Session Lifecycle**: Session created at initialization, persists for client lifetime, shared by all operations
+1. **Implicit Registration**: Client sends registration frame (startFrame with flagNone) on connect, waits for ack with 2s timeout
+2. **Registration Ack**: Server sends ack frame with flagNone after registration, client detects via `routeFrames()`
+3. **Server Excludes Sender**: `getChannelPeersLocked()` excludes sender from peer list
+4. **Frame-by-Frame Sync**: Sender blocks after each frame until all acks received
+5. **Ack Aggregation**: N receivers → N acks → 1 ack to sender
+6. **FrameID Tracking**: Each broadcast frame gets unique FrameID for ack correlation
+7. **RequestID Purpose**: Groups frames together (start/chunk/end) and enables frame filtering
+8. **Sequence Field**: Chunk index (31 bits) + isFinal flag (1 bit) using `sequenceFinalFlag = 0x80000000`
+9. **Unified API**: Single `Stream()` method handles send, receive, and respond patterns based on in/out parameters
+10. **Callback Pattern**: Operations use `onComplete(error)` callback instead of Wait() pattern
+11. **Frame Routing**: `routeFrames()` separates request frames from response frames, handles registration ack
+12. **No Client-Side Filtering**: Server handles sender exclusion
+13. **Consolidated Frame Methods**: Single `sendFrame()` for all frame types
+14. **Error in Payload**: Error frames carry error message in payload field
+15. **Immediate Acknowledgment**: `processIncoming()` sends acks immediately upon receiving frames, not waiting for consumer
+16. **Session Recreation**: Session recreated on each `Stream()` call to prevent unconsumed message issues
+17. **Idle Management**: `idleMonitor()` closes client after 60s inactivity, checks every 5s
+18. **Activity Tracking**: `updateActivity()` called on each Stream() to reset idle timer
+19. **No Public Close**: Client lifecycle managed by idleMonitor, no public Close() method
+20. **Channel Notification**: Registry uses `channelNotify` map to wake up senders when receivers join
+21. **TCP Optimizations**: NoDelay enabled, 2MB read/write buffers on both client and server

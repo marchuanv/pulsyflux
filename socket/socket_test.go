@@ -47,15 +47,23 @@ func TestClientEmptyPayload(t *testing.T) {
 	client2, _ := NewClient("127.0.0.1:9092", channelID)
 
 	var buf bytes.Buffer
+	var receiveErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
 	client2.Stream(nil, &buf, func(err error) {
-		if err != nil {
-			t.Errorf("Receive failed: %v", err)
-		}
-		if buf.Len() != 0 {
-			t.Errorf("Expected empty payload, got %d bytes", buf.Len())
-		}
+		receiveErr = err
+		wg.Done()
 	})
 	client1.Stream(strings.NewReader(""), nil, nil)
+	
+	wg.Wait()
+	
+	if receiveErr != nil {
+		t.Errorf("Receive failed: %v", receiveErr)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("Expected empty payload, got %d bytes", buf.Len())
+	}
 }
 
 func TestClientLargePayload(t *testing.T) {
@@ -71,16 +79,24 @@ func TestClientLargePayload(t *testing.T) {
 
 	largeData := bytes.Repeat([]byte("X"), 5*1024*1024)
 	var buf bytes.Buffer
+	var receiveErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
 
 	client2.Stream(nil, &buf, func(err error) {
-		if err != nil {
-			t.Errorf("Receive failed: %v", err)
-		}
-		if buf.Len() != len(largeData) {
-			t.Errorf("Expected %d bytes, got %d", len(largeData), buf.Len())
-		}
+		receiveErr = err
+		wg.Done()
 	})
 	client1.Stream(bytes.NewReader(largeData), nil, nil)
+	
+	wg.Wait()
+	
+	if receiveErr != nil {
+		t.Errorf("Receive failed: %v", receiveErr)
+	}
+	if buf.Len() != len(largeData) {
+		t.Errorf("Expected %d bytes, got %d", len(largeData), buf.Len())
+	}
 }
 
 func TestClientBoundaryPayloadSizes(t *testing.T) {
@@ -112,24 +128,25 @@ func TestClientBoundaryPayloadSizes(t *testing.T) {
 			client2, _ := NewClient("127.0.0.1:9101", channelID)
 
 			data := bytes.Repeat([]byte("A"), tc.size)
-			var reqBuf, respBuf bytes.Buffer
+			var buf bytes.Buffer
+			var receiveErr error
+			var wg sync.WaitGroup
+			wg.Add(1)
 
-			client2.Stream(bytes.NewReader(data), &reqBuf, func(err error) {
-				if err != nil {
-					t.Errorf("Respond failed: %v", err)
-				}
-				if reqBuf.Len() != tc.size {
-					t.Errorf("Expected %d bytes, got %d", tc.size, reqBuf.Len())
-				}
+			client2.Stream(nil, &buf, func(err error) {
+				receiveErr = err
+				wg.Done()
 			})
-			client1.Stream(bytes.NewReader(data), &respBuf, func(err error) {
-				if err != nil {
-					t.Errorf("Respond failed: %v", err)
-				}
-				if respBuf.Len() != tc.size {
-					t.Errorf("Expected %d bytes response, got %d", tc.size, respBuf.Len())
-				}
-			})
+			client1.Stream(bytes.NewReader(data), nil, nil)
+			
+			wg.Wait()
+			
+			if receiveErr != nil {
+				t.Errorf("Receive failed: %v", receiveErr)
+			}
+			if buf.Len() != tc.size {
+				t.Errorf("Expected %d bytes, got %d", tc.size, buf.Len())
+			}
 		})
 	}
 }
@@ -168,17 +185,25 @@ func TestClientMultipleConcurrent(t *testing.T) {
 	client3, _ := NewClient("127.0.0.1:9096", channelID)
 
 	var buf2, buf3 bytes.Buffer
+	var wg sync.WaitGroup
+	wg.Add(2)
+
 	client2.Stream(nil, &buf2, func(err error) {
-		if buf2.String() != "broadcast" {
-			t.Errorf("Client2 expected 'broadcast', got '%s'", buf2.String())
-		}
+		wg.Done()
 	})
 	client3.Stream(nil, &buf3, func(err error) {
-		if buf3.String() != "broadcast" {
-			t.Errorf("Client3 expected 'broadcast', got '%s'", buf3.String())
-		}
+		wg.Done()
 	})
 	client1.Stream(strings.NewReader("broadcast"), nil, nil)
+	
+	wg.Wait()
+	
+	if buf2.String() != "broadcast" {
+		t.Errorf("Client2 expected 'broadcast', got '%s'", buf2.String())
+	}
+	if buf3.String() != "broadcast" {
+		t.Errorf("Client3 expected 'broadcast', got '%s'", buf3.String())
+	}
 }
 
 func TestClientReadError(t *testing.T) {
@@ -195,12 +220,20 @@ func TestClientReadError(t *testing.T) {
 	var buf bytes.Buffer
 	client2.Stream(nil, &buf, nil)
 
+	var readErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
 	errReader := &errorReader{err: errors.New("read error")}
 	client1.Stream(errReader, nil, func(err error) {
-		if err == nil {
-			t.Error("Expected read error")
-		}
+		readErr = err
+		wg.Done()
 	})
+	
+	wg.Wait()
+	
+	if readErr == nil {
+		t.Error("Expected read error")
+	}
 }
 
 func TestTimeoutNoReceivers(t *testing.T) {
@@ -350,10 +383,14 @@ func TestConnectionCleanup(t *testing.T) {
 	client2, _ := NewClient("127.0.0.1:9602", channelID)
 
 	var buf bytes.Buffer
-	client2.Stream(nil, &buf, nil)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	client2.Stream(nil, &buf, func(err error) {
+		wg.Done()
+	})
 	client1.Stream(strings.NewReader("test"), nil, nil)
 
-	time.Sleep(50 * time.Millisecond)
+	wg.Wait()
 
 	client3, err := NewClient("127.0.0.1:9602", channelID)
 	if err != nil {
@@ -374,12 +411,17 @@ func TestMemoryStressLargePayloads(t *testing.T) {
 	data := bytes.Repeat([]byte("X"), 5*1024*1024)
 	for i := 0; i < 10; i++ {
 		var buf bytes.Buffer
+		iter := i
+		var wg sync.WaitGroup
+		wg.Add(1)
 		client2.Stream(nil, &buf, func(err error) {
 			if buf.Len() != len(data) {
-				t.Fatalf("Iteration %d: expected %d bytes, got %d", i, len(data), buf.Len())
+				t.Fatalf("Iteration %d: expected %d bytes, got %d", iter, len(data), buf.Len())
 			}
+			wg.Done()
 		})
 		client1.Stream(bytes.NewReader(data), nil, nil)
+		wg.Wait()
 	}
 }
 
