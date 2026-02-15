@@ -23,6 +23,7 @@ type Client struct {
 	opWg      sync.WaitGroup
 	opErrors  chan error
 	wg        sync.WaitGroup
+	waitOnce  sync.Once
 }
 
 type assembledRequest struct {
@@ -152,7 +153,7 @@ func (c *Client) receiveFrame(frameType byte, reqID uuid.UUID) (*frame, error) {
 
 
 
-func (c *Client) Send(r io.Reader) error {
+func (c *Client) Send(r io.Reader) {
 	c.opWg.Add(1)
 	go func() {
 		defer c.opWg.Done()
@@ -163,7 +164,6 @@ func (c *Client) Send(r io.Reader) error {
 			}
 		}
 	}()
-	return nil
 }
 
 func (c *Client) doSend(r io.Reader) error {
@@ -239,7 +239,7 @@ func (c *Client) waitForAck(reqID uuid.UUID) error {
 	}
 }
 
-func (c *Client) Receive(r io.Reader) error {
+func (c *Client) Receive(r io.Reader) {
 	c.opWg.Add(1)
 	go func() {
 		defer c.opWg.Done()
@@ -250,7 +250,6 @@ func (c *Client) Receive(r io.Reader) error {
 			}
 		}
 	}()
-	return nil
 }
 
 func (c *Client) doReceive(r io.Reader) error {
@@ -266,7 +265,7 @@ func (c *Client) doReceive(r io.Reader) error {
 	}
 }
 
-func (c *Client) Respond(req io.Reader, resp io.Reader) error {
+func (c *Client) Respond(req io.Reader, resp io.Reader) {
 	c.opWg.Add(1)
 	go func() {
 		defer c.opWg.Done()
@@ -277,7 +276,6 @@ func (c *Client) Respond(req io.Reader, resp io.Reader) error {
 			}
 		}
 	}()
-	return nil
 }
 
 func (c *Client) doRespond(req io.Reader, resp io.Reader) error {
@@ -424,13 +422,17 @@ func (c *Client) processIncoming() {
 }
 
 func (c *Client) Wait() error {
-	c.opWg.Wait()
-	select {
-	case err := <-c.opErrors:
-		return err
-	default:
-		return nil
-	}
+	var firstErr error
+	c.waitOnce.Do(func() {
+		c.opWg.Wait()
+		close(c.opErrors)
+		for err := range c.opErrors {
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	})
+	return firstErr
 }
 
 func (c *Client) Close() error {

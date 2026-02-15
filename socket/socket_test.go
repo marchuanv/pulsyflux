@@ -86,18 +86,18 @@ func TestClientEmptyPayload(t *testing.T) {
 	}
 	defer client2.Close()
 
-	// Client1 sends
+	var buf bytes.Buffer
 	client1.Send(strings.NewReader(""))
+	client2.Receive(&buf)
 
-	// Client2 receives
-	err := client2.Receive(func(incoming io.Reader) {
-		data, _ := io.ReadAll(incoming)
-		if len(data) != 0 {
-			t.Errorf("Expected empty payload, got %d bytes", len(data))
-		}
-	})
-	if err != nil {
+	if err := client1.Wait(); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if err := client2.Wait(); err != nil {
 		t.Fatalf("Receive failed: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("Expected empty payload, got %d bytes", buf.Len())
 	}
 }
 
@@ -122,19 +122,19 @@ func TestClientLargePayload(t *testing.T) {
 	defer client2.Close()
 
 	largeData := bytes.Repeat([]byte("X"), 5*1024*1024)
+	var buf bytes.Buffer
 
-	// Client1 sends
 	client1.Send(bytes.NewReader(largeData))
+	client2.Receive(&buf)
 
-	// Client2 receives
-	err := client2.Receive(func(incoming io.Reader) {
-		data, _ := io.ReadAll(incoming)
-		if len(data) != len(largeData) {
-			t.Errorf("Expected %d bytes, got %d", len(largeData), len(data))
-		}
-	})
-	if err != nil {
+	if err := client1.Wait(); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if err := client2.Wait(); err != nil {
 		t.Fatalf("Receive failed: %v", err)
+	}
+	if buf.Len() != len(largeData) {
+		t.Errorf("Expected %d bytes, got %d", len(largeData), buf.Len())
 	}
 }
 
@@ -176,31 +176,24 @@ func TestClientBoundaryPayloadSizes(t *testing.T) {
 			defer client2.Close()
 
 			data := bytes.Repeat([]byte("A"), tc.size)
+			var reqBuf, respBuf bytes.Buffer
 
-			// Client1 sends
 			client1.Send(bytes.NewReader(data))
+			client2.Respond(&reqBuf, bytes.NewReader(reqBuf.Bytes()))
+			client1.Receive(&respBuf)
 
-			// Client2 responds
-			err := client2.Respond(func(req io.Reader) io.Reader {
-				reqData, _ := io.ReadAll(req)
-				if len(reqData) != tc.size {
-					t.Errorf("Expected %d bytes, got %d", tc.size, len(reqData))
-				}
-				return bytes.NewReader(reqData)
-			})
-			if err != nil {
-				t.Fatalf("Respond failed: %v", err)
+			if err := client1.Wait(); err != nil {
+				t.Fatalf("Client1 failed: %v", err)
+			}
+			if err := client2.Wait(); err != nil {
+				t.Fatalf("Client2 failed: %v", err)
 			}
 
-			// Client1 receives response
-			err = client1.Receive(func(resp io.Reader) {
-				respData, _ := io.ReadAll(resp)
-				if len(respData) != tc.size {
-					t.Errorf("Expected %d bytes response, got %d", tc.size, len(respData))
-				}
-			})
-			if err != nil {
-				t.Fatalf("Receive failed: %v", err)
+			if reqBuf.Len() != tc.size {
+				t.Errorf("Expected %d bytes, got %d", tc.size, reqBuf.Len())
+			}
+			if respBuf.Len() != tc.size {
+				t.Errorf("Expected %d bytes response, got %d", tc.size, respBuf.Len())
 			}
 		})
 	}
@@ -230,29 +223,24 @@ func TestClientSequentialRequests(t *testing.T) {
 	}
 	defer client2.Close()
 
-	count := 5
-	for i := 0; i < count; i++ {
+	for i := 0; i < 5; i++ {
 		msg := "msg" + string(rune('0'+i))
-		
-		// Client1 sends
+		var reqBuf, respBuf bytes.Buffer
+
 		client1.Send(strings.NewReader(msg))
-		
-		// Client2 responds
-		client2.Respond(func(req io.Reader) io.Reader {
-			data, _ := io.ReadAll(req)
-			return strings.NewReader(string(data) + "-echo")
-		})
-		
-		// Client1 receives response
-		err := client1.Receive(func(resp io.Reader) {
-			respData, _ := io.ReadAll(resp)
-			expected := msg + "-echo"
-			if string(respData) != expected {
-				t.Errorf("Expected '%s', got '%s'", expected, string(respData))
-			}
-		})
-		if err != nil {
-			t.Fatalf("Receive %d failed: %v", i, err)
+		client2.Respond(&reqBuf, strings.NewReader(reqBuf.String()+"-echo"))
+		client1.Receive(&respBuf)
+
+		if err := client1.Wait(); err != nil {
+			t.Fatalf("Client1 %d failed: %v", i, err)
+		}
+		if err := client2.Wait(); err != nil {
+			t.Fatalf("Client2 %d failed: %v", i, err)
+		}
+
+		expected := msg + "-echo"
+		if respBuf.String() != expected {
+			t.Errorf("Expected '%s', got '%s'", expected, respBuf.String())
 		}
 	}
 }
@@ -285,20 +273,13 @@ func TestClientReadError(t *testing.T) {
 	}
 	defer client2.Close()
 
-	incoming := make(chan io.Reader, 1)
-	outgoing := make(chan io.Reader, 1)
-
-	go func() {
-		client2.Respond(func(req io.Reader) io.Reader {
-			return nil
-		})
-	}()
+	var buf bytes.Buffer
+	client2.Respond(&buf, nil)
 
 	errReader := &errorReader{err: errors.New("read error")}
-
 	client1.Send(errReader)
-	err = client1.Wait()
-	if err == nil {
+
+	if err := client1.Wait(); err == nil {
 		t.Error("Expected read error")
 	}
 }
@@ -325,21 +306,12 @@ func TestClientSelfReceive(t *testing.T) {
 	}
 	defer client.Close()
 
-	incoming := make(chan io.Reader, 1)
-	recvStarted := make(chan struct{})
-
-	go func() {
-		close(recvStarted)
-		client.Receive()
-	}()
-
-	<-recvStarted
-	time.Sleep(50 * time.Millisecond)
-
+	var buf bytes.Buffer
+	client.Receive(&buf)
 	client.Send(strings.NewReader("self-test"))
-	err = client.Wait()
-	if err != nil {
-		t.Logf("Send blocked as expected (operations serialized): %v", err)
+
+	if err := client.Wait(); err != nil {
+		t.Logf("Expected error (no other receivers): %v", err)
 	}
 }
 
@@ -363,17 +335,17 @@ func TestClientZeroTimeout(t *testing.T) {
 	}
 	defer client2.Close()
 
-	// Client1 sends
+	var reqBuf, respBuf bytes.Buffer
 	client1.Send(strings.NewReader("test"))
+	client2.Respond(&reqBuf, strings.NewReader("ok"))
+	client1.Receive(&respBuf)
 
-	// Client2 responds
-	client2.Respond(func(req io.Reader) io.Reader {
-		io.ReadAll(req)
-		return strings.NewReader("ok")
-	})
-
-	// Client1 receives response
-	client1.Receive()
+	if err := client1.Wait(); err != nil {
+		t.Fatalf("Client1 failed: %v", err)
+	}
+	if err := client2.Wait(); err != nil {
+		t.Fatalf("Client2 failed: %v", err)
+	}
 }
 
 // ============================================================================
@@ -524,16 +496,18 @@ func testSendThenReceive(t *testing.T, server *Server, channelID uuid.UUID) {
 	client2, _ := NewClient("127.0.0.1:9500", channelID)
 	defer client2.Close()
 
+	var buf bytes.Buffer
 	client1.Send(strings.NewReader("test"))
+	client2.Receive(&buf)
 
-	incoming, err := client2.Receive()
-	if err != nil {
+	if err := client1.Wait(); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if err := client2.Wait(); err != nil {
 		t.Fatalf("Receive failed: %v", err)
 	}
-
-	data, _ := io.ReadAll(incoming)
-	if string(data) != "test" {
-		t.Errorf("Expected 'test', got '%s'", string(data))
+	if buf.String() != "test" {
+		t.Errorf("Expected 'test', got '%s'", buf.String())
 	}
 }
 
@@ -543,30 +517,18 @@ func testReceiveThenSend(t *testing.T, server *Server, channelID uuid.UUID) {
 	client2, _ := NewClient("127.0.0.1:9500", channelID)
 	defer client2.Close()
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	var incoming io.Reader
-	var err error
+	var buf bytes.Buffer
+	client2.Receive(&buf)
+	client1.Send(strings.NewReader("test"))
 
-	go func() {
-		defer wg.Done()
-		incoming, err = client2.Receive()
-	}()
-
-	go func() {
-		defer wg.Done()
-		client1.Send(strings.NewReader("test"))
-	}()
-
-	wg.Wait()
-
-	if err != nil {
+	if err := client1.Wait(); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if err := client2.Wait(); err != nil {
 		t.Fatalf("Receive failed: %v", err)
 	}
-
-	data, _ := io.ReadAll(incoming)
-	if string(data) != "test" {
-		t.Errorf("Expected 'test', got '%s'", string(data))
+	if buf.String() != "test" {
+		t.Errorf("Expected 'test', got '%s'", buf.String())
 	}
 }
 
@@ -576,21 +538,19 @@ func testSendThenRespond(t *testing.T, server *Server, channelID uuid.UUID) {
 	client2, _ := NewClient("127.0.0.1:9500", channelID)
 	defer client2.Close()
 
+	var reqBuf, respBuf bytes.Buffer
 	client1.Send(strings.NewReader("req"))
+	client2.Respond(&reqBuf, strings.NewReader(reqBuf.String()+"-resp"))
+	client1.Receive(&respBuf)
 
-	client2.Respond(func(req io.Reader) io.Reader {
-		data, _ := io.ReadAll(req)
-		return strings.NewReader(string(data) + "-resp")
-	})
-
-	incoming, err := client1.Receive()
-	if err != nil {
-		t.Fatalf("Receive failed: %v", err)
+	if err := client1.Wait(); err != nil {
+		t.Fatalf("Client1 failed: %v", err)
 	}
-
-	data, _ := io.ReadAll(incoming)
-	if string(data) != "req-resp" {
-		t.Errorf("Expected 'req-resp', got '%s'", string(data))
+	if err := client2.Wait(); err != nil {
+		t.Fatalf("Client2 failed: %v", err)
+	}
+	if respBuf.String() != "req-resp" {
+		t.Errorf("Expected 'req-resp', got '%s'", respBuf.String())
 	}
 }
 
@@ -600,32 +560,19 @@ func testRespondThenSend(t *testing.T, server *Server, channelID uuid.UUID) {
 	client2, _ := NewClient("127.0.0.1:9500", channelID)
 	defer client2.Close()
 
-	var wg sync.WaitGroup
-	wg.Add(2)
+	var reqBuf, respBuf bytes.Buffer
+	client2.Respond(&reqBuf, strings.NewReader(reqBuf.String()+"-resp"))
+	client1.Send(strings.NewReader("req"))
+	client1.Receive(&respBuf)
 
-	go func() {
-		defer wg.Done()
-		client2.Respond(func(req io.Reader) io.Reader {
-			data, _ := io.ReadAll(req)
-			return strings.NewReader(string(data) + "-resp")
-		})
-	}()
-
-	go func() {
-		defer wg.Done()
-		client1.Send(strings.NewReader("req"))
-	}()
-
-	wg.Wait()
-
-	incoming, err := client1.Receive()
-	if err != nil {
-		t.Fatalf("Receive failed: %v", err)
+	if err := client1.Wait(); err != nil {
+		t.Fatalf("Client1 failed: %v", err)
 	}
-
-	data, _ := io.ReadAll(incoming)
-	if string(data) != "req-resp" {
-		t.Errorf("Expected 'req-resp', got '%s'", string(data))
+	if err := client2.Wait(); err != nil {
+		t.Fatalf("Client2 failed: %v", err)
+	}
+	if respBuf.String() != "req-resp" {
+		t.Errorf("Expected 'req-resp', got '%s'", respBuf.String())
 	}
 }
 
@@ -635,24 +582,19 @@ func testConcurrentSendReceive(t *testing.T, server *Server, channelID uuid.UUID
 	client2, _ := NewClient("127.0.0.1:9500", channelID)
 	defer client2.Close()
 
-	var wg sync.WaitGroup
-	wg.Add(2)
+	var buf bytes.Buffer
+	client1.Send(strings.NewReader("test"))
+	client2.Receive(&buf)
 
-	go func() {
-		defer wg.Done()
-		client1.Send(strings.NewReader("test"))
-	}()
-
-	go func() {
-		defer wg.Done()
-		incoming, _ := client2.Receive()
-		data, _ := io.ReadAll(incoming)
-		if string(data) != "test" {
-			t.Errorf("Expected 'test', got '%s'", string(data))
-		}
-	}()
-
-	wg.Wait()
+	if err := client1.Wait(); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if err := client2.Wait(); err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+	if buf.String() != "test" {
+		t.Errorf("Expected 'test', got '%s'", buf.String())
+	}
 }
 
 func testConcurrentSendRespond(t *testing.T, server *Server, channelID uuid.UUID) {
@@ -661,32 +603,20 @@ func testConcurrentSendRespond(t *testing.T, server *Server, channelID uuid.UUID
 	client2, _ := NewClient("127.0.0.1:9500", channelID)
 	defer client2.Close()
 
-	var wg sync.WaitGroup
-	wg.Add(3)
+	var reqBuf, respBuf bytes.Buffer
+	client1.Send(strings.NewReader("req"))
+	client2.Respond(&reqBuf, strings.NewReader(reqBuf.String()+"-resp"))
+	client1.Receive(&respBuf)
 
-	go func() {
-		defer wg.Done()
-		client1.Send(strings.NewReader("req"))
-	}()
-
-	go func() {
-		defer wg.Done()
-		client2.Respond(func(req io.Reader) io.Reader {
-			data, _ := io.ReadAll(req)
-			return strings.NewReader(string(data) + "-resp")
-		})
-	}()
-
-	go func() {
-		defer wg.Done()
-		incoming, _ := client1.Receive()
-		data, _ := io.ReadAll(incoming)
-		if string(data) != "req-resp" {
-			t.Errorf("Expected 'req-resp', got '%s'", string(data))
-		}
-	}()
-
-	wg.Wait()
+	if err := client1.Wait(); err != nil {
+		t.Fatalf("Client1 failed: %v", err)
+	}
+	if err := client2.Wait(); err != nil {
+		t.Fatalf("Client2 failed: %v", err)
+	}
+	if respBuf.String() != "req-resp" {
+		t.Errorf("Expected 'req-resp', got '%s'", respBuf.String())
+	}
 }
 
 func TestTimeoutWithSlowReceivers(t *testing.T) {
@@ -701,16 +631,12 @@ func TestTimeoutWithSlowReceivers(t *testing.T) {
 	subscriber, _ := NewClient("127.0.0.1:9201", channelID)
 	defer subscriber.Close()
 
-	// Send message but don't call Receive() - simulates slow receiver
 	publisher.Send(strings.NewReader("test"))
-
-	// Wait longer than timeout to ensure timeout occurs
 	time.Sleep(6 * time.Second)
 
-	// Now try to receive - should be too late
-	subscriber.Receive()
+	var buf bytes.Buffer
+	subscriber.Receive(&buf)
 
-	// Check if publisher got timeout error
 	err := publisher.Wait()
 	if err == nil {
 		t.Fatal("Expected timeout error")
@@ -732,10 +658,8 @@ func TestTimeoutNoResponse(t *testing.T) {
 	subscriber, _ := NewClient("127.0.0.1:9202", channelID)
 	defer subscriber.Close()
 
-	// Send message and never call Receive() - receiver never acks
 	publisher.Send(strings.NewReader("test"))
 
-	// Wait for timeout
 	err := publisher.Wait()
 	if err == nil {
 		t.Fatal("Expected timeout error")

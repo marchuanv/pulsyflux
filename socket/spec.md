@@ -7,9 +7,9 @@ This document describes the socket package implementation - a TCP-based pub-sub 
 ## Architecture
 
 The socket layer is a **broadcast-only pub-sub system**:
-- `Send(r io.Reader) error` - async, broadcasts message to ALL other clients on channel (excludes sender)
-- `Receive(r io.Reader) error` - async, receives broadcasts from other clients, writes payload to r (must be io.Writer)
-- `Respond(req io.Reader, resp io.Reader) error` - async, receives broadcasts, writes request to req, broadcasts response
+- `Send(r io.Reader)` - async, broadcasts message to ALL other clients on channel (excludes sender)
+- `Receive(r io.Reader)` - async, receives broadcasts from other clients, writes payload to r (must be io.Writer)
+- `Respond(req io.Reader, resp io.Reader)` - async, receives broadcasts, writes request to req, broadcasts response
 - `Wait() error` - blocks until all async operations complete, returns first error
 - Server broadcasts frames to ALL clients EXCEPT the sender
 - Clients don't need to filter out their own messages (server handles exclusion)
@@ -162,35 +162,33 @@ type ackCollector struct {
 
 ### API Methods
 
-**Send(r io.Reader) error**:
+**Send(r io.Reader)**:
 ```go
-func (c *Client) Send(r io.Reader) error {
+func (c *Client) Send(r io.Reader) {
     // Async - returns immediately
     // Spawns goroutine that:
     //   - Sends start frame + waits for ack
     //   - Sends chunk frames + waits for ack after each
     //   - Sends end frame + waits for ack
     // Errors captured in opErrors channel
-    return nil
 }
 ```
 
-**Receive(r io.Reader) error**:
+**Receive(r io.Reader)**:
 ```go
-func (c *Client) Receive(r io.Reader) error {
+func (c *Client) Receive(r io.Reader) {
     // Async - returns immediately
     // Spawns goroutine that:
     //   - Reads from pre-assembled incoming channel
     //   - Writes payload to r (must be io.Writer)
     //   - Signals ackDone to send acknowledgments
     // Errors captured in opErrors channel
-    return nil
 }
 ```
 
-**Respond(req io.Reader, resp io.Reader) error**:
+**Respond(req io.Reader, resp io.Reader)**:
 ```go
-func (c *Client) Respond(req io.Reader, resp io.Reader) error {
+func (c *Client) Respond(req io.Reader, resp io.Reader) {
     // Async - returns immediately
     // Spawns goroutine that:
     //   - Reads from pre-assembled incoming channel
@@ -198,7 +196,6 @@ func (c *Client) Respond(req io.Reader, resp io.Reader) error {
     //   - Signals ackDone to send acknowledgments
     //   - Calls Send(resp) if resp != nil
     // Errors captured in opErrors channel
-    return nil
 }
 ```
 
