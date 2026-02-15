@@ -202,11 +202,10 @@ func (c *Client) Respond(req io.Reader, resp io.Reader) {
 func (c *Client) Wait() error {
     // Transactional - can be called multiple times
     // Blocks until all pending async operations complete
-    // Checks for unconsumed messages in session (returns error if found)
-    // Ends current session and creates new session for next operations
     // Drains opErrors channel and returns first error
     // Returns nil if no errors
-    // After Wait() returns, new operations can be started with fresh session
+    // After Wait() returns, new operations can be started
+    // Session persists across Wait() calls for client lifetime
 }
 ```
 
@@ -249,12 +248,11 @@ func (c *Client) Wait() error {
 ### Concurrency Control
 
 **Session Management**:
-- Session created at client initialization with buffered `incoming` channel (1024)
-- Session persists across multiple Send/Receive/Respond operations
-- `Wait()` ends current session and creates new session
-- `Wait()` validates no unconsumed messages remain (returns error if found)
+- Session created once at client initialization with buffered `incoming` channel (1024)
+- Session persists for entire client lifetime
 - Operations can be called in any order (Send, Receive, Respond)
 - Multiple Receive/Respond can run concurrently reading from same session
+- `Wait()` does not end or replace session
 
 **Transactional Wait Pattern**:
 - `Send()`, `Receive()`, `Respond()` are all async and return immediately
@@ -389,5 +387,5 @@ for i := 0; i < 5; i++ {
 12. **Consolidated Frame Methods**: Single `sendFrame()` and `receiveFrame()` for all types
 13. **Error in Payload**: Error frames carry error message in payload field
 14. **Immediate Acknowledgment**: `processIncoming()` sends acks immediately upon receiving frames, not waiting for consumer
-15. **Transactional Wait**: `Wait()` is transactional - ends current session, validates no unconsumed messages, creates new session for next operations
-16. **Session Lifecycle**: Session created at initialization, persists across operations, ends on Wait(), new session created for next transaction
+15. **Transactional Wait**: `Wait()` is transactional - blocks until operations complete, can be called multiple times
+16. **Session Lifecycle**: Session created at initialization, persists for client lifetime, shared by all operations

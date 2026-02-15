@@ -3,7 +3,9 @@ package socket
 import (
 	"bytes"
 	"errors"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -697,31 +699,217 @@ func BenchmarkSendReceive_Latency(b *testing.B) {
 // ============================================================================
 
 func TestNoGoroutineLeak(t *testing.T) {
-	t.Skip("Test needs to be redesigned")
+	initial := runtime.NumGoroutine()
+
+	server := NewServer("9600")
+	server.Start()
+
+	channelID := uuid.New()
+	for i := 0; i < 10; i++ {
+		client1, _ := NewClient("127.0.0.1:9600", channelID)
+		client2, _ := NewClient("127.0.0.1:9600", channelID)
+		
+		var buf bytes.Buffer
+		client2.Receive(&buf)
+		client1.Send(strings.NewReader("test"))
+		
+		err1 := client1.Wait()
+		err2 := client2.Wait()
+		
+		if err1 != nil {
+			t.Fatalf("client1.Wait() error: %v", err1)
+		}
+		if err2 != nil {
+			t.Fatalf("client2.Wait() error: %v", err2)
+		}
+		
+		client1.Close()
+		client2.Close()
+	}
+
+	server.Stop()
+	time.Sleep(100 * time.Millisecond)
+	runtime.GC()
+	time.Sleep(100 * time.Millisecond)
+
+	final := runtime.NumGoroutine()
+	if final > initial+2 {
+		t.Errorf("Goroutine leak detected: initial=%d, final=%d", initial, final)
+	}
 }
 
 func TestNoMemoryLeak(t *testing.T) {
-	t.Skip("Test needs to be redesigned")
+	server := NewServer("9601")
+	server.Start()
+	defer server.Stop()
+
+	var m1, m2 runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m1)
+
+	channelID := uuid.New()
+	for i := 0; i < 100; i++ {
+		client1, _ := NewClient("127.0.0.1:9601", channelID)
+		client2, _ := NewClient("127.0.0.1:9601", channelID)
+		var buf bytes.Buffer
+		client2.Receive(&buf)
+		client1.Send(strings.NewReader("test"))
+		client1.Wait()
+		client2.Wait()
+		client1.Close()
+		client2.Close()
+	}
+
+	runtime.GC()
+	runtime.ReadMemStats(&m2)
+
+	growth := m2.Alloc - m1.Alloc
+	if growth > 1024*1024 {
+		t.Errorf("Memory leak detected: growth=%d bytes", growth)
+	}
 }
 
 func TestConnectionCleanup(t *testing.T) {
-	t.Skip("Test needs to be redesigned")
+	server := NewServer("9602")
+	server.Start()
+	defer server.Stop()
+
+	channelID := uuid.New()
+	client1, _ := NewClient("127.0.0.1:9602", channelID)
+	client2, _ := NewClient("127.0.0.1:9602", channelID)
+
+	var buf bytes.Buffer
+	client2.Receive(&buf)
+	client1.Send(strings.NewReader("test"))
+	client1.Wait()
+	client2.Wait()
+
+	client1.Close()
+	client2.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	client3, err := NewClient("127.0.0.1:9602", channelID)
+	if err != nil {
+		t.Fatalf("Failed to create client after cleanup: %v", err)
+	}
+	defer client3.Close()
 }
 
 func TestMemoryStressLargePayloads(t *testing.T) {
-	t.Skip("Test needs to be redesigned")
+	server := NewServer("9603")
+	server.Start()
+	defer server.Stop()
+
+	channelID := uuid.New()
+	client1, _ := NewClient("127.0.0.1:9603", channelID)
+	defer client1.Close()
+	client2, _ := NewClient("127.0.0.1:9603", channelID)
+	defer client2.Close()
+
+	data := bytes.Repeat([]byte("X"), 5*1024*1024)
+	for i := 0; i < 10; i++ {
+		var buf bytes.Buffer
+		client2.Receive(&buf)
+		client1.Send(bytes.NewReader(data))
+		client1.Wait()
+		client2.Wait()
+		if buf.Len() != len(data) {
+			t.Fatalf("Iteration %d: expected %d bytes, got %d", i, len(data), buf.Len())
+		}
+	}
 }
 
 func TestMemoryStressConcurrent(t *testing.T) {
-	t.Skip("Test needs to be redesigned")
+	server := NewServer("9604")
+	server.Start()
+	defer server.Stop()
+
+	channelID := uuid.New()
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			client1, _ := NewClient("127.0.0.1:9604", channelID)
+			defer client1.Close()
+			client2, _ := NewClient("127.0.0.1:9604", channelID)
+			defer client2.Close()
+			for j := 0; j < 10; j++ {
+				var buf bytes.Buffer
+				client2.Receive(&buf)
+				client1.Send(strings.NewReader("test"))
+				client1.Wait()
+				client2.Wait()
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func TestMemoryPoolEfficiency(t *testing.T) {
-	t.Skip("Test needs to be redesigned")
+	server := NewServer("9605")
+	server.Start()
+	defer server.Stop()
+
+	var m1, m2 runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m1)
+
+	channelID := uuid.New()
+	client1, _ := NewClient("127.0.0.1:9605", channelID)
+	defer client1.Close()
+	client2, _ := NewClient("127.0.0.1:9605", channelID)
+	defer client2.Close()
+
+	data := bytes.Repeat([]byte("X"), 1024)
+	for i := 0; i < 1000; i++ {
+		var buf bytes.Buffer
+		client2.Receive(&buf)
+		client1.Send(bytes.NewReader(data))
+		client1.Wait()
+		client2.Wait()
+	}
+
+	runtime.GC()
+	runtime.ReadMemStats(&m2)
+
+	allocPerOp := (m2.TotalAlloc - m1.TotalAlloc) / 1000
+	if allocPerOp > 100*1024 {
+		t.Logf("High allocation per op: %d bytes (pool may not be effective)", allocPerOp)
+	}
 }
 
 func TestMemoryLeakUnderLoad(t *testing.T) {
-	t.Skip("Test needs to be redesigned")
+	server := NewServer("9606")
+	server.Start()
+	defer server.Stop()
+
+	var m1, m2 runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m1)
+
+	channelID := uuid.New()
+	client1, _ := NewClient("127.0.0.1:9606", channelID)
+	defer client1.Close()
+	client2, _ := NewClient("127.0.0.1:9606", channelID)
+	defer client2.Close()
+
+	for i := 0; i < 500; i++ {
+		var buf bytes.Buffer
+		client2.Receive(&buf)
+		client1.Send(strings.NewReader("load test"))
+		client1.Wait()
+		client2.Wait()
+	}
+
+	runtime.GC()
+	runtime.ReadMemStats(&m2)
+
+	growth := m2.Alloc - m1.Alloc
+	if growth > 2*1024*1024 {
+		t.Errorf("Memory leak under load: growth=%d bytes", growth)
+	}
 }
 
 // ============================================================================
