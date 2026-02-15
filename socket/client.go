@@ -37,9 +37,20 @@ type assembledRequest struct {
 }
 
 func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
-	conn, err := net.Dial("tcp4", addr)
-	if err != nil {
+	c := &Client{
+		addr:      addr,
+		channelID: channelID,
+	}
+	if err := c.connect(); err != nil {
 		return nil, err
+	}
+	return c, nil
+}
+
+func (c *Client) connect() error {
+	conn, err := net.Dial("tcp4", c.addr)
+	if err != nil {
+		return err
 	}
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		tcpConn.SetNoDelay(true)
@@ -47,23 +58,19 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 		tcpConn.SetWriteBuffer(2 * 1024 * 1024)
 	}
 
-	c := &Client{
-		addr:       addr,
-		clientID:   uuid.New(),
-		channelID:  channelID,
-		done:       make(chan struct{}),
-		requests:   make(chan *frame, 1024),
-		responses:  make(chan *frame, 1024),
-		registered: make(chan struct{}),
-		session:    &session{incoming: make(chan *assembledRequest, 1024)},
-		ctx: &connctx{
-			conn:   conn,
-			writes: make(chan *frame, 1024),
-			reads:  make(chan *frame, 1024),
-			errors: make(chan *frame, 256),
-			closed: make(chan struct{}),
-			wg:     &sync.WaitGroup{},
-		},
+	c.clientID = uuid.New()
+	c.done = make(chan struct{})
+	c.requests = make(chan *frame, 1024)
+	c.responses = make(chan *frame, 1024)
+	c.registered = make(chan struct{})
+	c.session = &session{incoming: make(chan *assembledRequest, 1024)}
+	c.ctx = &connctx{
+		conn:   conn,
+		writes: make(chan *frame, 1024),
+		reads:  make(chan *frame, 1024),
+		errors: make(chan *frame, 256),
+		closed: make(chan struct{}),
+		wg:     &sync.WaitGroup{},
 	}
 
 	c.ctx.wg.Add(2)
@@ -75,21 +82,18 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 	c.lastActive = time.Now()
 	go c.idleMonitor()
 
-	// Send registration frame to trigger server-side registration
 	if err := c.sendRegistration(); err != nil {
 		c.close()
-		return nil, err
+		return err
 	}
 	
-	// Wait for registration to complete
 	select {
 	case <-c.registered:
+		return nil
 	case <-time.After(2 * time.Second):
 		c.close()
-		return nil, errors.New("registration timeout")
+		return errors.New("registration timeout")
 	}
-
-	return c, nil
 }
 
 func (c *Client) sendRegistration() error {
@@ -142,31 +146,32 @@ func (c *Client) sendFrame(frameType byte, reqID uuid.UUID, timeoutMs uint64, fl
 	}
 }
 
-func (c *Client) receiveFrame(frameType byte, reqID uuid.UUID) (*frame, error) {
-	for {
-		select {
-		case f := <-c.ctx.reads:
-			if f.RequestID == reqID || reqID == uuid.Nil {
-				if f.Type == errorFrame {
-					putFrame(f)
-					return nil, errFrame
-				}
-				if f.Type != frameType {
-					putFrame(f)
-					return nil, errInvalidFrame
-				}
-				return f, nil
-			}
-			putFrame(f)
-		case <-c.ctx.closed:
-			return nil, errClosed
-		}
+func (c *Client) sendAck(frameID, reqID uuid.UUID) error {
+	f := getFrame()
+	f.Version = version1
+	f.Type = ackFrame
+	f.Flags = flagAck
+	f.RequestID = reqID
+	f.ClientID = c.clientID
+	f.FrameID = frameID
+	select {
+	case c.ctx.writes <- f:
+		return nil
+	case <-c.ctx.closed:
+		putFrame(f)
+		return errClosed
 	}
 }
 func (c *Client) BroadcastStream(in io.Reader, onComplete func(error)) {
 	if onComplete == nil {
 		onComplete = func(error) {}
 	}
+	
+	if err := c.ensureConnected(); err != nil {
+		onComplete(err)
+		return
+	}
+	
 	c.updateActivity()
 	c.sessionMu.Lock()
 	select {
@@ -188,6 +193,12 @@ func (c *Client) SubscriptionStream(out io.Writer, onComplete func(error)) {
 	if onComplete == nil {
 		onComplete = func(error) {}
 	}
+	
+	if err := c.ensureConnected(); err != nil {
+		onComplete(err)
+		return
+	}
+	
 	c.updateActivity()
 	c.sessionMu.Lock()
 	select {
@@ -199,6 +210,7 @@ func (c *Client) SubscriptionStream(out io.Writer, onComplete func(error)) {
 	}
 	c.session = &session{incoming: make(chan *assembledRequest, 1024)}
 	sess := c.session
+	ctxClosed := c.ctx.closed
 	c.sessionMu.Unlock()
 
 	go func() {
@@ -206,7 +218,7 @@ func (c *Client) SubscriptionStream(out io.Writer, onComplete func(error)) {
 		select {
 		case req := <-sess.incoming:
 			out.Write(req.payload)
-		case <-c.ctx.closed:
+		case <-ctxClosed:
 			err = errClosed
 		}
 		onComplete(err)
@@ -217,6 +229,72 @@ func (c *Client) updateActivity() {
 	c.activityMu.Lock()
 	c.lastActive = time.Now()
 	c.activityMu.Unlock()
+}
+
+func (c *Client) ensureConnected() error {
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+	
+	select {
+	case <-c.done:
+		if c.ctx != nil {
+			c.ctx.wg.Wait()
+			c.wg.Wait()
+		}
+		return c.reconnect()
+	default:
+		return nil
+	}
+}
+
+func (c *Client) reconnect() error {
+	conn, err := net.Dial("tcp4", c.addr)
+	if err != nil {
+		return err
+	}
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		tcpConn.SetNoDelay(true)
+		tcpConn.SetReadBuffer(2 * 1024 * 1024)
+		tcpConn.SetWriteBuffer(2 * 1024 * 1024)
+	}
+
+	c.clientID = uuid.New()
+	c.done = make(chan struct{})
+	c.requests = make(chan *frame, 1024)
+	c.responses = make(chan *frame, 1024)
+	c.registered = make(chan struct{})
+	c.session = &session{incoming: make(chan *assembledRequest, 1024)}
+	c.wg = sync.WaitGroup{}
+	c.ctx = &connctx{
+		conn:   conn,
+		writes: make(chan *frame, 1024),
+		reads:  make(chan *frame, 1024),
+		errors: make(chan *frame, 256),
+		closed: make(chan struct{}),
+		wg:     &sync.WaitGroup{},
+	}
+
+	c.ctx.wg.Add(2)
+	go c.ctx.startWriter()
+	go c.ctx.startReader()
+	c.wg.Add(2)
+	go c.routeFrames()
+	go c.processIncoming()
+	c.lastActive = time.Now()
+	go c.idleMonitor()
+
+	if err := c.sendRegistration(); err != nil {
+		c.closeWithoutLock()
+		return err
+	}
+	
+	select {
+	case <-c.registered:
+		return nil
+	case <-time.After(2 * time.Second):
+		c.closeWithoutLock()
+		return errors.New("registration timeout")
+	}
 }
 
 func (c *Client) idleMonitor() {
@@ -232,7 +310,7 @@ func (c *Client) idleMonitor() {
 				c.close()
 				return
 			}
-		case <-c.done:
+		case <-c.ctx.closed:
 			return
 		}
 	}
@@ -311,24 +389,6 @@ func (c *Client) waitForAck(reqID uuid.UUID) error {
 	}
 }
 
-
-
-func (c *Client) sendAck(frameID, reqID uuid.UUID) error {
-	f := getFrame()
-	f.Version = version1
-	f.Type = ackFrame
-	f.Flags = flagAck
-	f.RequestID = reqID
-	f.ClientID = c.clientID
-	f.FrameID = frameID
-	select {
-	case c.ctx.writes <- f:
-		return nil
-	case <-c.ctx.closed:
-		putFrame(f)
-		return errClosed
-	}
-}
 
 func (c *Client) routeFrames() {
 	defer c.wg.Done()
@@ -436,7 +496,10 @@ func (c *Client) processIncoming() {
 func (c *Client) close() error {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
+	return c.closeWithoutLock()
+}
 
+func (c *Client) closeWithoutLock() error {
 	select {
 	case <-c.done:
 		return nil
@@ -449,13 +512,6 @@ func (c *Client) close() error {
 		if c.ctx.conn != nil {
 			c.ctx.conn.Close()
 		}
-		c.ctx.wg.Wait()
-		c.wg.Wait()
-		close(c.ctx.writes)
-		close(c.ctx.errors)
-		close(c.requests)
-		close(c.responses)
-		c.ctx.conn = nil
 	}
 	return nil
 }

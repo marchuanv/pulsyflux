@@ -875,3 +875,83 @@ func testConcurrentSendRespond(t *testing.T, server *Server, channelID uuid.UUID
 func TestTimeoutWithSlowReceivers(t *testing.T) {
 	t.Skip("Test invalid: immediate acknowledgment in processIncoming() means no slow receiver scenario possible")
 }
+
+func TestClientReconnectAfterIdle(t *testing.T) {
+	server := NewServer("9700")
+	if err := server.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer server.Stop()
+
+	channelID := uuid.New()
+	client1, _ := NewClient("127.0.0.1:9700", channelID)
+	client2, _ := NewClient("127.0.0.1:9700", channelID)
+
+	// First message exchange
+	var buf1 bytes.Buffer
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	client2.SubscriptionStream(&buf1, func(err error) {
+		if err != nil {
+			t.Errorf("First receive failed: %v", err)
+		}
+		client2.BroadcastStream(strings.NewReader("pong1"), func(err error) {
+			wg.Done()
+		})
+	})
+
+	var resp1 bytes.Buffer
+	client1.BroadcastStream(strings.NewReader("ping1"), func(err error) {
+		if err != nil {
+			t.Errorf("First send failed: %v", err)
+		}
+		client1.SubscriptionStream(&resp1, func(err error) {
+			wg.Done()
+		})
+	})
+
+	wg.Wait()
+
+	if buf1.String() != "ping1" {
+		t.Errorf("Expected 'ping1', got '%s'", buf1.String())
+	}
+	if resp1.String() != "pong1" {
+		t.Errorf("Expected 'pong1', got '%s'", resp1.String())
+	}
+
+	// Wait for idle timeout (5s + 1s check)
+	time.Sleep(7 * time.Second)
+
+	// Second message exchange after reconnect
+	var buf2 bytes.Buffer
+	wg.Add(2)
+
+	client2.SubscriptionStream(&buf2, func(err error) {
+		if err != nil {
+			t.Errorf("Second receive failed: %v", err)
+		}
+		client2.BroadcastStream(strings.NewReader("pong2"), func(err error) {
+			wg.Done()
+		})
+	})
+
+	var resp2 bytes.Buffer
+	client1.BroadcastStream(strings.NewReader("ping2"), func(err error) {
+		if err != nil {
+			t.Errorf("Second send failed: %v", err)
+		}
+		client1.SubscriptionStream(&resp2, func(err error) {
+			wg.Done()
+		})
+	})
+
+	wg.Wait()
+
+	if buf2.String() != "ping2" {
+		t.Errorf("Expected 'ping2', got '%s'", buf2.String())
+	}
+	if resp2.String() != "pong2" {
+		t.Errorf("Expected 'pong2', got '%s'", resp2.String())
+	}
+}
