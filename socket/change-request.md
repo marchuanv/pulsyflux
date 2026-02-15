@@ -2,83 +2,74 @@
 
 ## Problem Statement
 
-The original implementation required tests to call `Send()`, `Receive()`, or `Respond()` in a specific order due to serialization via `opMu` lock. This made the API inflexible and tests fragile, as operations had to be carefully orchestrated.
+The original implementation required tests to call `Send()`, `Receive()`, or `Respond()` in a specific order. This made the API inflexible and tests fragile, as operations had to be carefully orchestrated.
 
 ## Root Cause
 
-The previous design used:
-1. **Operation Mutex (`opMu`)**: Serialized all `Send()`, `Receive()`, and `Respond()` calls on the same client
-2. **Shared Channel (`ctx.reads`)**: Both outgoing operations (waiting for acks) and incoming operations (receiving requests) competed for frames from the same channel
-3. **Blocking Behavior**: `Receive()` had to be called before frames arrived, or frames would be consumed by other operations
+The previous design had a single shared channel (`ctx.reads`) where both:
+1. **Outgoing operations** (`Send()` via `waitForAck()`) waited for acknowledgment frames
+2. **Incoming operations** (`Receive()`, `Respond()`) waited for request frames
+
+This caused frame stealing - whichever operation read from `ctx.reads` first would consume the frame, potentially blocking the other operation indefinitely.
 
 ## Solution
 
-Refactored the client infrastructure to support concurrent, order-independent operations:
+Refactored the client infrastructure to support concurrent, order-independent operations by adding frame routing:
 
-### 1. Removed Operation Serialization
-- **Removed**: `opMu` mutex that serialized operations
-- **Result**: `Send()`, `Receive()`, and `Respond()` can now be called concurrently without blocking each other
+### Key Changes
 
-### 2. Added Background Request Processing
-- **Added**: `processIncomingRequests()` goroutine that runs continuously in the background
-- **Purpose**: Automatically receives and assembles incoming requests from other clients
-- **Behavior**: 
-  - Listens for incoming request frames (with `flagRequest`)
-  - Sends acknowledgments for each frame
-  - Assembles complete requests (start → chunks → end)
-  - Queues assembled requests in `incoming` channel
+1. **Added Frame Routing Goroutine**
+   - New `routeFrames()` goroutine reads from `ctx.reads`
+   - Routes frames based on `flagRequest` flag:
+     - Frames WITH `flagRequest` → `requests` channel (incoming requests)
+     - Frames WITHOUT `flagRequest` → `responses` channel (acks, errors)
 
-### 3. Separated Request and Response Channels
-- **Added**: `ctx.requests` channel for incoming request frames (with `flagRequest`)
-- **Added**: `ctx.responses` channel for response frames (acks, errors without `flagRequest`)
-- **Added**: `routeFrames()` goroutine to route frames based on flags
-- **Result**: Request frames and response frames no longer compete for the same channel
+2. **Added Dedicated Channels**
+   - `requests chan *frame` - for incoming request frames from other clients
+   - `responses chan *frame` - for response frames (acks, errors)
+   - `incoming chan *assembledRequest` - for fully assembled requests ready for consumption
 
-### 4. Simplified Public API Methods
+3. **Added Background Request Processing**
+   - `processIncoming()` goroutine runs continuously
+   - Reads from `requests` channel
+   - Assembles complete requests (start → chunks → end)
+   - Sends acknowledgments for each frame
+   - Queues assembled requests in `incoming` channel
 
-**`Receive(incoming chan io.Reader)`**:
-- Now simply reads from pre-assembled `incoming` channel
-- Non-blocking - returns immediately if request is available
-- No longer needs to coordinate with `Send()` timing
+4. **Simplified Public API Methods**
+   - `Receive()` - simply reads from pre-assembled `incoming` channel
+   - `Respond()` - reads from `incoming`, waits for response, calls `Send()`
+   - `Send()` - unchanged externally, uses `responses` channel via `waitForAck()`
 
-**`Respond(incoming, outgoing chan io.Reader)`**:
-- Reads pre-assembled request from `incoming` channel
-- Waits for response from `outgoing` channel
-- Calls `Send()` to broadcast response (no lock conflict)
+## Architecture
 
-**`Send(r io.Reader)`**:
-- Unchanged externally
-- Internally uses `ctx.responses` channel for acks (not `ctx.reads`)
-
-## Architecture Changes
-
-### Before (Serialized)
+### Before (Frame Stealing)
 ```
 Client
-├── opMu (serializes all operations)
-├── ctx.reads (shared by Send and Receive)
-├── Send() - locks opMu, sends frames, waits for acks
-├── Receive() - locks opMu, receives frames, sends acks
-└── Respond() - locks opMu, calls Receive() then Send()
+├── ctx.reads (shared channel - CONFLICT!)
+├── Send() → waitForAck() reads from ctx.reads
+└── Receive() reads from ctx.reads
+    └── Frame stealing occurs!
 ```
 
-### After (Concurrent)
+### After (Frame Routing)
 ```
 Client
-├── ctx.requests (incoming request frames)
-├── ctx.responses (acks and errors)
-├── processIncomingRequests() - background goroutine
-│   ├── Reads from ctx.requests
-│   ├── Sends acks
-│   └── Queues to incoming channel
-├── Send() - sends frames, waits for acks from ctx.responses
-├── Receive() - reads from incoming channel (non-blocking)
-└── Respond() - reads from incoming, sends response
-
-connctx
-└── routeFrames() - routes frames by flag
-    ├── flagRequest → ctx.requests
-    └── flagAck/flagNone → ctx.responses
+├── ctx.reads (from connctx.startReader)
+│   └── routeFrames() - NEW routing goroutine
+│       ├── flagRequest=1 → requests channel
+│       └── flagRequest=0 → responses channel
+├── requests channel
+│   └── processIncoming() - NEW background goroutine
+│       ├── Assembles requests
+│       ├── Sends acks
+│       └── Queues to incoming channel
+├── responses channel
+│   └── waitForAck() reads acks
+├── incoming channel
+│   ├── Receive() reads from here
+│   └── Respond() reads from here
+└── Send() → waitForAck() → responses channel
 ```
 
 ## Code Changes
@@ -86,41 +77,36 @@ connctx
 ### client.go
 
 **Added**:
+- `requests chan *frame` - channel for incoming request frames
+- `responses chan *frame` - channel for response frames (acks, errors)
 - `incoming chan *assembledRequest` - buffered channel (16) for assembled requests
 - `assembledRequest` struct with `payload []byte`
-- `processIncomingRequests()` - background goroutine
-- `receiveRequestFrame()` - reads from `ctx.requests` channel
-- `wg sync.WaitGroup` - tracks background goroutine
-
-**Removed**:
-- `opMu sync.Mutex` - no longer needed
-- `receiveAssembledChunkFramesWithAck()` - logic moved to background goroutine
+- `routeFrames()` - goroutine that routes frames by flag
+- `processIncoming()` - goroutine that assembles incoming requests
+- `wg sync.WaitGroup` - tracks background goroutines
 
 **Modified**:
-- `NewClient()` - starts `processIncomingRequests()` goroutine, initializes new channels
-- `Send()` - removed `opMu.Lock()`, uses `ctx.responses` via `waitForAck()`
+- `NewClient()` - starts `routeFrames()` and `processIncoming()` goroutines
+- `Send()` - unchanged (still uses `waitForAck()`)
+- `waitForAck()` - reads from `responses` channel instead of `ctx.reads`
 - `Receive()` - simplified to read from `incoming` channel
-- `Respond()` - simplified to read from `incoming` channel then call `Send()`
-- `waitForAck()` - reads from `ctx.responses` instead of `ctx.reads`
-- `Close()` - waits for background goroutine, closes `incoming` channel
+- `Respond()` - simplified to read from `incoming` then call `Send()`
+- `Close()` - waits for background goroutines, closes new channels
+
+**Removed**:
+- No methods removed, only internal logic simplified
 
 ### connctx.go
 
-**Added**:
-- `requests chan *frame` - channel for incoming request frames
-- `responses chan *frame` - channel for response frames (acks, errors)
-- `routeFrames()` - goroutine that routes frames based on `flagRequest`
-
-**Modified**:
-- `connctx` struct - added `requests` and `responses` channels
+**No changes** - constraint was to not modify `connctx.go`
 
 ## Benefits
 
 1. **Test Flexibility**: Tests no longer need to call operations in specific order
-2. **Concurrent Operations**: Multiple goroutines can call `Send()`, `Receive()`, `Respond()` simultaneously
-3. **Automatic Request Handling**: Incoming requests are automatically received and queued
-4. **Cleaner Separation**: Request processing and response handling are completely independent
-5. **No Frame Stealing**: Frames are routed to the correct channel, preventing competition
+2. **No Frame Stealing**: Frames are routed to correct channel based on type
+3. **Concurrent Operations**: `Send()` and `Receive()` can run simultaneously
+4. **Automatic Request Handling**: Incoming requests are automatically received and queued
+5. **Cleaner Separation**: Request processing and response handling are independent
 
 ## Testing Impact
 
@@ -137,12 +123,32 @@ client1.Send(data)  // Now safe to send
 ### After
 ```go
 // Can call in any order - background goroutine handles incoming frames
-client1.Send(data)  // Send first
-time.Sleep(10 * time.Millisecond)  // Optional - just for test timing
+client1.Send(data)  // Send first - no problem!
 go func() {
     client2.Receive(incoming)  // Can be called anytime
 }()
+// OR
+go func() {
+    client2.Receive(incoming)  // Call first
+}()
+client1.Send(data)  // Send later - also works!
 ```
+
+## Performance Considerations
+
+**Added Overhead**:
+- Two additional goroutines per client:
+  - `routeFrames()` - routes frames by flag
+  - `processIncoming()` - assembles incoming requests
+- Three additional buffered channels per client:
+  - `requests` (1024 buffer)
+  - `responses` (1024 buffer)
+  - `incoming` (16 buffer)
+
+**Benefits**:
+- Eliminates frame stealing and blocking
+- Better CPU utilization with concurrent operations
+- Simpler test code
 
 ## Backward Compatibility
 
@@ -151,25 +157,14 @@ The public API remains unchanged:
 - `Receive(incoming chan io.Reader) error`
 - `Respond(incoming, outgoing chan io.Reader) error`
 
-Existing code using these methods will continue to work, but will now benefit from the ability to call them in any order.
+Existing code using these methods will continue to work and will benefit from the ability to call them in any order.
 
-## Performance Considerations
+## Implementation Notes
 
-**Added Overhead**:
-- One additional goroutine per client (`processIncomingRequests`)
-- One additional goroutine per client (`routeFrames`)
-- Two additional buffered channels per client (`requests`, `responses`)
-- One additional buffered channel per client (`incoming`)
+1. **Frame Routing**: The `routeFrames()` goroutine is the key - it prevents frame stealing by separating request and response frames into dedicated channels
 
-**Benefits**:
-- Eliminates lock contention from `opMu`
-- Reduces blocking between operations
-- Better CPU utilization with concurrent operations
+2. **Background Processing**: The `processIncoming()` goroutine continuously processes incoming requests, so `Receive()` never blocks waiting for frames to arrive
 
-## Future Enhancements
+3. **No connctx Changes**: All changes are contained in `client.go` - `connctx.go` remains unchanged as required
 
-Potential improvements:
-1. Add timeout support to `Receive()` and `Respond()`
-2. Add context.Context support for cancellation
-3. Add metrics for queue depths and processing times
-4. Consider making `incoming` channel size configurable
+4. **Minimal Code**: The solution adds only ~80 lines of code for maximum benefit
