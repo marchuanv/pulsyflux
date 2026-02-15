@@ -327,8 +327,8 @@ client.Stream(bytes.NewReader(respData), &reqBuf, func(err error) {
 - **Client timeout**: 5 seconds default (`defaultTimeout`)
 - **ClientTimeoutMs**: 30000ms default in frame header
 - **Registration timeout**: 2 seconds (client waits for server registration ack)
-- **Idle timeout**: 60 seconds (client closes after inactivity)
-- **Idle check interval**: 5 seconds (idleMonitor ticker)
+- **Idle timeout**: 5 seconds (client closes after inactivity)
+- **Idle check interval**: 1 second (idleMonitor ticker)
 
 ## Usage Examples
 
@@ -577,7 +577,7 @@ case <-time.After(30 * time.Second):
 14. **Error in Payload**: Error frames carry error message in payload field
 15. **Immediate Acknowledgment**: `processIncoming()` sends acks immediately upon receiving frames, not waiting for consumer
 16. **Session Recreation**: Session recreated on each `Stream()` call to prevent unconsumed message issues
-17. **Idle Management**: `idleMonitor()` closes client after 60s inactivity, checks every 5s
+17. **Idle Management**: `idleMonitor()` closes client after 5s inactivity, checks every 1s
 18. **Activity Tracking**: `updateActivity()` called on each Stream() to reset idle timer
 19. **No Public Close**: Client lifecycle managed by idleMonitor, no public Close() method
 20. **Channel Notification**: Registry uses `channelNotify` map to wake up senders when receivers join

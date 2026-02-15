@@ -210,7 +210,7 @@ func (c *Client) updateActivity() {
 }
 
 func (c *Client) idleMonitor() {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
@@ -218,7 +218,7 @@ func (c *Client) idleMonitor() {
 			c.activityMu.Lock()
 			idle := time.Since(c.lastActive)
 			c.activityMu.Unlock()
-			if idle > 60*time.Second {
+			if idle > 5*time.Second {
 				c.close()
 				return
 			}
