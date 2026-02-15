@@ -1,67 +1,63 @@
-# Socket Package Rework
+# Socket Package Specification
 
-## Status: SPECIFICATION FOR REDESIGN
+## Status: IMPLEMENTED
 
-This document describes a complete redesign of the socket package to implement proper pub-sub (broadcast) semantics with acknowledgment-based synchronization.
+This document describes the socket package implementation - a TCP-based pub-sub (broadcast) message bus with acknowledgment-based synchronization.
 
-## Original Issue: Frame Interleaving with Multiple Concurrent Receivers
-
-**Test**: TestClientMultipleConcurrent
-
-**Symptom**: "invalid frame" errors when multiple clients send/receive concurrently
-
-**Root Cause**: The original implementation attempted request-response semantics but the architecture requires pub-sub (broadcast) semantics. The current code has fundamental design issues that cannot be fixed with minor changes.
-
-## Decision: Complete Redesign
-
-After analysis, the socket layer needs to be redesigned from the ground up to properly support:
-1. Broadcast pub-sub pattern (not request-response)
-2. Frame-level acknowledgment synchronization
-3. Self-filtering by ClientID
-4. Clean separation between receive-only and receive-respond patterns
-
-## New Architecture Specification
-
-**Socket Layer Design: Pure Pub-Sub (Broadcast)**
+## Architecture
 
 The socket layer is a **broadcast-only pub-sub system**:
-- `Send()` broadcasts message to ALL other clients on channel (excludes sender)
-- `Receive()` receives broadcasts from other clients
-- `Respond()` receives broadcasts, processes, and broadcasts response
+- `Send(r io.Reader) error` - broadcasts message to ALL other clients on channel (excludes sender)
+- `Receive(incoming chan io.Reader) error` - receives broadcasts from other clients
+- `Respond(incoming, outgoing chan io.Reader) error` - receives broadcasts, processes, and broadcasts response
 - Server broadcasts frames to ALL clients EXCEPT the sender
 - Clients don't need to filter out their own messages (server handles exclusion)
 
-**RequestID Purpose**:
-1. **Server-side**: Group frames together (startFrame→chunkFrame→endFrame for same message)
-2. **Client-side**: Identify which message the frames belong to
+## Frame Protocol
 
-**NOT for request-response tracking** - there is no 1-to-1 request-response pattern.
+### Frame Types
+- `errorFrame (0x03)` - Error notification
+- `startFrame (0x04)` - Beginning of a message
+- `chunkFrame (0x05)` - Payload data chunks (up to 1MB per chunk)
+- `endFrame (0x06)` - End of a message
+- `ackFrame (0x07)` - Acknowledgment that a data frame was received
 
-### Frame Protocol
+### Frame Flags
+- `flagNone (0x00)` - No flags (used for registration frame)
+- `flagRequest (0x01)` - Data frame being broadcast
+- `flagAck (0x02)` - Control frame - acknowledgment
+- `flagResponse (0x08)` - Control frame - used for errors
 
-**Frame Types**:
+### Frame Header (84 bytes)
+```
+Bytes 0-1:    Version (1) + Type (1)
+Bytes 2-3:    Flags (2)
+Bytes 4-19:   RequestID (16 UUID)
+Bytes 20-35:  ClientID (16 UUID)
+Bytes 36-51:  ChannelID (16 UUID)
+Bytes 52-67:  FrameID (16 UUID) - for ack tracking
+Bytes 68-75:  ClientTimeoutMs (8)
+Bytes 76-79:  Sequence (4) - chunk index + isFinal flag
+Bytes 80-83:  PayloadLength (4)
+```
 
-**Data Frames** (application-level, carry payload):
-- `startFrame (0x04)`: Beginning of a message
-- `chunkFrame (0x05)`: Payload data chunks  
-- `endFrame (0x06)`: End of a message
+### Frame Categories
 
-**Control Frames** (protocol-level, no payload):
-- `errorFrame (0x03)`: Error notification
-- `ackFrame (0x07)`: Acknowledgment that a data frame was received (NEW)
+**Data Frames** (application-level):
+- `startFrame` - signals beginning, no payload, uses `flagRequest`
+- `chunkFrame` - carries application data in payload, uses `flagRequest`
+- `endFrame` - signals end, no payload, uses `flagRequest`
 
-**Frame Flags**:
-- `flagRequest (0x01)`: Data frame being broadcast
-- `flagAck (0x02)`: Control frame - acknowledgment
-- `flagResponse (0x08)`: Control frame - used for errors
+**Control Frames** (protocol-level):
+- `ackFrame` - acknowledges receipt, no payload, uses `flagAck`
+- `errorFrame` - reports errors, payload contains error message, uses `flagResponse`
 
-**Critical Distinction**:
-- **Data frames** use `flagRequest` and contain application data
-- **Control frames** use `flagAck` or `flagResponse` and contain protocol metadata
-- **Ack frames** are sent by receivers to acknowledge receipt of data frames
-- **Server aggregates acks**: N receivers → N ack frames → 1 ack frame to sender
+**Key Rule**: Application data ONLY goes in chunkFrame payload. Control frames never carry application data (except error messages).
 
-**Client Registration Flow**:
+## Client Registration
+
+Registration is **implicit** - server registers client on first frame received:
+
 ```
 Client                  Server
   |
@@ -69,291 +65,64 @@ Client                  Server
   | (connect TCP)         |
   | (start reader/writer) |
   |                       |
-  +--Send/Receive-------->|
-  | (first frame)         |
-  |                       +--registry.register()
+  +--registration frame-->|
+  | (flagNone)            +--registry.register()
   |                       | (implicit registration)
-  |                       |
   | (client ready)        |
 ```
 
-**Purpose**: Client registration is **implicit** - the server automatically registers a client when it receives the first frame from that client. No explicit registration frame is needed.
+The client sends a registration frame (startFrame with flagNone) immediately after connecting to trigger server-side registration.
 
-**Frame Flow Example**:
+## Frame-by-Frame Acknowledgment Flow
+
+Each frame requires acknowledgment from ALL receivers before sender proceeds:
+
 ```
 Sender                  Server                  Receiver
   |
   +--startFrame---------->|  (DATA FRAME)
   | flagRequest           +--broadcast------------>|
-  | Payload: none          |                         |
   |                       |                         |
   | (blocked)             |                         +--ackFrame---------->
   |                       |<------------------------| (CONTROL FRAME)
   |                       | (aggregate)             | flagAck
-  |                       |                         | Payload: none
   |<--ackFrame------------+                         |
   | (CONTROL FRAME)       |                         |
-  | flagAck               |                         |
-  | Payload: none         |                         |
   | (unblocked)           |                         |
 ```
 
-**When Each Frame Type is Used**:
+**Process**:
+1. Sender sends frame with `flagRequest`
+2. Server broadcasts to all receivers (excludes sender)
+3. Each receiver sends `ackFrame` with `flagAck`
+4. Server collects acks (N receivers → N acks)
+5. Server sends single ack to sender
+6. Sender proceeds to next frame
 
-**Data Frames** (carry application data):
-- `startFrame`: Signals beginning of message, no payload (just metadata)
-- `chunkFrame`: Carries actual application data in payload (up to 1MB per chunk)
-- `endFrame`: Signals end of message, no payload (just metadata)
-- All use `flagRequest` flag
-- Sent by application via `Send()` or `Respond()`
+## Server Implementation
 
-**Control Frames** (protocol-level, NO application data):
-- `ackFrame`: Acknowledges receipt of a data frame, no payload
-  - Sent by receivers after receiving each data frame
-  - Sent by server to sender after aggregating receiver acks
-  - Uses `flagAck` flag
-- `errorFrame`: Reports protocol errors, payload contains error message string
-  - Sent by server on timeout or other errors
-  - Uses `flagResponse` flag
+### Components
 
-**Key Rule**: 
-- **Application data ONLY goes in chunkFrame payload**
-- **Control frames NEVER carry application data** (ack has no payload, error has error message only)
-- **start/end frames are data frames but have no payload** (just signal boundaries)
+**Server** (`server.go`):
+- Listens on TCP with SO_REUSEADDR and 2MB buffers
+- One goroutine per connection in `handle()`
+- Routes frames based on flags:
+  - `flagRequest` → broadcast to peers via `handleRequest()`
+  - `flagAck` → record ack via `registry.recordAck()`
+  - `flagResponse` → route to specific client
+  - Other → discard
 
-**CRITICAL: Frame-by-Frame Pub-Sub with Acknowledgments**
+**Registry** (`registry.go`):
+- Maps `clientID → clientEntry` for direct lookup
+- Maps `channelID → set of clientEntry` for channel routing
+- Tracks pending acks via `pendingAcks map[uuid.UUID]*ackCollector`
+- Each `clientEntry` has:
+  - `requestQueue` - incoming broadcasts (buffered 1024)
+  - `responseQueue` - outgoing acks/errors (buffered 1024)
+  - Background goroutines to drain queues
 
-**From caller perspective**: `Send()` is fire-and-forget (no return value expected)
-
-**Internally**: Each frame requires acknowledgment from ALL receivers before proceeding:
-
-1. **Sender publishes startFrame** → Server broadcasts to ALL receivers
-2. **Each receiver gets startFrame** → Checks sequence field → Sends ack
-3. **Server collects acks** → Waits for acks from ALL receivers → Signals sender to proceed
-4. **Sender publishes chunkFrame** → Server broadcasts to ALL receivers
-5. **Each receiver gets chunkFrame** → Checks sequence field → Sends ack
-6. **Server collects acks** → Waits for acks from ALL receivers → Signals sender to proceed
-7. **Repeat for each chunk**
-8. **Sender publishes endFrame** → Server broadcasts to ALL receivers
-9. **Each receiver gets endFrame** → Sends ack
-10. **Server collects acks** → Waits for acks from ALL receivers → Send() completes
-
-**Sequence Field Purpose**:
-- Tells receivers how many frames to expect in a sequence
-- `isFinal` flag indicates last frame in sequence
-- Receivers use this to know when to send acks
-
-**Complete Flow with Implicit Registration and 3 Clients**:
-```
-[IMPLICIT REGISTRATION ON FIRST FRAME]
-ClientA             Server              ClientB             ClientC
-  |
-  +--Send/Receive---->|  (any frame)
-  | (first frame)     +--register clientA
-  |                   |  (implicit)
-  | (ready)           |
-  |                   |<--Send/Receive-------+
-  |                   |  (any frame)         |
-  |                   +--register clientB    |
-  |                   |  (implicit)          |
-  |                   |  (ready)             |
-  |                   |                      |<--Send/Receive---+
-  |                   |                      |  (any frame)     |
-  |                   +--register clientC    |  (first frame)   |
-  |                   |  (implicit)          |                  |
-  |                   |                      |  (ready)         |
-
-[BROADCAST PHASE]
-ClientA (sender)    Server              ClientB (rcv)       ClientC (rcv)
-     |                |                      |                   |
-     +--startFrame--->|  (DATA, no payload)  |                   |
-     | seq=0,final    +--broadcast---------->+------------------>+
-     | clientA        |  (excludes A)        |                   |
-     |                |                  (DATA FRAME)        (DATA FRAME)
-     |                |                  send ack            send ack
-     |                |                      |                   |
-     |                | <--ackFrame----------+  (CONTROL)        |
-     |                | <--ackFrame--------------------------+  (CONTROL)
-     |                |                      |                   |
-     | (blocked)      | (got 2/2 acks)       |                   |
-     |                | (aggregate)          |                   |
-     | (unblocked)    |                      |                   |
-     |<--ackFrame-----+  (CONTROL)           |                   |
-     |                |                      |                   |
-     +--chunkFrame--->|  (DATA, has payload) |                   |
-     | seq=0,final    +--broadcast---------->+------------------>+
-     | clientA        |  (excludes A)        |                   |
-     | Payload: data  |                  (DATA FRAME)        (DATA FRAME)
-     |                |                  send ack            send ack
-     |                |                      |                   |
-     |                | <--ackFrame----------+  (CONTROL)        |
-     |                | <--ackFrame--------------------------+  (CONTROL)
-     |                |                      |                   |
-     | (blocked)      | (got 2/2 acks)       |                   |
-     |                | (aggregate)          |                   |
-     | (unblocked)    |                      |                   |
-     |<--ackFrame-----+  (CONTROL)           |                   |
-     |                |                      |                   |
-     +--endFrame----->|  (DATA, no payload)  |                   |
-     | seq=0,final    +--broadcast---------->+------------------>+
-     | clientA        |  (excludes A)        |                   |
-     |                |                  (DATA FRAME)        (DATA FRAME)
-     |                |                  send ack            send ack
-     |                |                      |                   |
-     |                | <--ackFrame----------+  (CONTROL)        |
-     |                | <--ackFrame--------------------------+  (CONTROL)
-     |                |                      |                   |
-     | (blocked)      | (got 2/2 acks)       |                   |
-     |                | (aggregate)          |                   |
-     | (unblocked)    |                      |                   |
-     |<--ackFrame-----+  (CONTROL)           |                   |
-     | Send() returns |                      |                   |
-```
-
-**Server Synchronization**:
-- Server tracks active receivers per channel (count = N, excludes sender)
-- For each frame from sender:
-  - Broadcast to all N receivers (excludes sender)
-  - Collect acks from receivers
-  - When N acks received → signal sender to proceed
-- Ack aggregation: N receivers → N acks → 1 "proceed" to sender
-
-### Message Flow Example
-
-```
-[IMPLICIT REGISTRATION]
-ClientA          Server          ClientB         ClientC         ClientD
-  |
-  +--first frame-->|  (any operation)
-  | (ready)        +--register A
-  |                |  (implicit)
-  |                |
-  |                |<--first frame---+
-  |                +--register B     |
-  |                |  (implicit)     |
-  |                |  (ready)        |
-  |                |                 |<--first frame---+
-  |                +--register C     |                 |
-  |                |  (implicit)     |                 |<--first frame--+
-  |                |  (ready)        |                 +--register D    |
-  |                +--register D     |                 |  (implicit)    |
-  |                |  (implicit)     |                 |  (ready)       |
-  |                |  (ready)        |                 |                |
-
-[BROADCAST]
-ClientA (pub)    Server          ClientB (sub)   ClientC (sub)   ClientD (sub)
-    |              |                  |               |               |
-    +--Send------->|                  |               |               |
-    | reqA,        |                  |               |               |
-    | clientA      +--broadcast------>+-------------->+-------------->+
-    |              |  (excludes A)    |               |               |
-    |              |           (B,C,D receive reqA from clientA)     |
-    |              |                  |               |               |
-    |              |               process         process         process
-    |              |                  |               |               |
-    |              | <--Send----------+               |               |
-    |              |  reqB, clientB   |               |               |
-    +<-------------+  (A receives)    |               |               |
-    |              +--------------------------------->+-------------->+
-    |              |  (excludes B)    |               |               |
- (A,C,D receive reqB from clientB)   |                               |
-    |              |                  |                               |
- process        process               |                            process
-    |              |                  |               |               |
-    +--Send------->|                  |               |               |
-    | reqA2,       |                  |               |               |
-    | clientA      +--broadcast------>+-------------->+-------------->+
-    |              |  (excludes A)    |               |               |
-```
-
-**Key points**:
-- ALL clients receive ALL messages (broadcast) EXCEPT sender doesn't receive own messages
-- Server excludes sender from broadcast (no client-side filtering needed)
-- Pure pub-sub pattern
-
-## Analysis of Current Implementation Issues
-
-### Observed Symptoms from Logs
-
-```
-[Client 31ad578d] Receive: START origReqID=fe20f6dc
-[Client 31ad578d] receiveStartFrame: got frame type=4 reqID=95e29baf (expecting reqID=00000000)
-[Client 31ad578d] Receive: Got request reqID=95e29baf from client=cbb0c5fc
-
-[Client 8e6bc9b5] Receive: START origReqID=30917783
-[Client 8e6bc9b5] receiveStartFrame: got frame type=4 reqID=feed0a1e (expecting reqID=00000000)
-[Client 8e6bc9b5] Receive: Got request reqID=feed0a1e from client=8d447ff6
-```
-
-Then errors:
-```
-Receiver 0 error: invalid frame
-Receiver 1 error: invalid frame
-Receiver 2 error: invalid frame
-```
-
-### Fundamental Design Issues in Current Implementation
-
-**The current implementation has multiple bugs**:
-
-1. **Send() incorrectly waits for response data**: Send() should wait for acks (synchronization), not response data. Currently it waits for response payload which doesn't exist in pub-sub.
-
-2. **No ack mechanism**: Receivers don't send acks after receiving frames. Server doesn't collect acks or signal sender to proceed.
-
-3. **Receive() uses wrong requestID for chunks**: After getting startFrame with reqID=X, it uses origReqID (receiver's own ID) instead of reqID when receiving chunks.
-
-4. **Receive() sends response with flagResponse**: Should broadcast response with flagRequest to all clients, not send to specific client with flagResponse.
-
----
-
-## Redesign Specification: Pub-Sub with Ack-Based Synchronization
-
-**Status**: APPROVED FOR IMPLEMENTATION
-
-### Design Overview
-
-Implement broadcast pub-sub with frame-level acknowledgments:
-
-1. **Send()**: Broadcast each frame, wait for acks from ALL receivers before next frame
-2. **Receive()**: Get broadcasts from other clients, send acks, process
-3. **Respond()**: Get broadcasts, send acks, process, broadcast response
-4. **Server**: Broadcast frames to all clients EXCEPT sender, collect acks, signal sender when all acks received
-5. **Client**: No self-filtering needed (server excludes sender)
-
-### New API Design
-
-**Before**:
+**AckCollector**:
 ```go
-// Request-response pattern (WRONG)
-response, err := client.Send(request, timeout)
-
-// Combined receive and respond
-err := client.Receive(incoming, outgoing, timeout)
-```
-
-**After**:
-```go
-// Pub-sub with ack synchronization (CORRECT)
-err := client.Send(request)  // Fire-and-forget from caller, but internally waits for acks
-
-// Separated receive and respond
-err := client.Receive(incoming)  // Just receive and ack
-err := client.Respond(incoming, outgoing)  // Receive, process, and respond
-```
-
-### Implementation
-
-**1. Server-Side: Ack Collection and Synchronization**
-
-**Add to registry**:
-```go
-type registry struct {
-    mu              sync.RWMutex
-    clients         map[uuid.UUID]*clientEntry
-    channels        map[uuid.UUID]map[uuid.UUID]*clientEntry
-    pendingAcks     map[uuid.UUID]*ackCollector  // NEW: track acks per frame
-}
-
 type ackCollector struct {
     frameID       uuid.UUID  // Unique ID for this frame instance
     requestID     uuid.UUID  // The message requestID
@@ -366,470 +135,225 @@ type ackCollector struct {
 }
 ```
 
-**Server routing logic**:
-```go
-func (s *Server) handle(conn net.Conn) {
-    // ... existing setup ...
-    
-    for {
-        select {
-        case f, ok := <-ctx.reads:
-            if !ok {
-                return
-            }
-            
-            if f.Flags&flagRequest != 0 {
-                // Sender publishing a frame
-                peers := s.registry.getChannelPeers(entry.channelID, clientID)
-                
-                if len(peers) == 0 {
-                    // No receivers, wait for receivers with timeout
-                    timeout := time.After(time.Duration(f.ClientTimeoutMs) * time.Millisecond)
-                    ticker := time.NewTicker(100 * time.Millisecond)
-                    defer ticker.Stop()
-                    
-                    for {
-                        select {
-                        case <-timeout:
-                            // Timeout - send error frame
-                            errFrame := createErrorFrame(f, "no receivers available")
-                            entry.enqueueResponse(errFrame)
-                            putFrame(f)
-                            continue  // Continue to next frame
-                        case <-ticker.C:
-                            // Check if receivers joined
-                            peers = s.registry.getChannelPeers(entry.channelID, clientID)
-                            if len(peers) > 0 {
-                                goto broadcast  // Receivers available, proceed to broadcast
-                            }
-                        }
-                    }
-                }
-                
-            broadcast:
-                // Create ack collector
-                frameID := uuid.New()
-                collector := s.registry.createAckCollector(frameID, f.RequestID, clientID, f.Type, len(peers))
-                
-                // Broadcast to all receivers (excludes sender)
-                for _, peer := range peers {
-                    peer.enqueueRequest(f)
-                }
-                
-                // Wait for all acks (blocking)
-                <-collector.done
-                
-                // Signal sender to proceed
-                entry.enqueueResponse(createAckFrame(f))
-                
-                // Cleanup
-                s.registry.removeAckCollector(frameID)
-            } else if f.Flags&flagAck != 0 {
-                // Receiver sending ack
-                s.registry.recordAck(f.FrameID, clientID)
-            } else if f.Flags&flagResponse != 0 {
-                // Response routing (existing)
-                if peer, ok := s.registry.get(f.ClientID); ok {
-                    peer.enqueueResponse(f)
-                } else {
-                    putFrame(f)
-                }
-            }
-        }
-    }
-}
-```
+### Server Routing Logic
 
-**2. Client-Side: Send() with Ack Waiting**
+**handleRequest** (for `flagRequest` frames):
+1. Call `waitForReceivers()` to get peer list (excludes sender)
+2. If no receivers after timeout → send error frame "no receivers available"
+3. If receivers available:
+   - Generate unique `FrameID`
+   - Create `ackCollector` expecting N acks
+   - Broadcast frame to all N receivers
+   - Block on `<-collector.done` until all acks received
+   - Send ack to sender
+   - Cleanup collector
 
+**waitForReceivers**:
+- Polls every 100ms for receivers
+- Returns peer list when found
+- Returns nil on timeout
+
+**recordAck** (for `flagAck` frames):
+- Finds ackCollector by FrameID
+- Increments receivedAcks counter
+- If receivedAcks == expectedAcks → close `done` channel
+
+## Client Implementation
+
+### API Methods
+
+**Send(r io.Reader) error**:
 ```go
 func (c *Client) Send(r io.Reader) error {
-    c.opMu.Lock()
+    c.opMu.Lock()  // Serialize operations
     defer c.opMu.Unlock()
 
     reqID := uuid.New()
-    timeoutMs := uint64(defaultTimeout.Milliseconds())
-
-    // Send startFrame and wait for ack
-    if err := c.sendStartFrame(reqID, c.clientID, timeoutMs, flagRequest); err != nil {
-        return err
+    
+    // Send start + wait for ack
+    sendFrame(startFrame, reqID, ...)
+    waitForAck(reqID)
+    
+    // Send chunks + wait for ack after each
+    for each chunk {
+        sendFrame(chunkFrame, reqID, payload, ...)
+        waitForAck(reqID)
     }
-    if err := c.waitForAck(reqID, startFrame); err != nil {
-        return err
-    }
-
-    // Send chunks and wait for ack after each
-    chunks, err := c.disassembleChunks(r)
-    if err != nil {
-        return err
-    }
-    for i, chunk := range chunks {
-        isFinal := i == len(chunks)-1
-        if err := c.sendChunkFrame(reqID, c.clientID, timeoutMs, i, isFinal, chunk, flagRequest); err != nil {
-            return err
-        }
-        if err := c.waitForAck(reqID, chunkFrame); err != nil {
-            return err
-        }
-    }
-
-    // Send endFrame and wait for ack
-    if err := c.sendEndFrame(reqID, c.clientID, timeoutMs, flagRequest); err != nil {
-        return err
-    }
-    if err := c.waitForAck(reqID, endFrame); err != nil {
-        return err
-    }
-
-    return nil  // All frames sent and acked
-}
-
-func (c *Client) waitForAck(reqID uuid.UUID, frameType uint8) error {
-    // Wait for ack frame (CONTROL FRAME) from server
-    for {
-        select {
-        case f := <-c.ctx.reads:
-            if f.Type == ackFrame && f.RequestID == reqID {
-                putFrame(f)
-                return nil
-            }
-            if f.Type == errorFrame && f.RequestID == reqID {
-                // Server sent error (e.g., "no receivers available" on timeout)
-                // Extract error message from frame payload
-                errMsg := string(f.Payload)
-                putFrame(f)
-                return fmt.Errorf("server error: %s", errMsg)
-            }
-            // Put back non-matching frames
-            putFrame(f)
-        case <-c.ctx.closed:
-            return errClosed
-        }
-    }
-}
-```
-
-**3. Client-Side: Receive() and Respond() Methods**
-
-```go
-// Receive() - Just receive and ack, no response
-func (c *Client) Receive(incoming chan io.Reader) error {
-    c.opMu.Lock()
-    defer c.opMu.Unlock()
-
-    // Wait for broadcast startFrame (server excludes our own messages)
-    rcvF, err := c.receiveStartFrame(uuid.Nil)
-    if err != nil {
-        return err
-    }
-
-    reqID := rcvF.RequestID
-    if err := c.sendAck(reqID, startFrame); err != nil {
-        putFrame(rcvF)
-        return err
-    }
-    putFrame(rcvF)
-
-    reqBuf, err := c.receiveAssembledChunkFramesWithAck(reqID)
-    if err != nil {
-        return err
-    }
-
-    endF, err := c.receiveEndFrame(reqID)
-    if err != nil {
-        return err
-    }
-    if err := c.sendAck(reqID, endFrame); err != nil {
-        putFrame(endF)
-        return err
-    }
-    putFrame(endF)
-
-    incoming <- bytes.NewReader(reqBuf.Bytes())
+    
+    // Send end + wait for ack
+    sendFrame(endFrame, reqID, ...)
+    waitForAck(reqID)
+    
     return nil
 }
+```
 
-// Respond() - Receive, process, and respond
-func (c *Client) Respond(incoming chan io.Reader, outgoing chan io.Reader) error {
-    // Receive message
-    if err := c.Receive(incoming); err != nil {
-        return err
-    }
-    
-    // Wait for response from application
-    reader := <-outgoing
-    if reader == nil {
-        return nil  // No response to send
-    }
-    
-    // Broadcast response
-    return c.Send(reader)
-}
+**Receive(incoming chan io.Reader) error**:
+```go
+func (c *Client) Receive(incoming chan io.Reader) error {
+    c.opMu.Lock()  // Serialize operations
+    defer c.opMu.Unlock()
 
-func (c *Client) sendAck(reqID uuid.UUID, frameType uint8) error {
-    f := getFrame()
-    f.Version = version1
-    f.Type = ackFrame  // CONTROL FRAME
-    f.RequestID = reqID
-    f.ClientID = c.clientID
-    f.Flags = flagAck  // CONTROL FLAG
-    // No payload - control frames don't carry application data
-    select {
-    case c.ctx.writes <- f:
-        return nil
-    case <-c.ctx.closed:
-        putFrame(f)
-        return errClosed
-    }
-}
-
-func (c *Client) receiveAssembledChunkFramesWithAck(reqID uuid.UUID) (bytes.Buffer, error) {
-    var buff bytes.Buffer
+    // Receive start + send ack
+    startF := receiveFrame(startFrame, uuid.Nil)
+    sendAck(startF.FrameID, startF.RequestID)
     
-    for {
-        f, err := c.receiveChunkFrame(reqID)
-        if err != nil {
-            return buff, err
-        }
-        
-        if err := c.sendAck(reqID, chunkFrame); err != nil {
-            putFrame(f)
-            return buff, err
-        }
-        
-        buff.Write(f.Payload)
-        isFinal := f.isFinal()
-        putFrame(f)
-        
-        if isFinal {
-            break
-        }
+    // Receive chunks + send ack after each
+    for each chunk {
+        chunkF := receiveFrame(chunkFrame, reqID)
+        sendAck(chunkF.FrameID, reqID)
+        append to buffer
+        if isFinal break
     }
     
-    return buff, nil
+    // Receive end + send ack
+    endF := receiveFrame(endFrame, reqID)
+    sendAck(endF.FrameID, reqID)
+    
+    incoming <- bytes.NewReader(buffer)
+    return nil
 }
 ```
 
-**Usage Examples**:
-
+**Respond(incoming, outgoing chan io.Reader) error**:
 ```go
-// Listen only (no response)
-incoming := make(chan io.Reader)
-go func() {
-    msg := <-incoming
-    processMessage(msg)
-}()
-client.Receive(incoming)
+func (c *Client) Respond(incoming, outgoing chan io.Reader) error {
+    Receive(incoming)  // Receive and ack
+    reader := <-outgoing  // Wait for response
+    if reader != nil {
+        Send(reader)  // Broadcast response
+    }
+    return nil
+}
+```
 
-// Listen and respond
-incoming := make(chan io.Reader)
-outgoing := make(chan io.Reader)
+### Helper Methods
+
+**sendFrame** - consolidated method for sending any frame type:
+- Creates frame with specified type, flags, payload
+- Sets sequence field (index + isFinal flag)
+- Sends to `ctx.writes` channel
+
+**receiveFrame** - consolidated method for receiving any frame type:
+- Filters frames by RequestID and Type
+- Returns matching frame or error
+- Discards non-matching frames
+
+**waitForAck**:
+- Waits for `ackFrame` with matching RequestID
+- Handles `errorFrame` (extracts error message from payload)
+- Returns error on timeout or closed connection
+
+**sendAck**:
+- Sends `ackFrame` with `flagAck`
+- Includes FrameID and RequestID for correlation
+
+### Concurrency Control
+
+**opMu Lock**:
+- Serializes `Send()`, `Receive()`, `Respond()` on same client
+- Prevents frame stealing from shared `ctx.reads` channel
+- Concurrent calls block and execute sequentially (not rejected)
+
+**Connection Context** (`connctx`):
+- Separate reader/writer goroutines per connection
+- Channels:
+  - `writes` - outgoing frames (buffered 1024)
+  - `reads` - incoming frames (buffered 1024)
+  - `errors` - priority error frames (buffered 512)
+  - `closed` - shutdown signal
+- Writer prioritizes error frames
+- Read timeout: 2 minutes per frame
+- Write timeout: 5 seconds per frame
+
+## Buffer Pooling
+
+- **Frame pool** (`sync.Pool`) - reuses frame structs
+- **Buffer pool** (`sync.Pool`) - 1MB buffers for chunk reading
+- **Write buffer pool** (`sync.Pool`) - 8KB+header buffers for small writes
+- Frames returned via `putFrame()` after processing
+- Buffers returned via `putBuffer()` / `putWriteBuffer()`
+
+## Error Handling
+
+**Error Types**:
+- `errClosed` - client/connection closed
+- `errFrame` - error frame received
+- `errInvalidFrame` - wrong frame type received
+- `errTimeout` - operation timeout
+
+**Error Frame Flow**:
+- Server sends error frame with `flagResponse`
+- Payload contains error message string
+- Client receives in `waitForAck()` and returns error
+
+**No Receivers Scenario**:
+1. Client calls `Send()`
+2. Server waits for receivers (polls every 100ms)
+3. On timeout → server sends error frame "no receivers available"
+4. Client's `waitForAck()` receives error frame
+5. `Send()` returns error to caller
+
+## Timeouts
+
+- **Frame read timeout**: 2 minutes (`defaultFrameReadTimeout`)
+- **Frame write timeout**: 5 seconds (`defaultFrameWriteTimeout`)
+- **Client timeout**: 5 seconds default (`defaultTimeout`)
+- **ClientTimeoutMs**: 30000ms default in frame header
+- **Receiver wait polling**: 100ms interval
+
+## Usage Examples
+
+**Send only**:
+```go
+client, _ := NewClient("127.0.0.1:9090", channelID)
+defer client.Close()
+
+err := client.Send(strings.NewReader("hello"))
+```
+
+**Receive only**:
+```go
+client, _ := NewClient("127.0.0.1:9090", channelID)
+defer client.Close()
+
+incoming := make(chan io.Reader, 1)
 go func() {
     msg := <-incoming
-    response := processMessage(msg)
-    outgoing <- response
+    data, _ := io.ReadAll(msg)
+    fmt.Println(string(data))
 }()
+
+client.Receive(incoming)
+```
+
+**Respond (request-response)**:
+```go
+client, _ := NewClient("127.0.0.1:9090", channelID)
+defer client.Close()
+
+incoming := make(chan io.Reader, 1)
+outgoing := make(chan io.Reader, 1)
+
+go func() {
+    req := <-incoming
+    data, _ := io.ReadAll(req)
+    response := process(data)
+    outgoing <- bytes.NewReader(response)
+}()
+
 client.Respond(incoming, outgoing)
 ```
 
-### Implementation Requirements
+## Key Implementation Details
 
-**SERVER-SIDE CHANGES**:
-
-**registry.go**:
-1. Add `pendingAcks map[uuid.UUID]*ackCollector` - track acks per frame
-2. Add `ackCollector` struct - manages ack collection and synchronization
-3. Add `createAckCollector()` - initialize ack tracking for a frame
-4. Add `recordAck()` - record ack from receiver, signal when all received
-5. Add `removeAckCollector()` - cleanup after all acks received
-6. Add `getChannelReceiverCount()` - count active receivers on channel
-
-**server.go**:
-1. Modify flagRequest handler:
-   - Check for receivers (getChannelPeers excludes sender)
-   - If no receivers: wait with timeout (check every 100ms)
-   - On timeout: send error frame "no receivers available"
-   - If receivers available: create ack collector
-   - Broadcast frame to all receivers
-   - Block waiting for all acks
-   - Signal sender to proceed after all acks
-2. Add flagAck handler:
-   - Record ack in registry
-   - Trigger ack collector check
-3. Keep flagResponse handler (unchanged)
-4. Add createErrorFrame() helper:
-   - Create error frame with message
-   - Set frame type to errorFrame
-   - Set flags to flagResponse (control frame)
-   - Put error message in payload
-   - Copy requestID and other metadata from original frame
-
-**frame.go**:
-1. Add `ackFrame (0x07)` type constant - NEW control frame type
-2. Add `flagAck (0x02)` flag constant - NEW control frame flag
-3. Add `FrameID` field to frame struct (for ack tracking)
-4. Mark `flagReceive (0x04)` as deprecated
-5. Add helper methods:
-   - `isDataFrame()` - returns true for start/chunk/end frames
-   - `isControlFrame()` - returns true for ack/error frames
-6. Update frame validation to distinguish data vs control frames
-
-**CLIENT-SIDE CHANGES**:
-
-**client.go**:
-1. **Modify Send()**:
-   - Change signature to `Send(r io.Reader) error` (no response return)
-   - After sending each frame (start/chunk/end), call `waitForAck()`
-   - Block until ack received from server
-2. **Add waitForAck()**:
-   - Wait for ack frame from server
-   - Handle error frames (e.g., "no receivers available")
-   - Extract error message from error frame payload
-   - Return error to caller, which aborts Send()
-   - Handle timeout
-3. **Add Receive()** (new method):
-   - Receive broadcast message (server excludes sender)
-   - Send acks for each frame
-   - Pass message to incoming channel
-   - No response broadcasting
-4. **Add Respond()** (new method):
-   - Call Receive() to get message
-   - Wait for response from outgoing channel
-   - Broadcast response using Send()
-5. **Add sendAck()**:
-   - Send ack frame to server
-6. **Add receiveAssembledChunkFramesWithAck()**:
-   - Receive chunks and send ack for each
-7. **Update frame receivers**:
-   - Handle ack frames separately from data frames
-
-**TEST UPDATES**:
-- Update all tests that expect `Send()` to return response data
-- Add tests for ack synchronization
-- Test with multiple receivers to verify all get messages
-- Test ack timeout scenarios
-
-### Redesign Summary
-
-**New Concepts**:
-- **Data frames vs Control frames** - clear separation of concerns
-- Ack frames (new control frame type)
-- Ack collection and synchronization (server-side)
-- Frame-level blocking (sender waits for acks)
-- Receiver count tracking per channel
-- Server-side sender exclusion from broadcast
-
-**Removed Complexity**:
-- flagReceive polling mechanism (deprecated)
-- Request-response data pairing
-- Response data waiting in Send()
-- Client-side self-filtering (server handles exclusion)
-
-**Added Complexity**:
-- Ack collection logic (server)
-- Ack sending logic (receivers)
-- Synchronization between sender and receivers per frame
-- FrameID tracking for ack correlation
-- Data frame vs control frame handling
-
-### Edge Cases Handled
-
-1. **Multiple concurrent broadcasts**: Each receiver gets all messages from other clients, filters by reqID
-2. **Receiver disconnects mid-request**: Ack collection times out or adjusts expected count
-3. **No receivers on channel**: 
-   - Server waits for receivers with timeout (polls every 100ms)
-   - On timeout: server sends error frame with "no receivers available"
-   - Client receives error frame in waitForAck()
-   - Client's Send() returns error, aborting the send operation
-   - Application can retry or handle error appropriately
-4. **Concurrent map access**: Existing registry.mu handles server-side synchronization
-5. **Ack timeout**: Sender times out if not all acks received within timeout period
-6. **Infinite loop prevention**: Use Receive() for listen-only, Respond() for listen-and-respond
-7. **Nil response**: Respond() can receive nil from outgoing channel to skip broadcasting
-8. **Sender exclusion**: Server's getChannelPeers() excludes sender from peer list
-9. **Receivers join after Send() starts**: Server polls for new receivers every 100ms during wait
-
-### Operation Ordering and Concurrency
-
-**Single Client Constraints**:
-- A client can only perform ONE operation at a time (enforced by `opMu` lock)
-- Valid operations: `Send()`, `Receive()`, or `Respond()`
-- Concurrent operations on same client are serialized (queued), not rejected
-
-**Valid Patterns**:
-```go
-// Pattern 1: Send only
-client.Send(data)  // OK
-
-// Pattern 2: Receive only (listen loop)
-for {
-    client.Receive(incoming)  // OK - sequential calls
-}
-
-// Pattern 3: Respond only (request-response loop)
-for {
-    client.Respond(incoming, outgoing)  // OK - sequential calls
-}
-
-// Pattern 4: Mixed (but sequential)
-client.Send(data)           // OK
-client.Receive(incoming)    // OK - after Send() completes
-client.Send(response)       // OK - after Receive() completes
-```
-
-**Concurrent Patterns** (serialized automatically):
-```go
-// Concurrent operations on same client - serialized by opMu
-go client.Send(data1)        // Executes first
-go client.Send(data2)        // Waits for data1 to complete, then executes
-
-// Send while Receive is blocked - serialized
-go client.Receive(incoming)  // Blocks waiting for message
-client.Send(data)            // Waits for Receive() to complete, then executes
-```
-
-**No Ordering Requirements Between Different Clients**:
-- ClientA can `Send()` before any receivers call `Receive()`
-  - Server waits for receivers with timeout
-  - Sends error frame if timeout expires
-- ClientB can call `Receive()` before any senders call `Send()`
-  - Blocks waiting for broadcast message
-  - No timeout (waits indefinitely)
-- Multiple clients can `Send()` concurrently (different clients)
-  - Each Send() is independent
-  - Server handles each sequentially per sender
-
-**Server Behavior**:
-- **Does NOT queue operations** - handles frames as they arrive
-- **Sender blocks** if no receivers (waits with timeout)
-- **Receiver blocks** if no messages (waits indefinitely)
-- **No global ordering** - each client-server interaction is independent
-
-### API Design Rationale: Separate Receive() and Respond()
-
-**This is the chosen design** - separated methods for clarity and composability.
-
-**Benefits**:
-- Clearer intent: `Receive()` for listening only, `Respond()` for request-response pattern
-- No need for optional parameters
-- Simpler implementation of each method
-- More composable
-- Prevents accidental infinite loops
-
-### Locking Strategy
-
-**Server-side**:
-- Existing `registry.mu` (RWMutex) protects registry maps
-- `ackCollector.mu` protects ack counting within each collector
-- Blocking on `ackCollector.done` channel for synchronization
-
-**Client-side**:
-- `opMu` (Mutex) on Client serializes Send()/Receive()/Respond() operations
-- Concurrent calls to these methods on the same client will block and execute sequentially
-- No errors returned for concurrent attempts - operations are queued automatically
-- Without lock: operations would read from same `c.ctx.reads` channel and steal each other's frames
-- Lock is on Client (not connctx) because:
-  - It enforces a logical rule about client operations, not just resource protection
-  - connctx is a connection resource; Client is a logical participant
-  - The protocol design requires one operation per client at a time
-- Operations are sequential per client, but multiple clients can operate concurrently
+1. **Implicit Registration**: Client sends registration frame (flagNone) on connect
+2. **Server Excludes Sender**: `getChannelPeers()` excludes sender from peer list
+3. **Frame-by-Frame Sync**: Sender blocks after each frame until all acks received
+4. **Ack Aggregation**: N receivers → N acks → 1 ack to sender
+5. **FrameID Tracking**: Each broadcast frame gets unique FrameID for ack correlation
+6. **Sequence Field**: Chunk index (31 bits) + isFinal flag (1 bit)
+7. **Operation Serialization**: `opMu` prevents concurrent operations on same client
+8. **No Client-Side Filtering**: Server handles sender exclusion
+9. **Consolidated Frame Methods**: Single `sendFrame()` and `receiveFrame()` for all types
+10. **Error in Payload**: Error frames carry error message in payload field
