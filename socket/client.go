@@ -11,6 +11,13 @@ import (
 	"github.com/google/uuid"
 )
 
+type StreamMode int
+
+const (
+	ModeRequest StreamMode = iota // Send then receive response
+	ModeRespond                    // Receive then send response
+)
+
 type Client struct {
 	addr       string
 	clientID   uuid.UUID
@@ -163,7 +170,7 @@ func (c *Client) receiveFrame(frameType byte, reqID uuid.UUID) (*frame, error) {
 		}
 	}
 }
-func (c *Client) Stream(in io.Reader, out io.Writer, onComplete func(error)) {
+func (c *Client) Stream(in io.Reader, out io.Writer, mode StreamMode, onComplete func(error)) {
 	if onComplete == nil {
 		onComplete = func(error) {}
 	}
@@ -177,23 +184,40 @@ func (c *Client) Stream(in io.Reader, out io.Writer, onComplete func(error)) {
 	default:
 	}
 	c.session = &session{incoming: make(chan *assembledRequest, 1024)}
+	sess := c.session
 	c.sessionMu.Unlock()
 
 	go func() {
 		var err error
 		if in != nil && out != nil {
-			select {
-			case req := <-c.session.incoming:
-				out.Write(req.payload)
+			if mode == ModeRequest {
+				// Request mode: send first, then wait for response
 				err = c.doSend(in)
-			case <-c.ctx.closed:
-				err = errClosed
+				if err == nil {
+					select {
+					case req := <-sess.incoming:
+						out.Write(req.payload)
+					case <-c.ctx.closed:
+						err = errClosed
+					}
+				}
+			} else {
+				// Respond mode: receive first, then send response
+				select {
+				case req := <-sess.incoming:
+					out.Write(req.payload)
+					err = c.doSend(in)
+				case <-c.ctx.closed:
+					err = errClosed
+				}
 			}
 		} else if in != nil {
+			// Send mode: send from in
 			err = c.doSend(in)
 		} else if out != nil {
+			// Receive mode: wait for request, write to out
 			select {
-			case req := <-c.session.incoming:
+			case req := <-sess.incoming:
 				out.Write(req.payload)
 			case <-c.ctx.closed:
 				err = errClosed
