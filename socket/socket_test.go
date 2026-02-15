@@ -50,11 +50,11 @@ func TestClientEmptyPayload(t *testing.T) {
 	var receiveErr error
 	var wg sync.WaitGroup
 	wg.Add(1)
-	client2.Stream(nil, &buf, ModeRequest, func(err error) {
+	client2.SubscriptionStream(&buf, func(err error) {
 		receiveErr = err
 		wg.Done()
 	})
-	client1.Stream(strings.NewReader(""), nil, ModeRequest, nil)
+	client1.BroadcastStream(strings.NewReader(""), nil)
 
 	wg.Wait()
 
@@ -83,11 +83,11 @@ func TestClientLargePayload(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 
-	client2.Stream(nil, &buf, ModeRequest, func(err error) {
+	client2.SubscriptionStream(&buf, func(err error) {
 		receiveErr = err
 		wg.Done()
 	})
-	client1.Stream(bytes.NewReader(largeData), nil, ModeRequest, nil)
+	client1.BroadcastStream(bytes.NewReader(largeData), nil)
 
 	wg.Wait()
 
@@ -133,11 +133,11 @@ func TestClientBoundaryPayloadSizes(t *testing.T) {
 			var wg sync.WaitGroup
 			wg.Add(1)
 
-			client2.Stream(nil, &buf, ModeRequest, func(err error) {
+			client2.SubscriptionStream(&buf, func(err error) {
 				receiveErr = err
 				wg.Done()
 			})
-			client1.Stream(bytes.NewReader(data), nil, ModeRequest, nil)
+			client1.BroadcastStream(bytes.NewReader(data), nil)
 
 			wg.Wait()
 
@@ -169,11 +169,11 @@ func TestClientSequentialRequests(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(2)
 
-		client2.Stream(strings.NewReader("echo"), &reqBuf, ModeRespond, func(err error) {
+		client2.SubscriptionStream(&reqBuf, func(err error) {
 			wg.Done()
 		})
 
-		client1.Stream(bytes.NewReader(data), nil, ModeRequest, func(err error) {
+		client1.BroadcastStream(bytes.NewReader(data), func(err error) {
 			wg.Done()
 		})
 
@@ -197,13 +197,13 @@ func TestClientMultipleConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	client2.Stream(nil, &buf2, ModeRequest, func(err error) {
+	client2.SubscriptionStream(&buf2, func(err error) {
 		wg.Done()
 	})
-	client3.Stream(nil, &buf3, ModeRequest, func(err error) {
+	client3.SubscriptionStream(&buf3, func(err error) {
 		wg.Done()
 	})
-	client1.Stream(strings.NewReader("broadcast"), nil, ModeRequest, nil)
+	client1.BroadcastStream(strings.NewReader("broadcast"), nil)
 
 	wg.Wait()
 
@@ -232,18 +232,30 @@ func TestClientRequestResponse(t *testing.T) {
 
 	wg.Add(2)
 
-	clientB.Stream(strings.NewReader("pong"), &requestB, ModeRespond, func(err error) {
+	// ClientB: receive ping, then send pong
+	clientB.SubscriptionStream(&requestB, func(err error) {
 		if err != nil {
-			t.Errorf("ClientB respond failed: %v", err)
+			t.Errorf("ClientB receive failed: %v", err)
 		}
-		wg.Done()
+		clientB.BroadcastStream(strings.NewReader("pong"), func(err error) {
+			if err != nil {
+				t.Errorf("ClientB send failed: %v", err)
+			}
+			wg.Done()
+		})
 	})
 
-	clientA.Stream(strings.NewReader("ping"), &responseA, ModeRequest, func(err error) {
+	// ClientA: send ping, then receive pong
+	clientA.BroadcastStream(strings.NewReader("ping"), func(err error) {
 		if err != nil {
-			t.Errorf("ClientA request failed: %v", err)
+			t.Errorf("ClientA send failed: %v", err)
 		}
-		wg.Done()
+		clientA.SubscriptionStream(&responseA, func(err error) {
+			if err != nil {
+				t.Errorf("ClientA receive failed: %v", err)
+			}
+			wg.Done()
+		})
 	})
 
 	wg.Wait()
@@ -268,13 +280,13 @@ func TestClientReadError(t *testing.T) {
 	client2, _ := NewClient("127.0.0.1:9098", channelID)
 
 	var buf bytes.Buffer
-	client2.Stream(nil, &buf, ModeRequest, nil)
-
-	var readErr error
 	var wg sync.WaitGroup
 	wg.Add(1)
+	client2.SubscriptionStream(&buf, nil)
+
+	var readErr error
 	errReader := &errorReader{err: errors.New("read error")}
-	client1.Stream(errReader, nil, ModeRequest, func(err error) {
+	client1.BroadcastStream(errReader, func(err error) {
 		readErr = err
 		wg.Done()
 	})
@@ -294,7 +306,7 @@ func TestTimeoutNoReceivers(t *testing.T) {
 	channelID := uuid.New()
 	publisher, _ := NewClient("127.0.0.1:9200", channelID)
 
-	publisher.Stream(strings.NewReader("test"), nil, ModeRequest, nil)
+	publisher.BroadcastStream(strings.NewReader("test"), nil)
 }
 
 func BenchmarkSendReceive(b *testing.B) {
@@ -312,10 +324,10 @@ func BenchmarkSendReceive(b *testing.B) {
 		var buf bytes.Buffer
 		var wg sync.WaitGroup
 		wg.Add(1)
-		client2.Stream(nil, &buf, ModeRequest, func(err error) {
+		client2.SubscriptionStream(&buf, func(err error) {
 			wg.Done()
 		})
-		client1.Stream(bytes.NewReader(data), nil, ModeRequest, nil)
+		client1.BroadcastStream(bytes.NewReader(data), nil)
 		wg.Wait()
 	}
 }
@@ -335,10 +347,10 @@ func BenchmarkSendReceive_1KB(b *testing.B) {
 		var buf bytes.Buffer
 		var wg sync.WaitGroup
 		wg.Add(1)
-		client2.Stream(nil, &buf, ModeRequest, func(err error) {
+		client2.SubscriptionStream(&buf, func(err error) {
 			wg.Done()
 		})
-		client1.Stream(bytes.NewReader(data), nil, ModeRequest, nil)
+		client1.BroadcastStream(bytes.NewReader(data), nil)
 		wg.Wait()
 	}
 }
@@ -358,10 +370,10 @@ func BenchmarkSendReceive_64KB(b *testing.B) {
 		var buf bytes.Buffer
 		var wg sync.WaitGroup
 		wg.Add(1)
-		client2.Stream(nil, &buf, ModeRequest, func(err error) {
+		client2.SubscriptionStream(&buf, func(err error) {
 			wg.Done()
 		})
-		client1.Stream(bytes.NewReader(data), nil, ModeRequest, nil)
+		client1.BroadcastStream(bytes.NewReader(data), nil)
 		wg.Wait()
 	}
 }
@@ -381,10 +393,10 @@ func BenchmarkSendReceive_1MB(b *testing.B) {
 		var buf bytes.Buffer
 		var wg sync.WaitGroup
 		wg.Add(1)
-		client2.Stream(nil, &buf, ModeRequest, func(err error) {
+		client2.SubscriptionStream(&buf, func(err error) {
 			wg.Done()
 		})
-		client1.Stream(bytes.NewReader(data), nil, ModeRequest, nil)
+		client1.BroadcastStream(bytes.NewReader(data), nil)
 		wg.Wait()
 	}
 }
@@ -403,10 +415,10 @@ func TestNoGoroutineLeak(t *testing.T) {
 		var buf bytes.Buffer
 		var wg sync.WaitGroup
 		wg.Add(1)
-		client2.Stream(nil, &buf, ModeRequest, func(err error) {
+		client2.SubscriptionStream(&buf, func(err error) {
 			wg.Done()
 		})
-		client1.Stream(strings.NewReader("test"), nil, ModeRequest, nil)
+		client1.BroadcastStream(strings.NewReader("test"), nil)
 		wg.Wait()
 	}
 
@@ -439,10 +451,10 @@ func TestNoMemoryLeak(t *testing.T) {
 		var buf bytes.Buffer
 		var wg sync.WaitGroup
 		wg.Add(1)
-		client2.Stream(nil, &buf, ModeRequest, func(err error) {
+		client2.SubscriptionStream(&buf, func(err error) {
 			wg.Done()
 		})
-		client1.Stream(strings.NewReader("test"), nil, ModeRequest, nil)
+		client1.BroadcastStream(strings.NewReader("test"), nil)
 		wg.Wait()
 	}
 
@@ -467,10 +479,10 @@ func TestConnectionCleanup(t *testing.T) {
 	var buf bytes.Buffer
 	var wg sync.WaitGroup
 	wg.Add(1)
-	client2.Stream(nil, &buf, ModeRequest, func(err error) {
+	client2.SubscriptionStream(&buf, func(err error) {
 		wg.Done()
 	})
-	client1.Stream(strings.NewReader("test"), nil, ModeRequest, nil)
+	client1.BroadcastStream(strings.NewReader("test"), nil)
 
 	wg.Wait()
 
@@ -496,13 +508,13 @@ func TestMemoryStressLargePayloads(t *testing.T) {
 		iter := i
 		var wg sync.WaitGroup
 		wg.Add(1)
-		client2.Stream(nil, &buf, ModeRequest, func(err error) {
+		client2.SubscriptionStream(&buf, func(err error) {
 			if buf.Len() != len(data) {
 				t.Fatalf("Iteration %d: expected %d bytes, got %d", iter, len(data), buf.Len())
 			}
 			wg.Done()
 		})
-		client1.Stream(bytes.NewReader(data), nil, ModeRequest, nil)
+		client1.BroadcastStream(bytes.NewReader(data), nil)
 		wg.Wait()
 	}
 }
@@ -519,10 +531,10 @@ func TestMemoryStressConcurrent(t *testing.T) {
 		var buf bytes.Buffer
 		var wg sync.WaitGroup
 		wg.Add(1)
-		client2.Stream(nil, &buf, ModeRequest, func(err error) {
+		client2.SubscriptionStream(&buf, func(err error) {
 			wg.Done()
 		})
-		client1.Stream(strings.NewReader("test"), nil, ModeRequest, nil)
+		client1.BroadcastStream(strings.NewReader("test"), nil)
 		wg.Wait()
 	}
 	server.Stop()
@@ -545,10 +557,10 @@ func TestMemoryPoolEfficiency(t *testing.T) {
 		var buf bytes.Buffer
 		var wg sync.WaitGroup
 		wg.Add(1)
-		client2.Stream(nil, &buf, ModeRequest, func(err error) {
+		client2.SubscriptionStream(&buf, func(err error) {
 			wg.Done()
 		})
-		client1.Stream(bytes.NewReader(data), nil, ModeRequest, nil)
+		client1.BroadcastStream(bytes.NewReader(data), nil)
 		wg.Wait()
 	}
 
@@ -579,10 +591,10 @@ func TestMemoryLeakUnderLoad(t *testing.T) {
 		var buf bytes.Buffer
 		var wg sync.WaitGroup
 		wg.Add(1)
-		client2.Stream(nil, &buf, ModeRequest, func(err error) {
+		client2.SubscriptionStream(&buf, func(err error) {
 			wg.Done()
 		})
-		client1.Stream(strings.NewReader("load test"), nil, ModeRequest, nil)
+		client1.BroadcastStream(strings.NewReader("load test"), nil)
 		wg.Wait()
 	}
 
@@ -629,13 +641,13 @@ func testSendThenReceive(t *testing.T, server *Server, channelID uuid.UUID) {
 	var buf bytes.Buffer
 	var wg sync.WaitGroup
 	wg.Add(1)
-	client2.Stream(nil, &buf, ModeRequest, func(err error) {
+	client2.SubscriptionStream(&buf, func(err error) {
 		if err != nil {
 			t.Errorf("Receive failed: %v", err)
 		}
 		wg.Done()
 	})
-	client1.Stream(strings.NewReader("test"), nil, ModeRequest, nil)
+	client1.BroadcastStream(strings.NewReader("test"), nil)
 	wg.Wait()
 
 	if buf.String() != "test" {
@@ -650,13 +662,13 @@ func testReceiveThenSend(t *testing.T, server *Server, channelID uuid.UUID) {
 	var buf bytes.Buffer
 	var wg sync.WaitGroup
 	wg.Add(1)
-	client2.Stream(nil, &buf, ModeRequest, func(err error) {
+	client2.SubscriptionStream(&buf, func(err error) {
 		if err != nil {
 			t.Errorf("Receive failed: %v", err)
 		}
 		wg.Done()
 	})
-	client1.Stream(strings.NewReader("test"), nil, ModeRequest, nil)
+	client1.BroadcastStream(strings.NewReader("test"), nil)
 	wg.Wait()
 
 	if buf.String() != "test" {
@@ -672,16 +684,16 @@ func testSendThenRespond(t *testing.T, server *Server, channelID uuid.UUID) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 
-	// Client2 receives request and sends response
-	client2.Stream(strings.NewReader("response"), &reqBuf, ModeRespond, func(err error) {
+	// Client2 receives request
+	client2.SubscriptionStream(&reqBuf, func(err error) {
 		if err != nil {
-			t.Errorf("Respond failed: %v", err)
+			t.Errorf("Receive failed: %v", err)
 		}
 		wg.Done()
 	})
 
 	// Client1 sends request
-	client1.Stream(strings.NewReader("request"), nil, ModeRequest, nil)
+	client1.BroadcastStream(strings.NewReader("request"), nil)
 	wg.Wait()
 
 	if reqBuf.String() != "request" {
@@ -697,16 +709,16 @@ func testRespondThenSend(t *testing.T, server *Server, channelID uuid.UUID) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 
-	// Client2 receives request and sends response
-	client2.Stream(strings.NewReader("response"), &reqBuf, ModeRespond, func(err error) {
+	// Client2 receives request
+	client2.SubscriptionStream(&reqBuf, func(err error) {
 		if err != nil {
-			t.Errorf("Respond failed: %v", err)
+			t.Errorf("Receive failed: %v", err)
 		}
 		wg.Done()
 	})
 
 	// Client1 sends request
-	client1.Stream(strings.NewReader("request"), nil, ModeRequest, nil)
+	client1.BroadcastStream(strings.NewReader("request"), nil)
 	wg.Wait()
 
 	if reqBuf.String() != "request" {
@@ -721,13 +733,13 @@ func testConcurrentSendReceive(t *testing.T, server *Server, channelID uuid.UUID
 	var buf bytes.Buffer
 	var wg sync.WaitGroup
 	wg.Add(1)
-	client2.Stream(nil, &buf, ModeRequest, func(err error) {
+	client2.SubscriptionStream(&buf, func(err error) {
 		if err != nil {
 			t.Errorf("Receive failed: %v", err)
 		}
 		wg.Done()
 	})
-	client1.Stream(strings.NewReader("test"), nil, ModeRequest, nil)
+	client1.BroadcastStream(strings.NewReader("test"), nil)
 	wg.Wait()
 
 	if buf.String() != "test" {
@@ -743,16 +755,16 @@ func testConcurrentSendRespond(t *testing.T, server *Server, channelID uuid.UUID
 	var wg sync.WaitGroup
 	wg.Add(1)
 
-	// Client2 receives request and sends response
-	client2.Stream(strings.NewReader("response"), &reqBuf, ModeRespond, func(err error) {
+	// Client2 receives request
+	client2.SubscriptionStream(&reqBuf, func(err error) {
 		if err != nil {
-			t.Errorf("Respond failed: %v", err)
+			t.Errorf("Receive failed: %v", err)
 		}
 		wg.Done()
 	})
 
 	// Client1 sends request
-	client1.Stream(strings.NewReader("request"), nil, ModeRequest, nil)
+	client1.BroadcastStream(strings.NewReader("request"), nil)
 	wg.Wait()
 
 	if reqBuf.String() != "request" {

@@ -7,13 +7,11 @@ This document describes the socket package implementation - a TCP-based pub-sub 
 ## Architecture
 
 The socket layer is a **broadcast-only pub-sub system**:
-- `Stream(in io.Reader, out io.Writer, onComplete func(error))` - unified async method that handles send, receive, and respond patterns
-  - `in != nil, out == nil` - send mode: broadcasts message to ALL other clients on channel (excludes sender)
-  - `in == nil, out != nil` - receive mode: receives broadcasts from other clients, writes payload to out
-  - `in != nil, out != nil` - respond mode: receives broadcast, writes request to out, broadcasts response from in
+- `BroadcastStream(in io.Reader, onComplete func(error))` - broadcasts message to ALL other clients on channel (excludes sender)
+- `SubscriptionStream(out io.Writer, onComplete func(error))` - receives broadcasts from other clients, writes payload to out
 - Server broadcasts frames to ALL clients EXCEPT the sender
 - Clients don't need to filter out their own messages (server handles exclusion)
-- Session is recreated on each Stream call to prevent unconsumed message issues
+- Session is recreated on each call to prevent unconsumed message issues
 
 ## Frame Protocol
 
@@ -169,15 +167,23 @@ type ackCollector struct {
 
 ### API Methods
 
-**Stream(in io.Reader, out io.Writer, onComplete func(error))**:
+**BroadcastStream(in io.Reader, onComplete func(error))**:
 ```go
-func (c *Client) Stream(in io.Reader, out io.Writer, onComplete func(error)) {
+func (c *Client) BroadcastStream(in io.Reader, onComplete func(error)) {
     // Async - returns immediately
     // Recreates session to prevent unconsumed message issues
-    // Spawns goroutine that:
-    //   - If in != nil && out != nil: waits for incoming request, writes to out, sends response from in
-    //   - If in != nil && out == nil: sends message from in (broadcast)
-    //   - If in == nil && out != nil: waits for incoming request, writes to out (receive)
+    // Spawns goroutine that broadcasts message from in to all other clients
+    // Calls onComplete(error) when operation finishes
+    // If onComplete is nil, uses no-op function
+}
+```
+
+**SubscriptionStream(out io.Writer, onComplete func(error))**:
+```go
+func (c *Client) SubscriptionStream(out io.Writer, onComplete func(error)) {
+    // Async - returns immediately
+    // Recreates session to prevent unconsumed message issues
+    // Spawns goroutine that waits for incoming broadcast and writes to out
     // Calls onComplete(error) when operation finishes
     // If onComplete is nil, uses no-op function
 }
@@ -185,28 +191,30 @@ func (c *Client) Stream(in io.Reader, out io.Writer, onComplete func(error)) {
 
 **Usage Patterns**:
 ```go
-// Send only
-client.Stream(strings.NewReader("hello"), nil, func(err error) {
+// Broadcast message
+client.BroadcastStream(strings.NewReader("hello"), func(err error) {
     if err != nil {
-        log.Printf("Send failed: %v", err)
+        log.Printf("Broadcast failed: %v", err)
     }
 })
 
-// Receive only
+// Subscribe to receive messages
 var buf bytes.Buffer
-client.Stream(nil, &buf, func(err error) {
+client.SubscriptionStream(&buf, func(err error) {
     if err != nil {
         log.Printf("Receive failed: %v", err)
     }
     fmt.Println(buf.String())
 })
 
-// Respond (request-response)
+// Request-response pattern
 var reqBuf bytes.Buffer
-client.Stream(bytes.NewReader(respData), &reqBuf, func(err error) {
+client.SubscriptionStream(&reqBuf, func(err error) {
     if err != nil {
-        log.Printf("Respond failed: %v", err)
+        log.Printf("Receive failed: %v", err)
     }
+    // Send response
+    client.BroadcastStream(bytes.NewReader(respData), nil)
 })
 ```
 
@@ -255,9 +263,9 @@ client.Stream(bytes.NewReader(respData), &reqBuf, func(err error) {
 - Each Stream operation gets a fresh session
 
 **Callback Pattern**:
-- `Stream()` is async and returns immediately
-- Spawns goroutine to handle the operation
-- Calls `onComplete(error)` callback when operation finishes
+- `BroadcastStream()` and `SubscriptionStream()` are async and return immediately
+- Spawn goroutines to handle operations
+- Call `onComplete(error)` callback when operation finishes
 - If onComplete is nil, uses no-op function to prevent panics
 - Background goroutines handle frame routing and request assembly
 
@@ -332,30 +340,30 @@ client.Stream(bytes.NewReader(respData), &reqBuf, func(err error) {
 
 ## Usage Examples
 
-**Send only**:
+**Broadcast message**:
 ```go
 client, _ := NewClient("127.0.0.1:9090", channelID)
 // No explicit close - idleMonitor handles lifecycle
 
 var wg sync.WaitGroup
 wg.Add(1)
-client.Stream(strings.NewReader("hello"), nil, func(err error) {
+client.BroadcastStream(strings.NewReader("hello"), func(err error) {
     if err != nil {
-        log.Printf("Send failed: %v", err)
+        log.Printf("Broadcast failed: %v", err)
     }
     wg.Done()
 })
-wg.Wait() // Block until send completes
+wg.Wait() // Block until broadcast completes
 ```
 
-**Receive only**:
+**Subscribe to messages**:
 ```go
 client, _ := NewClient("127.0.0.1:9090", channelID)
 
 var buf bytes.Buffer
 var wg sync.WaitGroup
 wg.Add(1)
-client.Stream(nil, &buf, func(err error) {
+client.SubscriptionStream(&buf, func(err error) {
     if err != nil {
         log.Printf("Receive failed: %v", err)
     }
@@ -365,7 +373,7 @@ client.Stream(nil, &buf, func(err error) {
 wg.Wait() // Block until receive completes
 ```
 
-**Respond (request-response)**:
+**Request-response pattern**:
 ```go
 client, _ := NewClient("127.0.0.1:9090", channelID)
 
@@ -373,21 +381,23 @@ var reqBuf bytes.Buffer
 respData := []byte("response")
 var wg sync.WaitGroup
 wg.Add(1)
-client.Stream(bytes.NewReader(respData), &reqBuf, func(err error) {
+client.SubscriptionStream(&reqBuf, func(err error) {
     if err != nil {
-        log.Printf("Respond failed: %v", err)
+        log.Printf("Receive failed: %v", err)
     }
+    // Send response after receiving request
+    client.BroadcastStream(bytes.NewReader(respData), nil)
     wg.Done()
 })
-wg.Wait() // Block until respond completes
+wg.Wait() // Block until complete
 ```
 
-**Multiple transactions** (simplified with nil callback):
+**Multiple broadcasts** (simplified with nil callback):
 ```go
 client, _ := NewClient("127.0.0.1:9090", channelID)
 
 for i := 0; i < 5; i++ {
-    client.Stream(strings.NewReader(fmt.Sprintf("msg%d", i)), nil, nil)
+    client.BroadcastStream(strings.NewReader(fmt.Sprintf("msg%d", i)), nil)
 }
 time.Sleep(100 * time.Millisecond) // Allow operations to complete
 ```
@@ -569,16 +579,16 @@ case <-time.After(30 * time.Second):
 6. **FrameID Tracking**: Each broadcast frame gets unique FrameID for ack correlation
 7. **RequestID Purpose**: Groups frames together (start/chunk/end) and enables frame filtering
 8. **Sequence Field**: Chunk index (31 bits) + isFinal flag (1 bit) using `sequenceFinalFlag = 0x80000000`
-9. **Unified API**: Single `Stream()` method handles send, receive, and respond patterns based on in/out parameters
+9. **Dual API**: `BroadcastStream()` for sending, `SubscriptionStream()` for receiving - clear separation of concerns
 10. **Callback Pattern**: Operations use `onComplete(error)` callback instead of Wait() pattern
 11. **Frame Routing**: `routeFrames()` separates request frames from response frames, handles registration ack
 12. **No Client-Side Filtering**: Server handles sender exclusion
 13. **Consolidated Frame Methods**: Single `sendFrame()` for all frame types
 14. **Error in Payload**: Error frames carry error message in payload field
 15. **Immediate Acknowledgment**: `processIncoming()` sends acks immediately upon receiving frames, not waiting for consumer
-16. **Session Recreation**: Session recreated on each `Stream()` call to prevent unconsumed message issues
+16. **Session Recreation**: Session recreated on each `BroadcastStream()` or `SubscriptionStream()` call to prevent unconsumed message issues
 17. **Idle Management**: `idleMonitor()` closes client after 5s inactivity, checks every 1s
-18. **Activity Tracking**: `updateActivity()` called on each Stream() to reset idle timer
+18. **Activity Tracking**: `updateActivity()` called on each BroadcastStream() or SubscriptionStream() to reset idle timer
 19. **No Public Close**: Client lifecycle managed by idleMonitor, no public Close() method
 20. **Channel Notification**: Registry uses `channelNotify` map to wake up senders when receivers join
 21. **TCP Optimizations**: NoDelay enabled, 2MB read/write buffers on both client and server

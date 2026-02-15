@@ -11,13 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type StreamMode int
-
-const (
-	ModeRequest StreamMode = iota // Send then receive response
-	ModeRespond                    // Receive then send response
-)
-
 type Client struct {
 	addr       string
 	clientID   uuid.UUID
@@ -170,7 +163,28 @@ func (c *Client) receiveFrame(frameType byte, reqID uuid.UUID) (*frame, error) {
 		}
 	}
 }
-func (c *Client) Stream(in io.Reader, out io.Writer, mode StreamMode, onComplete func(error)) {
+func (c *Client) BroadcastStream(in io.Reader, onComplete func(error)) {
+	if onComplete == nil {
+		onComplete = func(error) {}
+	}
+	c.updateActivity()
+	c.sessionMu.Lock()
+	select {
+	case <-c.session.incoming:
+		c.sessionMu.Unlock()
+		onComplete(errors.New("session has unconsumed messages"))
+		return
+	default:
+	}
+	c.session = &session{incoming: make(chan *assembledRequest, 1024)}
+	c.sessionMu.Unlock()
+
+	go func() {
+		onComplete(c.doSend(in))
+	}()
+}
+
+func (c *Client) SubscriptionStream(out io.Writer, onComplete func(error)) {
 	if onComplete == nil {
 		onComplete = func(error) {}
 	}
@@ -189,39 +203,11 @@ func (c *Client) Stream(in io.Reader, out io.Writer, mode StreamMode, onComplete
 
 	go func() {
 		var err error
-		if in != nil && out != nil {
-			if mode == ModeRequest {
-				// Request mode: send first, then wait for response
-				err = c.doSend(in)
-				if err == nil {
-					select {
-					case req := <-sess.incoming:
-						out.Write(req.payload)
-					case <-c.ctx.closed:
-						err = errClosed
-					}
-				}
-			} else {
-				// Respond mode: receive first, then send response
-				select {
-				case req := <-sess.incoming:
-					out.Write(req.payload)
-					err = c.doSend(in)
-				case <-c.ctx.closed:
-					err = errClosed
-				}
-			}
-		} else if in != nil {
-			// Send mode: send from in
-			err = c.doSend(in)
-		} else if out != nil {
-			// Receive mode: wait for request, write to out
-			select {
-			case req := <-sess.incoming:
-				out.Write(req.payload)
-			case <-c.ctx.closed:
-				err = errClosed
-			}
+		select {
+		case req := <-sess.incoming:
+			out.Write(req.payload)
+		case <-c.ctx.closed:
+			err = errClosed
 		}
 		onComplete(err)
 	}()
