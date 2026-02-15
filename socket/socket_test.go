@@ -87,7 +87,6 @@ func TestClientEmptyPayload(t *testing.T) {
 
 	var buf bytes.Buffer
 	client2.Receive(&buf)
-	time.Sleep(100 * time.Millisecond) // Ensure both clients fully registered
 	client1.Send(strings.NewReader(""))
 
 	if err := client1.Wait(); err != nil {
