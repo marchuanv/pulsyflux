@@ -24,6 +24,8 @@ type Client struct {
 	wg         sync.WaitGroup
 	registered chan struct{}
 	session    *session
+	lastActive time.Time
+	activityMu sync.Mutex
 }
 
 type session struct {
@@ -70,10 +72,12 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 	c.wg.Add(2)
 	go c.routeFrames()
 	go c.processIncoming()
+	c.lastActive = time.Now()
+	go c.idleMonitor()
 
 	// Send registration frame to trigger server-side registration
 	if err := c.sendRegistration(); err != nil {
-		c.Close()
+		c.close()
 		return nil, err
 	}
 	
@@ -81,7 +85,7 @@ func NewClient(addr string, channelID uuid.UUID) (*Client, error) {
 	select {
 	case <-c.registered:
 	case <-time.After(2 * time.Second):
-		c.Close()
+		c.close()
 		return nil, errors.New("registration timeout")
 	}
 
@@ -159,39 +163,69 @@ func (c *Client) receiveFrame(frameType byte, reqID uuid.UUID) (*frame, error) {
 		}
 	}
 }
-func (c *Client) Stream(in io.Reader, out io.Writer) error {
+func (c *Client) Stream(in io.Reader, out io.Writer, onComplete func(error)) {
+	if onComplete == nil {
+		onComplete = func(error) {}
+	}
+	c.updateActivity()
 	c.sessionMu.Lock()
 	select {
 	case <-c.session.incoming:
 		c.sessionMu.Unlock()
-		return errors.New("session has unconsumed messages")
+		onComplete(errors.New("session has unconsumed messages"))
+		return
 	default:
 	}
 	c.session = &session{incoming: make(chan *assembledRequest, 1024)}
 	c.sessionMu.Unlock()
 
-	if in != nil && out != nil {
+	go func() {
+		var err error
+		if in != nil && out != nil {
+			select {
+			case req := <-c.session.incoming:
+				out.Write(req.payload)
+				err = c.doSend(in)
+			case <-c.ctx.closed:
+				err = errClosed
+			}
+		} else if in != nil {
+			err = c.doSend(in)
+		} else if out != nil {
+			select {
+			case req := <-c.session.incoming:
+				out.Write(req.payload)
+			case <-c.ctx.closed:
+				err = errClosed
+			}
+		}
+		onComplete(err)
+	}()
+}
+
+func (c *Client) updateActivity() {
+	c.activityMu.Lock()
+	c.lastActive = time.Now()
+	c.activityMu.Unlock()
+}
+
+func (c *Client) idleMonitor() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
 		select {
-		case req := <-c.session.incoming:
-			out.Write(req.payload)
-			return c.doSend(in)
-		case <-c.ctx.closed:
-			return errClosed
+		case <-ticker.C:
+			c.activityMu.Lock()
+			idle := time.Since(c.lastActive)
+			c.activityMu.Unlock()
+			if idle > 15*time.Second {
+				c.close()
+				return
+			}
+		case <-c.done:
+			return
 		}
 	}
-	if in != nil {
-		return c.doSend(in)
-	}
-	if out != nil {
-		select {
-		case req := <-c.session.incoming:
-			out.Write(req.payload)
-			return nil
-		case <-c.ctx.closed:
-			return errClosed
-		}
-	}
-	return nil
 }
 
 func (c *Client) doSend(r io.Reader) error {
@@ -389,7 +423,7 @@ func (c *Client) processIncoming() {
 
 
 
-func (c *Client) Close() error {
+func (c *Client) close() error {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 
