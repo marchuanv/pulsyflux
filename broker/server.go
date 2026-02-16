@@ -2,6 +2,7 @@ package broker
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	tcpconn "pulsyflux/tcp-conn"
 	"sync"
@@ -9,20 +10,18 @@ import (
 	"github.com/google/uuid"
 )
 
+var (
+	GlobalControlUUID = uuid.MustParse("00000000-0000-0000-0000-000000000000")
+)
+
 type Message struct {
 	Topic   string
 	Payload []byte
 }
 
-type clientInfo struct {
-	id      uuid.UUID
-	wrapped *tcpconn.Connection
-	sendConn *tcpconn.Connection
-}
-
 type channel struct {
 	id      uuid.UUID
-	clients map[uuid.UUID]*clientInfo
+	clients map[uuid.UUID]*tcpconn.Connection
 	mu      sync.RWMutex
 }
 
@@ -30,7 +29,7 @@ type Server struct {
 	address  string
 	listener net.Listener
 	channels map[uuid.UUID]*channel
-	clients  map[net.Conn]*clientInfo
+	clients  map[uuid.UUID]net.Conn
 	mu       sync.RWMutex
 	done     chan struct{}
 }
@@ -39,7 +38,7 @@ func NewServer(address string) *Server {
 	return &Server{
 		address:  address,
 		channels: make(map[uuid.UUID]*channel),
-		clients:  make(map[net.Conn]*clientInfo),
+		clients:  make(map[uuid.UUID]net.Conn),
 		done:     make(chan struct{}),
 	}
 }
@@ -77,10 +76,12 @@ func (s *Server) acceptLoop() {
 }
 
 func (s *Server) handleClient(conn net.Conn) {
-	wrapped := tcpconn.WrapConnection(conn, uuid.UUID{})
+	// Use global control UUID to receive control messages from all clients
+	control := tcpconn.WrapConnection(conn, GlobalControlUUID)
 
+	// Process control messages (only for establishing channels)
 	for {
-		data, err := wrapped.Receive()
+		data, err := control.Receive()
 		if err != nil {
 			return
 		}
@@ -100,51 +101,74 @@ func (s *Server) handleClient(conn net.Conn) {
 			continue
 		}
 
+		// Register client
 		s.mu.Lock()
-		client := s.clients[conn]
-		if client == nil {
-			sendConn := tcpconn.NewConnection(s.listener.Addr().String(), clientID)
-			client = &clientInfo{
-				id:       clientID,
-				wrapped:  wrapped,
-				sendConn: sendConn,
-			}
-			s.clients[conn] = client
+		if s.clients[clientID] == nil {
+			s.clients[clientID] = conn
 		}
 
+		// Create/get channel
 		ch := s.channels[channelID]
 		if ch == nil {
 			ch = &channel{
 				id:      channelID,
-				clients: make(map[uuid.UUID]*clientInfo),
+				clients: make(map[uuid.UUID]*tcpconn.Connection),
 			}
 			s.channels[channelID] = ch
 		}
-		if ch.clients[clientID] == nil {
-			ch.clients[clientID] = client
-		}
-		s.mu.Unlock()
 
-		if len(cmsg.Payload) > 0 {
-			msg := Message{
-				Topic:   channelID.String(),
-				Payload: cmsg.Payload,
-			}
-			msgData, _ := json.Marshal(msg)
-			ch.broadcast(clientID, msgData)
+		// Create channel connection and start handler
+		ch.mu.Lock()
+		if ch.clients[clientID] == nil {
+			// Wrap with clientID to ensure each client has unique logical connection
+			// even when multiple clients join the same channel
+			channelConn := tcpconn.WrapConnection(conn, clientID)
+			ch.clients[clientID] = channelConn
+			go s.handleChannel(ch, clientID, channelConn)
 		}
+		ch.mu.Unlock()
+		s.mu.Unlock()
+	}
+}
+
+func (s *Server) handleChannel(ch *channel, clientID uuid.UUID, channelConn *tcpconn.Connection) {
+	for {
+		data, err := channelConn.Receive()
+		if err != nil {
+			fmt.Printf("handleChannel error for client %s: %v\n", clientID, err)
+			return
+		}
+
+		fmt.Printf("Server received message from client %s\n", clientID)
+
+		var msg Message
+		if err := json.Unmarshal(data, &msg); err != nil {
+			continue
+		}
+
+		// Broadcast to other clients
+		msgData, _ := json.Marshal(msg)
+		fmt.Printf("Broadcasting to %d clients\n", len(ch.clients)-1)
+		ch.broadcast(clientID, msgData)
 	}
 }
 
 func (ch *channel) broadcast(senderID uuid.UUID, data []byte) {
 	ch.mu.RLock()
-	for id, client := range ch.clients {
-		if id == senderID {
+	defer ch.mu.RUnlock()
+
+	fmt.Printf("Broadcasting from %s to %d clients\n", senderID, len(ch.clients))
+	for clientID, channelConn := range ch.clients {
+		if clientID == senderID {
+			fmt.Printf("Skipping sender %s\n", clientID)
 			continue
 		}
-		client.sendConn.Send(data)
+		fmt.Printf("Sending to client %s\n", clientID)
+		err := channelConn.Send(data)
+		if err != nil {
+			fmt.Printf("Error sending to %s: %v\n", clientID, err)
+		}
 	}
-	ch.mu.RUnlock()
 }
 
 func (s *Server) Stop() error {

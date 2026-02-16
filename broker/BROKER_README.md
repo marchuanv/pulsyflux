@@ -2,36 +2,89 @@
 
 A channel-based pub/sub message broker built on top of the tcp-conn package.
 
+## Design Rules
+
+### CRITICAL: Connection Pooling is Required
+
+**Multiple clients MUST share the same physical TCP connection via tcp-conn's connection pooling.**
+
+This is NOT a bug - this is the entire point of the connection pool:
+- Multiple clients connecting to the same broker address will share one physical TCP socket
+- The broker MUST distinguish clients using logical connections (UUIDs), NOT by net.Conn
+- Each client has a unique client UUID for identification
+- Each channel has a unique channel UUID for message routing
+- The tcp-conn multiplexing handles routing messages to the correct logical connection
+
+**DO NOT:**
+- Try to force separate physical connections per client
+- Use net.Conn as a client identifier
+- Assume one physical connection = one client
+
+**DO:**
+- Use client UUIDs to identify clients
+- Use channel UUIDs to route messages
+- Leverage tcp-conn's multiplexing for efficiency
+
 ## Architecture
 
-The broker uses a hierarchical connection model:
+The broker uses a hierarchical connection model with multiplexing:
 
 ```
-Client                          Server
-┌─────────────────┐            ┌─────────────────┐
-│ Control Conn    │───────────>│ Control Handler │
-│ (random UUID)   │            │ (empty UUID)    │
-└─────────────────┘            └─────────────────┘
-        │                               │
-        │ Sends Channel IDs             │ Creates Channels
-        ▼                               ▼
-┌─────────────────┐            ┌─────────────────┐
-│ Channel Conn    │<──────────>│ Channel Handler │
-│ (channel UUID)  │            │ (channel UUID)  │
-└─────────────────┘            └─────────────────┘
+Multiple Clients                    Server
+┌─────────────────┐                ┌─────────────────┐
+│ Client 1        │                │                 │
+│ UUID: client-1  │───┐            │                 │
+└─────────────────┘   │            │                 │
+                      ├──> Shared  │  Demultiplexer  │
+┌─────────────────┐   │    Physical│  Routes by UUID │
+│ Client 2        │───┤    TCP     │                 │
+│ UUID: client-2  │   │    Socket  │                 │
+└─────────────────┘   │            │                 │
+                      │            │                 │
+┌─────────────────┐   │            │                 │
+│ Client 3        │───┘            │                 │
+│ UUID: client-3  │                │                 │
+└─────────────────┘                └─────────────────┘
 ```
 
 ### Connection Layers
 
-1. **Control Connection**: Used to request channel creation
-   - Client: Each client has unique random UUID
-   - Server: Uses empty UUID to accept all control messages
-   - Purpose: Send channel IDs to join/create channels
+1. **Physical Layer**: Single TCP socket shared by multiple clients (via tcp-conn pooling)
+2. **Control Layer**: Global control UUID (00000000-0000-0000-0000-000000000000) for establishing channels
+   - **PURPOSE**: ONLY for initialization - establishing new channel connections
+   - **USAGE**: Client sends control message with ClientID + ChannelID to request channel creation
+   - **NOT FOR**: Message exchange, pub/sub, or any data transfer
+   - All clients send control messages on the same logical connection (GlobalControlUUID)
+   - Server receives control messages and creates channel connections for that client
+3. **Channel Layer**: Each channel has its own UUID for message routing
+   - **PURPOSE**: ALL message exchange happens here (pub/sub)
+   - **USAGE**: Client publishes/receives messages on channel-specific logical connections
+   - Messages are multiplexed over the shared physical connection
+   - tcp-conn's demux routes messages by UUID to the correct logical connection
 
-2. **Channel Connection**: Used for pub/sub messaging
-   - Both sides use the same channel UUID
-   - Multiple clients can connect to same channel
-   - Messages broadcast to all channel members except sender
+### Control vs Channel Connections
+
+**Control Connection (GlobalControlUUID):**
+```go
+// ONLY used once per channel to initialize
+controlMsg := clientMessage{
+    ClientID:  "client-uuid",
+    ChannelID: "channel-uuid",
+}
+control.Send(controlMsg) // Tells server: "Create channel connection for this client"
+```
+
+**Channel Connection (ChannelUUID):**
+```go
+// Used for ALL message exchange
+msg := Message{
+    Topic:   "events",
+    Payload: []byte("data"),
+}
+channelConn.Send(msg) // Actual pub/sub messages
+```
+
+**CRITICAL RULE**: Never send pub/sub messages on control connection. Control is ONLY for initialization.
 
 ### Key Concepts
 
