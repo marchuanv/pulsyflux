@@ -13,7 +13,7 @@ func TestConnection_SendReceive(t *testing.T) {
 	}
 	defer listener.Close()
 
-	id := uuid.New().String()
+	id := uuid.New()
 	go func() {
 		conn, _ := listener.Accept()
 		defer conn.Close()
@@ -43,7 +43,7 @@ func TestConnection_SendReceive(t *testing.T) {
 }
 
 func TestConnection_InvalidAddress(t *testing.T) {
-	c := NewConnection("invalid:99999", uuid.New().String())
+	c := NewConnection("invalid:99999", uuid.New())
 	if c != nil {
 		t.Error("Expected nil for invalid address")
 	}
@@ -56,7 +56,7 @@ func TestWrapConnection_ServerSide(t *testing.T) {
 	}
 	defer listener.Close()
 
-	clientID := uuid.New().String()
+	clientID := uuid.New()
 	serverDone := make(chan bool)
 	go func() {
 		conn, _ := listener.Accept()
@@ -108,7 +108,7 @@ func TestConnection_LargeMessage(t *testing.T) {
 	}
 	defer listener.Close()
 
-	id := uuid.New().String()
+	id := uuid.New()
 	go func() {
 		conn, _ := listener.Accept()
 		if conn == nil {
@@ -156,8 +156,10 @@ func TestConnection_MultipleLogicalConnections(t *testing.T) {
 		if conn == nil {
 			return
 		}
-		wrapped1 := WrapConnection(conn, "conn1")
-		wrapped2 := WrapConnection(conn, "conn2")
+		id1 := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+		id2 := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+		wrapped1 := WrapConnection(conn, id1)
+		wrapped2 := WrapConnection(conn, id2)
 
 		data1, _ := wrapped1.Receive()
 		wrapped1.Send(data1)
@@ -166,8 +168,10 @@ func TestConnection_MultipleLogicalConnections(t *testing.T) {
 		wrapped2.Send(data2)
 	}()
 
-	c1 := NewConnection(listener.Addr().String(), "conn1")
-	c2 := NewConnection(listener.Addr().String(), "conn2")
+	id1 := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	id2 := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	c1 := NewConnection(listener.Addr().String(), id1)
+	c2 := NewConnection(listener.Addr().String(), id2)
 
 	c1.Send([]byte("message1"))
 	c2.Send([]byte("message2"))
@@ -197,7 +201,7 @@ func TestConnection_PoolReferenceCount(t *testing.T) {
 				return
 			}
 			go func(c net.Conn) {
-				wrapped := WrapConnection(c, uuid.New().String())
+				wrapped := WrapConnection(c, uuid.New())
 				for {
 					data, err := wrapped.Receive()
 					if err != nil {
@@ -210,9 +214,9 @@ func TestConnection_PoolReferenceCount(t *testing.T) {
 	}()
 
 	addr := listener.Addr().String()
-	c1 := NewConnection(addr, uuid.New().String())
-	c2 := NewConnection(addr, uuid.New().String())
-	c3 := NewConnection(addr, uuid.New().String())
+	c1 := NewConnection(addr, uuid.New())
+	c2 := NewConnection(addr, uuid.New())
+	c3 := NewConnection(addr, uuid.New())
 
 	if c1 == nil || c2 == nil || c3 == nil {
 		t.Fatal("Failed to create connections")
@@ -243,7 +247,7 @@ func TestConnection_ConcurrentUseError(t *testing.T) {
 	}
 	defer listener.Close()
 
-	id := uuid.New().String()
+	id := uuid.New()
 	go func() {
 		conn, _ := listener.Accept()
 		if conn == nil {
@@ -288,7 +292,7 @@ func TestConnection_ChunkedReconnect(t *testing.T) {
 	}
 	defer listener.Close()
 
-	id := uuid.New().String()
+	id := uuid.New()
 	acceptCount := 0
 	
 	go func() {
@@ -344,7 +348,7 @@ func TestConnection_MultipleChunks(t *testing.T) {
 	}
 	defer listener.Close()
 
-	id := uuid.New().String()
+	id := uuid.New()
 	go func() {
 		conn, _ := listener.Accept()
 		if conn == nil {

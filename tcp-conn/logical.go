@@ -2,6 +2,7 @@ package tcpconn
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -22,7 +23,7 @@ const (
 )
 
 type Connection struct {
-	id          string
+	id          uuid.UUID
 	address     string
 	conn        net.Conn // For wrapped connections only
 	state       state
@@ -37,7 +38,7 @@ type Connection struct {
 	cancel      context.CancelFunc
 }
 
-func NewConnection(address string, id string) *Connection {
+func NewConnection(address string, id uuid.UUID) *Connection {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	_, err := globalPool.getOrCreate(address)
@@ -63,7 +64,7 @@ func NewConnection(address string, id string) *Connection {
 	return tc
 }
 
-func WrapConnection(conn net.Conn, id string) *Connection {
+func WrapConnection(conn net.Conn, id uuid.UUID) *Connection {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	tc := &Connection{
@@ -176,7 +177,7 @@ func (t *Connection) Send(data []byte) error {
 		}
 	}
 
-	idBytes := []byte(t.id)
+	idBytes := []byte(t.id.String())
 	idLen := byte(len(idBytes))
 	totalLen := uint32(len(data))
 
@@ -252,7 +253,7 @@ func (t *Connection) Receive() ([]byte, error) {
 		}
 
 		receivedID := string(idBuf)
-		if receivedID != t.id {
+		if receivedID != t.id.String() {
 			// Wrong connection ID, skip this chunk
 			totalLenBuf := make([]byte, 4)
 			if err := t.readFull(totalLenBuf); err != nil {
