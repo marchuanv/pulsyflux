@@ -37,6 +37,12 @@ func NewClient(address string, channelID uuid.UUID) (*Client, error) {
 	data, _ := json.Marshal(joinMsg)
 	control.Send(data)
 
+	// Wait for server ack
+	_, err := control.Receive()
+	if err != nil {
+		return nil, fmt.Errorf("failed to receive ack: %w", err)
+	}
+
 	// Create channel connection
 	conn := tcpconn.NewConnection(address, clientID)
 	if conn == nil {

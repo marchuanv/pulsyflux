@@ -115,6 +115,9 @@ func (s *Server) handleClient(conn net.Conn) {
 			go s.handleChannel(ch, clientID, channelConn)
 		}
 		ch.mu.Unlock()
+
+		// Send ack to client
+		control.Send([]byte{1})
 	}
 }
 
