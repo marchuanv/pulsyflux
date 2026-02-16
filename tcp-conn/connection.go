@@ -1,0 +1,167 @@
+package tcpconn
+
+import (
+	"context"
+	"errors"
+	"net"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+var (
+	errConnectionClosed = errors.New("connection closed")
+	errConnectionDead   = errors.New("connection dead")
+)
+
+type state int
+
+const (
+	stateConnecting state = iota
+	stateConnected
+	stateDisconnected
+)
+
+const (
+	defaultIdleTimeout = 5 * time.Minute
+)
+
+type Connection struct {
+	conn        net.Conn
+	reconnectFn func() (net.Conn, error)
+	state       state
+	mu          sync.RWMutex
+	readBuf     []byte
+	lastRead    time.Time
+	lastWrite   time.Time
+	idleTimeout time.Duration
+	closed      int32
+	ctx         context.Context
+	cancel      context.CancelFunc
+}
+
+func NewConnection(conn net.Conn, idleTimeout time.Duration, reconnectFn func() (net.Conn, error)) *Connection {
+
+	if idleTimeout == 0 {
+		idleTimeout = defaultIdleTimeout
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	tc := &Connection{
+		conn:        conn,
+		reconnectFn: reconnectFn,
+		state:       stateConnected,
+		readBuf:     make([]byte, 4096),
+		lastRead:    time.Now(),
+		lastWrite:   time.Now(),
+		idleTimeout: idleTimeout,
+		ctx:         ctx,
+		cancel:      cancel,
+	}
+
+	go tc.idleMonitor()
+
+	return tc
+}
+
+func (t *Connection) idleMonitor() {
+	ticker := time.NewTicker(t.idleTimeout / 2)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-t.ctx.Done():
+			return
+		case <-ticker.C:
+			t.mu.RLock()
+			lastActivity := t.lastRead
+			if t.lastWrite.After(t.lastRead) {
+				lastActivity = t.lastWrite
+			}
+			idle := time.Since(lastActivity)
+			t.mu.RUnlock()
+
+			if idle > t.idleTimeout {
+				t.close()
+				return
+			}
+		}
+	}
+}
+
+func (t *Connection) reconnect() error {
+	if t.reconnectFn == nil {
+		return errConnectionClosed
+	}
+
+	newConn, err := t.reconnectFn()
+	if err != nil {
+		return err
+	}
+
+	t.conn = newConn
+	return nil
+}
+
+func (t *Connection) Send(data []byte) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.state == stateDisconnected {
+		if err := t.reconnect(); err != nil {
+			return err
+		}
+		t.state = stateConnected
+		t.lastWrite = time.Now()
+		go t.idleMonitor()
+	}
+
+	_, err := t.conn.Write(data)
+	if err != nil {
+		t.state = stateDisconnected
+		return err
+	}
+
+	t.lastWrite = time.Now()
+	return nil
+}
+
+func (t *Connection) Receive() ([]byte, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.state == stateDisconnected {
+		if err := t.reconnect(); err != nil {
+			return nil, err
+		}
+		t.state = stateConnected
+		t.lastRead = time.Now()
+		go t.idleMonitor()
+	}
+
+	n, err := t.conn.Read(t.readBuf)
+	if err != nil {
+		t.state = stateDisconnected
+		return nil, err
+	}
+
+	t.lastRead = time.Now()
+	result := make([]byte, n)
+	copy(result, t.readBuf[:n])
+	return result, nil
+}
+
+func (t *Connection) close() error {
+	if !atomic.CompareAndSwapInt32(&t.closed, 0, 1) {
+		return nil
+	}
+
+	t.mu.Lock()
+	t.state = stateDisconnected
+	t.mu.Unlock()
+
+	t.cancel()
+	t.conn.Close()
+	return nil
+}
