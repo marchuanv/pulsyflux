@@ -1,4 +1,4 @@
-# Node.js Broker API
+# PulsyFlux Node.js API
 
 ⚠️ **PERFORMANCE UPDATE** ⚠️
 
@@ -17,11 +17,11 @@
 
 ---
 
-Node.js bindings for the PulsyFlux broker using a native C++ addon.
+Node.js bindings for **PulsyFlux** - a high-performance pub/sub message broker using a native C++ addon.
 
 ## Overview
 
-This package provides Node.js bindings to the Go broker implementation through a native C++ addon, delivering near-native performance for JavaScript/TypeScript applications.
+**PulsyFlux** is a reliable and flexible pub/sub message broker designed for high-performance messaging. This package provides Node.js bindings to the Go implementation through a native C++ addon, delivering near-native performance for JavaScript/TypeScript applications.
 
 **Performance:** ~13µs publish latency, 76K ops/sec throughput with minimal addon overhead.
 
@@ -90,7 +90,7 @@ npm run build
 import { Server, Client } from 'pulsyflux-broker';
 import { randomUUID } from 'crypto';
 
-// Start server
+// Start PulsyFlux message broker server
 const server = new Server(':0');
 server.start();
 
@@ -116,7 +116,7 @@ server.stop();
 ### Server
 
 #### `new Server(address)`
-Creates a new broker server.
+Creates a new PulsyFlux message broker server.
 - `address`: Listen address (e.g., `:8080` or `localhost:8080`)
 - Use `:0` for random port
 
@@ -410,7 +410,7 @@ Node.js Application
         ↓
    broker_lib.dll (Go Shared Library)
         ↓
-   PulsyFlux Broker (Go Implementation)
+   PulsyFlux Message Broker (Go Implementation)
 ```
 
 ### Connection Flow
@@ -620,4 +620,4 @@ if (addon.cleanup) {
 
 ## License
 
-Same as PulsyFlux project.
+Same as PulsyFlux project - MIT License.

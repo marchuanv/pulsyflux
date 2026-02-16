@@ -19,6 +19,9 @@ simple-test.mjs
 test-runner.mjs
 install_build_tools.bat
 
+# Test files (not needed in published package)
+spec/
+
 # Node.js
 node_modules/
 npm-debug.log*

@@ -1,9 +1,15 @@
 {
   "name": "pulsyflux-broker",
   "version": "2.0.0",
-  "description": "Node.js bindings for PulsyFlux Broker - high-performance pub/sub messaging",
+  "description": "Node.js bindings for PulsyFlux - high-performance pub/sub message broker with native C++ addon and Go shared library",
   "main": ".bin/release/registry.mjs",
   "type": "module",
+  "exports": {
+    ".": {
+      "import": "./.bin/release/registry.mjs",
+      "types": "./types/index.d.ts"
+    }
+  },
   "scripts": {
     "install": "npm run build",
     "build": "npm run build:setup && npm run build:go && npm run build:addon && npm run build:copy && npm run build:clean",
@@ -14,7 +20,8 @@
     "build:clean": "node -e \"const fs=require('fs'); const files=['broker_addon.node','broker_addon.pdb','broker_lib.dll','broker_lib.h','broker_lib.def','broker_lib.lib']; files.forEach(f=>{try{fs.unlinkSync(f)}catch(e){}})\"",
     "clean": "node -e \"require('child_process').execSync('clean.bat', {stdio:'inherit'}); const fs=require('fs'); try{fs.rmSync('.bin', {recursive:true})}catch(e){}\"",
     "test": "npx jasmine",
-    "pretest": "npm run build"
+    "pretest": "npm run build",
+    "prepublishOnly": "npm test"
   },
   "files": [
     ".bin/release/",
@@ -23,8 +30,10 @@
     "build.bat",
     "clean.bat",
     "build.mjs",
-    "spec/",
-    "README.md"
+    "registry.mjs",
+    "README.md",
+    "LICENSE",
+    "types/"
   ],
   "dependencies": {
     "node-addon-api": "^8.5.0",
@@ -37,15 +46,42 @@
   "trustedDependencies": [
     "zig-build"
   ],
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
   "keywords": [
-    "broker",
+    "pulsyflux",
     "pubsub",
+    "pub-sub",
+    "message-broker",
+    "broker",
     "messaging",
     "events",
     "tcp",
     "multiplexing",
-    "high-performance"
+    "high-performance",
+    "native-addon",
+    "golang",
+    "c++",
+    "real-time"
   ],
-  "author": "",
-  "license": "MIT"
+  "author": {
+    "name": "PulsyFlux Team"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/pulsyflux.git",
+    "directory": "nodejs-api"
+  },
+  "homepage": "https://github.com/your-username/pulsyflux#readme",
+  "bugs": {
+    "url": "https://github.com/your-username/pulsyflux/issues"
+  }
 }
