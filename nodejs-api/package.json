@@ -2,17 +2,16 @@
   "name": "pulsyflux-broker",
   "version": "2.0.0",
   "description": "Node.js bindings for PulsyFlux Broker - high-performance pub/sub messaging",
-  "main": "index.mjs",
+  "main": "broker.mjs",
   "type": "module",
   "scripts": {
-    "install": "npm run build:go && npx tsx build.mjs",
-    "build": "npm run build:go && npx tsx build.mjs",
-    "build:go": "build.bat",
+    "install": "npm install --ignore-scripts",
+    "build": "echo No build needed - using optimized FFI",
     "test": "jasmine --config=spec/support/jasmine.json"
   },
   "dependencies": {
-    "node-addon-api": "^8.5.0",
-    "zig-build": "github:solarwinds/zig-build"
+    "ffi-napi": "4.0.3",
+    "ref-napi": "3.0.3"
   },
   "devDependencies": {
     "jasmine": "^5.13.0",
