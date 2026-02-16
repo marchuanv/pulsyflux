@@ -1,6 +1,6 @@
 {
   "name": "pulsyflux-broker",
-  "version": "2.0.4",
+  "version": "2.0.7",
   "description": "Node.js bindings for PulsyFlux - high-performance pub/sub message broker with native C++ addon and Go shared library",
   "main": ".bin/release/registry.mjs",
   "type": "module",
