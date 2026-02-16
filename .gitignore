@@ -16,6 +16,8 @@ messagebus-nodejs/.cache/
 # C headers (generated)
 socket-exp/socket_lib.h
 messagebus-nodejs/messagebus_lib.h
+nodejs-api/broker_lib.h
+nodejs-api/messagebus_lib.h
 
 # Node modules
 node_modules/
