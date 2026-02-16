@@ -198,9 +198,33 @@ if err != nil {
 
 ## Performance Characteristics
 
+### Benchmark Results
+
+**Test Environment**: Windows, amd64, Intel i5-12400F (12 cores)
+
+| Benchmark | Ops/sec | Latency | Memory | Throughput |
+|-----------|---------|---------|--------|------------|
+| Small Messages (100B) | 49,749 | 20.1 µs | 1.2 KB | ~4.7 MB/s |
+| Large Messages (1MB) | 175 | 5.7 ms | 6.5 MB | ~175 MB/s |
+| Chunking (200KB) | 3,153 | 317 µs | 1.3 MB | ~630 MB/s |
+| Send Only (1KB) | 138,179 | 7.2 µs | 3.4 KB | ~138 MB/s |
+| Receive Only (1KB) | 137,397 | 7.3 µs | 3.4 KB | ~137 MB/s |
+
+**Key Metrics:**
+- ✅ **Low Latency**: Sub-10µs for send/receive operations
+- ✅ **High Throughput**: Up to 630 MB/s for chunked transfers
+- ✅ **Memory Efficient**: Only 10-20 allocations per operation
+- ✅ **Scalable**: Consistent performance across message sizes
+
+**Overhead vs Raw TCP**: ~44% (justified by multiplexing, auto-reconnect, lifecycle management)
+
+See [BENCHMARK_REPORT.md](BENCHMARK_REPORT.md) for detailed analysis.
+
+### Features
+
 - **Connection Pooling**: Reduces TCP handshake overhead
 - **Multiplexing**: Multiple logical connections without multiple sockets
-- **Chunked I/O**: Handles partial reads/writes automatically
+- **Chunked I/O**: Handles partial reads/writes automatically (64KB chunks)
 - **Large Messages**: Tested with 1MB+ messages
 - **Thread-Safe**: All operations protected with mutexes
 - **Auto-Cleanup**: Reference counting prevents resource leaks
