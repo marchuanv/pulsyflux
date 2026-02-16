@@ -1,4 +1,4 @@
-import { Server, Client } from './registry.mjs';
+import { Server, Client } from '../.bin/release/registry.mjs';
 import { randomUUID } from 'crypto';
 
 describe('Broker Performance Benchmarks', () => {
