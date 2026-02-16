@@ -4,15 +4,16 @@
 
 **Native Addon Performance (Current):**
 - Round-trip: ~45-50µs (Go broker latency)
-- Throughput: 20K+ ops/sec
+- Throughput: 76K ops/sec (publish), 47 ops/sec (pubsub)
 - **Near-native performance** with C++ addon
-- **Production ready** for high-frequency messaging
+- **Production ready** for high-frequency publishing
 
 **Architecture:**
 - ✅ Native C++ addon with Go shared library
 - ✅ Direct memory access (no FFI overhead)
 - ✅ Proper Node.js integration
-- ✅ Cross-platform support
+- ✅ Cross-platform support (Windows, with Zig compiler)
+- ✅ Automatic build system with dependency management
 
 ---
 
@@ -22,7 +23,7 @@ Node.js bindings for the PulsyFlux broker using a native C++ addon.
 
 This package provides Node.js bindings to the Go broker implementation through a native C++ addon, delivering near-native performance for JavaScript/TypeScript applications.
 
-**Performance:** ~45-50µs round-trip latency with minimal addon overhead.
+**Performance:** ~13µs publish latency, 76K ops/sec throughput with minimal addon overhead.
 
 ## Installation
 
@@ -30,7 +31,7 @@ This package provides Node.js bindings to the Go broker implementation through a
 
 - **Node.js** 14+ 
 - **Go** 1.19+ (for building the shared library)
-- **Build tools** (automatically handled by npm)
+- **Build tools** (Zig compiler automatically downloaded)
 
 ### Install
 
@@ -40,22 +41,41 @@ npm install
 
 This automatically:
 1. Installs Node.js dependencies
-2. Builds `broker_lib.dll` from Go source
-3. Compiles the native C++ addon
+2. Downloads Zig compiler if needed
+3. Builds `broker_lib.dll` from Go source
+4. Compiles the native C++ addon
+5. Creates `.bin/release/` with all artifacts
+6. Cleans temporary build files
 
 **Note:** Go 1.19+ must be installed and available in PATH.
 
-## Build
+## Build System
 
-Manual build (optional - automatically runs during install):
+### Automatic Build (Recommended)
+
+```bash
+npm install  # Triggers complete build process
+```
+
+### Manual Build
 
 ```bash
 npm run build
 ```
 
-This creates:
+Build steps:
+1. `build:setup` - Creates `.bin/release/` directory
+2. `build:go` - Compiles Go shared library
+3. `build:addon` - Downloads Zig and compiles C++ addon
+4. `build:copy` - Copies artifacts to `.bin/release/`
+5. `build:clean` - Removes temporary files from root
+
+### Build Artifacts
+
+All build outputs go to `.bin/release/`:
 - `broker_lib.dll` (Go shared library)
 - `broker_addon.node` (Native C++ addon)
+- `registry.mjs` (ES module wrapper)
 
 ### Clean Build
 
@@ -299,27 +319,27 @@ clientB.publish('message on channel 2');
 
 | Benchmark | Go (Native) | Node.js (Addon) | Overhead | Rating |
 |-----------|-------------|-----------------|----------|--------|
-| **Publish** | 6.9µs (145K ops/sec) | 11µs (92K ops/sec) | +59% | ⭐⭐⭐⭐⭐ |
-| **PubSub** | 43µs (23K ops/sec) | 21ms (48 ops/sec) | +48,600% | ⭐⭐ |
-| **Broadcast2** | 39µs (25K ops/sec) | 43ms (23 ops/sec) | +110,100% | ⭐⭐ |
-| **Multiple Channels** | 21µs (48K ops/sec) | 10µs (98K ops/sec) | -52% | ⭐⭐⭐⭐⭐ |
+| **Publish** | 6.9µs (145K ops/sec) | 13µs (76K ops/sec) | +88% | ⭐⭐⭐⭐⭐ |
+| **PubSub** | 43µs (23K ops/sec) | 21ms (47 ops/sec) | +48,700% | ⭐⭐ |
+| **Broadcast2** | 39µs (25K ops/sec) | 41ms (25 ops/sec) | +105,000% | ⭐⭐ |
+| **Multiple Channels** | 21µs (48K ops/sec) | 16µs (64K ops/sec) | -24% | ⭐⭐⭐⭐⭐ |
 
 ### Performance Analysis ⭐⭐⭐⭐ (Excellent for Publishing)
 
 **Strengths:**
-- ⭐ **Publish Performance**: 92K ops/sec - Excellent for high-frequency publishing
-- ⭐ **Multiple Channels**: 98K ops/sec - 2x faster than Go (reduced contention)
-- ⭐ **Low Latency**: 11µs publish latency - Sub-millisecond performance
+- ⭐ **Publish Performance**: 76K ops/sec - Excellent for high-frequency publishing
+- ⭐ **Multiple Channels**: 64K ops/sec - 33% faster than Go (reduced contention)
+- ⭐ **Low Latency**: 13µs publish latency - Sub-millisecond performance
 - ⭐ **Consistent**: Predictable performance for publish-only workloads
 
 **Weaknesses:**
-- ⚠️ **PubSub Overhead**: 48,600% slower due to AsyncWorker polling
-- ⚠️ **Broadcast Overhead**: 110,100% slower for multi-client scenarios
+- ⚠️ **PubSub Overhead**: 48,700% slower due to AsyncWorker polling
+- ⚠️ **Broadcast Overhead**: 105,000% slower for multi-client scenarios
 - ⚠️ **Event-driven Latency**: 20ms+ overhead for message receiving
 
 **Overhead Analysis:**
-- **Publish Path**: Only +59% overhead - Excellent FFI performance
-- **Receive Path**: +48,600% overhead - AsyncWorker polling bottleneck
+- **Publish Path**: Only +88% overhead - Excellent FFI performance
+- **Receive Path**: +48,700% overhead - AsyncWorker polling bottleneck
 - **Root Cause**: Go Subscribe() is non-blocking, requires continuous polling
 - **Impact**: Great for fire-and-forget, poor for real-time messaging
 
@@ -334,15 +354,15 @@ clientB.publish('message on channel 2');
 | **RabbitMQ** | ~100µs | ~200-500µs | ~5K ops/sec | ⭐⭐⭐ |
 | **Apache Kafka** | ~1ms | ~5-10ms | ~100K ops/sec | ⭐⭐⭐⭐⭐ |
 | **This Broker (Go)** | ~7µs | ~43µs | ~23K ops/sec | ⭐⭐⭐⭐⭐ |
-| **This Broker (Node.js)** | ~11µs | ~21ms | ~48 ops/sec | ⭐⭐⭐⭐ (pub) / ⭐⭐ (sub) |
+| **This Broker (Node.js)** | ~13µs | ~21ms | ~47 ops/sec | ⭐⭐⭐⭐ (pub) / ⭐⭐ (sub) |
 
 ### Use Case Matrix
 
 | Use Case | Suitability | Performance | Recommendation |
 |----------|-------------|-------------|----------------|
-| **High-frequency Publishing** | ⭐⭐⭐⭐⭐ | 92K ops/sec | Excellent choice |
-| **Real-time PubSub** | ⭐⭐ | 48 ops/sec | Use Go version |
-| **Multi-channel Publishing** | ⭐⭐⭐⭐⭐ | 98K ops/sec | Better than Go! |
+| **High-frequency Publishing** | ⭐⭐⭐⭐⭐ | 76K ops/sec | Excellent choice |
+| **Real-time PubSub** | ⭐⭐ | 47 ops/sec | Use Go version |
+| **Multi-channel Publishing** | ⭐⭐⭐⭐⭐ | 64K ops/sec | Better than Go! |
 | **Event Logging** | ⭐⭐⭐⭐⭐ | Fire-and-forget | Perfect fit |
 | **Metrics Collection** | ⭐⭐⭐⭐⭐ | High throughput | Ideal |
 | **Chat Applications** | ⭐⭐ | 21ms latency | Too slow |
@@ -352,9 +372,9 @@ clientB.publish('message on channel 2');
 ### Performance Recommendations
 
 **✅ Excellent For:**
-- Event logging and metrics (92K ops/sec)
+- Event logging and metrics (76K ops/sec)
 - Fire-and-forget messaging
-- Multi-channel architectures (98K ops/sec)
+- Multi-channel architectures (64K ops/sec)
 - Development and prototyping
 - Non-real-time data collection
 
@@ -370,9 +390,9 @@ clientB.publish('message on channel 2');
 - Real-time chat or notifications
 
 **🎯 Sweet Spot:**
-- **Publishing**: 50K-90K ops/sec
-- **PubSub**: 10-40 ops/sec
-- **Latency**: <50µs publish, >10ms receive
+- **Publishing**: 50K-76K ops/sec
+- **PubSub**: 10-47 ops/sec
+- **Latency**: <20µs publish, >10ms receive
 - **Architecture**: Publisher-heavy, subscriber-light
 
 ## Architecture
@@ -455,10 +475,11 @@ This requires manual process termination in test environments.
 - Slow subscribers drop messages (100-message buffer)
 
 ### Node.js Addon Limitations
-- **Platform Support:** Currently Windows only (DLL-based)
+- **Platform Support:** Windows (primary), cross-platform via Zig compiler
 - **Memory Copies:** Buffer marshaling between Go and Node.js
 - **PubSub Performance:** AsyncWorker polling adds ~20ms latency
 - **Event-driven API:** Limited to onMessage callback pattern
+- **DLL Dependencies:** Requires broker_lib.dll in same directory as addon
 
 ### Test Environment Issues
 - ✅ **Event Loop:** Tests now exit naturally (issue resolved)
@@ -489,9 +510,18 @@ npm test
 
 The test suite uses Jasmine and includes:
 - Comprehensive broker functionality tests
-- Polling-based message verification
-- Proper cleanup with manual process exit
+- **Event-driven message verification** using `onMessage()` callbacks
+- Proper cleanup with automatic resource management
 - Channel isolation verification
+- Benchmark tests for performance measurement
+- Import from built artifacts in `.bin/release/`
+
+**Test Structure:**
+- **Framework:** Jasmine with ES modules
+- **Imports:** Tests import from `.bin/release/registry.mjs` (built artifacts)
+- **Message Handling:** Event-driven `onMessage()` API (no polling loops)
+- **Cleanup:** Automatic server stop and addon cleanup
+- **Benchmarks:** Separate benchmark suite in `broker-benchmark.spec.mjs`
 
 ### Known Test Issues ✅ RESOLVED
 
@@ -531,9 +561,14 @@ The addon requires build tools (automatically installed by npm):
 npm install
 ```
 
-**DLL Not Found:**
-Run build manually:
+**DLL Loading Issues:**
+The addon automatically finds the DLL in the same directory. If issues persist:
 ```bash
+# Verify build artifacts
+ls .bin/release/
+# Should show: broker_addon.node, broker_lib.dll, registry.mjs
+
+# Rebuild if needed
 npm run build
 ```
 
