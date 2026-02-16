@@ -17,15 +17,15 @@ func TestBasicPubSub(t *testing.T) {
 	addr := server.Addr()
 	channelID := uuid.New()
 
-	client1, _ := NewClient(addr)
-	client2, _ := NewClient(addr)
+	client1, _ := NewClient(addr, channelID)
+	client2, _ := NewClient(addr, channelID)
 
-	ch1, _ := client1.Subscribe(channelID, "test")
-	ch2, _ := client2.Subscribe(channelID, "test")
+	ch1 := client1.Subscribe("test")
+	ch2 := client2.Subscribe("test")
 
 	time.Sleep(500 * time.Millisecond)
 
-	client1.Publish(channelID, "test", []byte("hello"))
+	client1.Publish("test", []byte("hello"))
 
 	msg := <-ch2
 	if string(msg.Payload) != "hello" {
@@ -48,26 +48,34 @@ func TestMultipleChannels(t *testing.T) {
 	ch1ID := uuid.New()
 	ch2ID := uuid.New()
 
-	client1, _ := NewClient(addr)
-	client2, _ := NewClient(addr)
+	client1, _ := NewClient(addr, ch1ID)
+	client2, _ := NewClient(addr, ch2ID)
 
-	sub1, _ := client1.Subscribe(ch1ID, "test")
-	sub2, _ := client2.Subscribe(ch2ID, "test")
+	sub1 := client1.Subscribe("test")
+	sub2 := client2.Subscribe("test")
 
 	time.Sleep(500 * time.Millisecond)
 
-	client1.Publish(ch1ID, "test", []byte("channel1"))
-	client2.Publish(ch2ID, "test", []byte("channel2"))
+	client1.Publish("test", []byte("channel1"))
+	client2.Publish("test", []byte("channel2"))
 
+	// Client1 should receive its own channel's message
 	select {
-	case <-sub2:
-		t.Error("channel2 should not receive channel1 message")
-	case <-time.After(100 * time.Millisecond):
+	case msg := <-sub1:
+		if string(msg.Payload) != "channel1" {
+			t.Errorf("client1 expected 'channel1', got '%s'", string(msg.Payload))
+		}
+	case <-time.After(1 * time.Second):
+		t.Error("client1 did not receive message from its channel")
 	}
 
+	// Client2 should receive its own channel's message
 	select {
-	case <-sub1:
-		t.Error("channel1 should not receive channel2 message")
-	case <-time.After(100 * time.Millisecond):
+	case msg := <-sub2:
+		if string(msg.Payload) != "channel2" {
+			t.Errorf("client2 expected 'channel2', got '%s'", string(msg.Payload))
+		}
+	case <-time.After(1 * time.Second):
+		t.Error("client2 did not receive message from its channel")
 	}
 }

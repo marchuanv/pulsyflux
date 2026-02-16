@@ -20,7 +20,6 @@ type Message struct {
 }
 
 type channel struct {
-	id      uuid.UUID
 	clients map[uuid.UUID]*tcpconn.Connection
 	mu      sync.RWMutex
 }
@@ -106,7 +105,6 @@ func (s *Server) handleClient(conn net.Conn) {
 		ch := s.channels[channelID]
 		if ch == nil {
 			ch = &channel{
-				id:      channelID,
 				clients: make(map[uuid.UUID]*tcpconn.Connection),
 			}
 			s.channels[channelID] = ch

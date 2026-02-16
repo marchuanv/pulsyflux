@@ -20,34 +20,28 @@ func TestDebug(t *testing.T) {
 	channelID := uuid.New()
 	fmt.Println("Channel ID:", channelID)
 
-	client1, err := NewClient(addr)
+	client1, err := NewClient(addr, channelID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fmt.Println("Client1 created")
 
-	client2, err := NewClient(addr)
+	client2, err := NewClient(addr, channelID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fmt.Println("Client2 created")
 
-	ch1, err := client1.Subscribe(channelID, "test")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch1 := client1.Subscribe("test")
 	fmt.Println("Client1 subscribed")
 
-	ch2, err := client2.Subscribe(channelID, "test")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch2 := client2.Subscribe("test")
 	fmt.Println("Client2 subscribed")
 
 	time.Sleep(100 * time.Millisecond)
 
 	fmt.Println("Client1 publishing...")
-	err = client1.Publish(channelID, "test", []byte("hello"))
+	err = client1.Publish("test", []byte("hello"))
 	if err != nil {
 		t.Fatal(err)
 	}
