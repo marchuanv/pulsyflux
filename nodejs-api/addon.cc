@@ -37,11 +37,17 @@ public:
   }
 
   void Execute() override {
-    int result = Subscribe(clientId_, &payload_, &payloadLen_);
-    if (result < 0) {
-      payload_ = nullptr;
-      payloadLen_ = 0;
+    // Poll for messages with small delays
+    for (int i = 0; i < 100; i++) {
+      int result = Subscribe(clientId_, &payload_, &payloadLen_);
+      if (result == 0 && payload_) {
+        return; // Got a message
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+    // No message found after polling
+    payload_ = nullptr;
+    payloadLen_ = 0;
   }
 
   void OnOK() override {

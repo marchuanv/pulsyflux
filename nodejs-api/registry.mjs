@@ -16,6 +16,9 @@ class Client {
   }
 
   onMessage(callback) {
+    // Create subscription channel first
+    this.subscribe();
+    // Then set up async polling
     this._client.onMessage(callback);
   }
 

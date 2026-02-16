@@ -5,19 +5,30 @@
   "main": "registry.mjs",
   "type": "module",
   "scripts": {
-    "preinstall": "clean.bat",
-    "postinstall": "npm run build",
-    "build": "npm run build:go && npx tsx build.mjs",
-    "build:go": "build.bat",
-    "test": "npx jasmine"
+    "install": "npm run build",
+    "build": "npm run build:go && npm run build:addon",
+    "build:go": "node -e \"require('child_process').execSync('build.bat', {stdio:'inherit'})\"",
+    "build:addon": "npx tsx build.mjs",
+    "clean": "node -e \"require('child_process').execSync('clean.bat', {stdio:'inherit'})\"",
+    "test": "npx jasmine",
+    "pretest": "npm run build"
   },
+  "files": [
+    "registry.mjs",
+    "addon.cc",
+    "broker_lib.go",
+    "build.bat",
+    "clean.bat",
+    "build.mjs",
+    "spec/",
+    "README.md"
+  ],
   "dependencies": {
     "node-addon-api": "^8.5.0",
     "zig-build": "github:solarwinds/zig-build"
   },
   "devDependencies": {
     "jasmine": "^5.13.0",
-    "prebuildify": "^6.0.1",
     "tsx": "^4.21.0"
   },
   "trustedDependencies": [
