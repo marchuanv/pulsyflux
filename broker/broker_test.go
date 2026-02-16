@@ -1,9 +1,10 @@
 package broker
 
 import (
-	"github.com/google/uuid"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestBasicPubSub(t *testing.T) {

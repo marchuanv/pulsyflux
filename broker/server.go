@@ -101,12 +101,6 @@ func (s *Server) handleClient(conn net.Conn) {
 			continue
 		}
 
-		// Register client
-		s.mu.Lock()
-		if s.clients[clientID] == nil {
-			s.clients[clientID] = conn
-		}
-
 		// Create/get channel
 		ch := s.channels[channelID]
 		if ch == nil {
