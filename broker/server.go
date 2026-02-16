@@ -101,6 +101,7 @@ func (s *Server) handleClient(conn net.Conn) {
 			continue
 		}
 
+		s.mu.Lock()
 		// Create/get channel
 		ch := s.channels[channelID]
 		if ch == nil {
@@ -110,6 +111,7 @@ func (s *Server) handleClient(conn net.Conn) {
 			}
 			s.channels[channelID] = ch
 		}
+		s.mu.Unlock()
 
 		// Create channel connection and start handler
 		ch.mu.Lock()
@@ -121,7 +123,6 @@ func (s *Server) handleClient(conn net.Conn) {
 			go s.handleChannel(ch, clientID, channelConn)
 		}
 		ch.mu.Unlock()
-		s.mu.Unlock()
 	}
 }
 
