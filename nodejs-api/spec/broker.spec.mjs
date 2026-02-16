@@ -1,8 +1,8 @@
-import { Server, Client } from '../registry.mjs';
+import { Server, Client } from './registry.mjs';
 import { randomUUID } from 'crypto';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const addon = require('../broker_addon.node');
+const addon = require('./broker_addon.node');
 
 describe('Broker', () => {
   let server;
