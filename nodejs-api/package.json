@@ -5,10 +5,10 @@
   "main": "index.mjs",
   "type": "module",
   "scripts": {
+    "preinstall": "clean.bat",
     "postinstall": "npm run build",
-    "build": "npm run build:go && npm run build:lib && npx tsx build.mjs",
+    "build": "npm run build:go && npx tsx build.mjs",
     "build:go": "build.bat",
-    "build:lib": "C:\\Users\\Marchuan\\.zig-build\\zig\\0.15.1\\zig.exe dlltool -D broker_lib.dll -d broker_lib.def -l broker_lib.lib",
     "test": "jasmine --config=spec/support/jasmine.json"
   },
   "dependencies": {

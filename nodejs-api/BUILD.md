@@ -109,28 +109,23 @@ await build({
 
 ## Current Status
 
-### ✅ Working
-1. Go shared library builds successfully
-2. Import library (.lib) generates successfully
-3. zig-build downloads Zig compiler automatically
-4. zig-build compiles C++ code
-5. Broker API is clean: Server (4 methods), Client (2 methods)
+### ✅ SOLVED - Build Complete!
 
-### ❌ Current Issue
-Linker error: "lld-link: error: No such file or directory"
+**Solution:** The linker error was caused by zig-build trying to create an import library in a nested path (`build/Release/`) that didn't exist in the temp directory. Using a simple output path (`broker_addon.node`) fixed the issue.
 
-The linker command looks correct but fails. Investigating whether:
-- Path format issue (forward vs backslashes)
-- Missing dependency
-- Linker flag issue
+**Working Build:**
+1. Go shared library builds successfully ✓
+2. N-API addon compiles and links successfully ✓  
+3. Addon loads broker_lib.dll dynamically at runtime ✓
+4. Server and Client classes work ✓
 
-### Build Command Output
+**Test Results:**
 ```
-[broker_addon] executing 'zig.exe c++ -o build/Release/broker_addon.node 
-  -fPIC -Wl,--as-needed -shared -O2 
-  -I[node-api-headers] -I[node-addon-api] 
-  -DNAPI_VERSION=8 
-  addon.cc broker_lib.lib node.lib'
+✓ Server started at: [::]:61733
+✓ Clients created
+✓ Message published
+✓ Message received
+✓ All tests passed!
 ```
 
 ## Files
