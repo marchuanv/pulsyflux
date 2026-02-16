@@ -180,3 +180,73 @@ func TestConnection_ActivityPreventsTimeout(t *testing.T) {
 		t.Error("Connection should still be alive with activity")
 	}
 }
+
+func TestWrapConnection_ServerSide(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start listener: %v", err)
+	}
+	defer listener.Close()
+
+	serverDone := make(chan bool)
+	go func() {
+		conn, _ := listener.Accept()
+		if conn == nil {
+			return
+		}
+
+		// Wrap accepted connection
+		wrapped := WrapConnection(conn, 1*time.Second)
+		
+		data, err := wrapped.Receive()
+		if err != nil {
+			t.Errorf("Server receive failed: %v", err)
+			return
+		}
+
+		err = wrapped.Send(data)
+		if err != nil {
+			t.Errorf("Server send failed: %v", err)
+		}
+		serverDone <- true
+	}()
+
+	// Client side
+	clientConn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("Client dial failed: %v", err)
+	}
+	defer clientConn.Close()
+
+	clientConn.Write([]byte("hello server"))
+	
+	buf := make([]byte, 1024)
+	n, err := clientConn.Read(buf)
+	if err != nil {
+		t.Fatalf("Client read failed: %v", err)
+	}
+
+	if string(buf[:n]) != "hello server" {
+		t.Errorf("Expected 'hello server', got '%s'", string(buf[:n]))
+	}
+
+	<-serverDone
+}
+
+func TestWrapConnection_NoReconnect(t *testing.T) {
+	server, client := net.Pipe()
+	defer client.Close()
+
+	wrapped := WrapConnection(server, 100*time.Millisecond)
+	
+	// Close underlying connection
+	server.Close()
+	
+	time.Sleep(200 * time.Millisecond)
+	
+	// Should fail - no reconnect for wrapped connections
+	err := wrapped.Send([]byte("test"))
+	if err == nil {
+		t.Error("Expected error after connection closed")
+	}
+}

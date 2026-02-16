@@ -1,6 +1,6 @@
 # TCP-Conn
 
-A minimal TCP connection abstraction with automatic lifecycle management, reconnection, and performance scaling.
+A minimal TCP connection abstraction with automatic lifecycle management, reconnection, and performance scaling. Works for both client and server side.
 
 ## Public API
 
@@ -12,12 +12,16 @@ type Connection struct {
 func (c *Connection) Send(data []byte) error
 func (c *Connection) Receive() ([]byte, error)
 
+// Client-side: creates and manages connection
 func NewConnection(address string, idleTimeout time.Duration) *Connection
+
+// Server-side: wraps accepted connection
+func WrapConnection(conn net.Conn, idleTimeout time.Duration) *Connection
 ```
 
 ## Usage
 
-### Basic Connection
+### Client-Side
 
 ```go
 import tcpconn "github.com/pulsyflux/tcp-conn"
@@ -27,37 +31,46 @@ c := tcpconn.NewConnection("localhost:8080", 5*time.Minute)
 
 c.Send([]byte("hello"))
 data, _ := c.Receive()
+
+// Automatically reconnects after idle timeout or disconnect
 ```
 
-### Auto-Reconnect
+### Server-Side
 
 ```go
-c := tcpconn.NewConnection("localhost:8080", 5*time.Minute)
+listener, _ := net.Listen("tcp", ":8080")
 
-// Automatically reconnects on Send/Receive if disconnected
-c.Send([]byte("hello"))
-data, _ := c.Receive()
-
-// After idle timeout, next Send/Receive will reconnect
-time.Sleep(6 * time.Minute)
-c.Send([]byte("reconnected")) // Automatically reconnects
+for {
+    conn, _ := listener.Accept()
+    
+    // Wrap accepted connection
+    c := tcpconn.WrapConnection(conn, 5*time.Minute)
+    
+    go func() {
+        data, _ := c.Receive()
+        c.Send(data) // Echo back
+    }()
+}
 ```
 
 ## Features
 
-- **Internal connection management**: No need to pass net.Conn, just provide address
-- **Auto-reconnect**: Automatically re-establishes connection on Send/Receive
+- **Client-side**: Auto-dial, auto-reconnect, connection pooling ready
+- **Server-side**: Wrap accepted connections with idle timeout
 - **Idle timeout**: Connections close after inactivity (default: 5 minutes)
-- **Performance scaling**: Connection pool ready for high-throughput scenarios
 - **Thread-safe**: All operations protected with mutexes
 - **Minimal API**: Only Send and Receive, works directly with bytes
 
 ## Design
 
-Connections are created and managed internally. Users only provide the address and call Send/Receive. The connection automatically:
-- Establishes on first use
-- Reconnects when disconnected
-- Closes after idle timeout
-- Scales with connection pooling for performance
+**Client-side** (`NewConnection`):
+- Creates connections internally
+- Automatically reconnects on disconnect
+- Ready for connection pooling
 
-No manual connection management needed.
+**Server-side** (`WrapConnection`):
+- Wraps accepted `net.Conn`
+- Idle timeout management
+- No reconnect (server doesn't reconnect to clients)
+
+Both provide the same `Send`/`Receive` interface for consistent usage.

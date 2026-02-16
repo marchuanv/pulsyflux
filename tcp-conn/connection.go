@@ -79,6 +79,30 @@ func NewConnection(address string, idleTimeout time.Duration) *Connection {
 	return tc
 }
 
+func WrapConnection(conn net.Conn, idleTimeout time.Duration) *Connection {
+	if idleTimeout == 0 {
+		idleTimeout = defaultIdleTimeout
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	tc := &Connection{
+		conn:        conn,
+		state:       stateConnected,
+		readBuf:     make([]byte, 4096),
+		lastRead:    time.Now(),
+		lastWrite:   time.Now(),
+		idleTimeout: idleTimeout,
+		ctx:         ctx,
+		cancel:      cancel,
+		poolSize:    1,
+	}
+
+	go tc.idleMonitor()
+
+	return tc
+}
+
 func (t *Connection) idleMonitor() {
 	ticker := time.NewTicker(t.idleTimeout / 2)
 	defer ticker.Stop()
@@ -117,17 +141,27 @@ func (t *Connection) reconnect() error {
 	return nil
 }
 
+func (t *Connection) ensureConnected() error {
+	if t.state == stateDisconnected {
+		if t.connectFn != nil {
+			if err := t.reconnect(); err != nil {
+				return err
+			}
+			t.state = stateConnected
+			go t.idleMonitor()
+		} else {
+			return errConnectionClosed
+		}
+	}
+	return nil
+}
+
 func (t *Connection) Send(data []byte) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if t.state == stateDisconnected {
-		if err := t.reconnect(); err != nil {
-			return err
-		}
-		t.state = stateConnected
-		t.lastWrite = time.Now()
-		go t.idleMonitor()
+	if err := t.ensureConnected(); err != nil {
+		return err
 	}
 
 	_, err := t.conn.Write(data)
@@ -144,13 +178,8 @@ func (t *Connection) Receive() ([]byte, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if t.state == stateDisconnected {
-		if err := t.reconnect(); err != nil {
-			return nil, err
-		}
-		t.state = stateConnected
-		t.lastRead = time.Now()
-		go t.idleMonitor()
+	if err := t.ensureConnected(); err != nil {
+		return nil, err
 	}
 
 	n, err := t.conn.Read(t.readBuf)
