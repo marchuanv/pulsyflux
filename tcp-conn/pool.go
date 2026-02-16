@@ -2,10 +2,12 @@ package tcpconn
 
 import (
 	"context"
-	"github.com/google/uuid"
+	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
+
+	"github.com/google/uuid"
 )
 
 var globalPool = &connectionPool{
@@ -69,6 +71,7 @@ func (cp *connectionPool) release(address string) {
 		if atomic.AddInt32(&pool.refCount, -1) == 0 {
 			pool.cancel()
 			pool.conn.Close()
+			fmt.Printf("Physical connection to %s closed\n", address)
 			delete(cp.pools, address)
 		}
 	}
@@ -103,4 +106,3 @@ func (cp *connectionPool) unregister(address string, id uuid.UUID) {
 		pool.demuxer.unregister(id)
 	}
 }
-

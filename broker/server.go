@@ -2,7 +2,6 @@ package broker
 
 import (
 	"encoding/json"
-	"fmt"
 	"net"
 	tcpconn "pulsyflux/tcp-conn"
 	"sync"
@@ -123,12 +122,8 @@ func (s *Server) handleChannel(ch *channel, clientID uuid.UUID, channelConn *tcp
 	for {
 		data, err := channelConn.Receive()
 		if err != nil {
-			fmt.Printf("handleChannel error for client %s: %v\n", clientID, err)
 			return
 		}
-
-		fmt.Printf("Server received message from client %s\n", clientID)
-		fmt.Printf("Broadcasting to %d clients\n", len(ch.clients)-1)
 		ch.broadcast(clientID, data)
 	}
 }
@@ -137,17 +132,11 @@ func (ch *channel) broadcast(senderID uuid.UUID, data []byte) {
 	ch.mu.RLock()
 	defer ch.mu.RUnlock()
 
-	fmt.Printf("Broadcasting from %s to %d clients\n", senderID, len(ch.clients))
 	for clientID, channelConn := range ch.clients {
 		if clientID == senderID {
-			fmt.Printf("Skipping sender %s\n", clientID)
 			continue
 		}
-		fmt.Printf("Sending to client %s\n", clientID)
-		err := channelConn.Send(data)
-		if err != nil {
-			fmt.Printf("Error sending to %s: %v\n", clientID, err)
-		}
+		channelConn.Send(data)
 	}
 }
 
