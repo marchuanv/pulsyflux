@@ -472,13 +472,14 @@ Broadcast scales linearly as expected for O(N) fanout.
 - Single server (no clustering or HA)
 - Sender cannot receive own messages
 - **Backpressure**: Slow subscribers drop messages (non-blocking delivery)
-  - Subscriber channels have 100-message buffer
-  - When buffer is full, new messages are dropped
-  - tcp-conn provides backpressure at transport layer (10-message buffer + TCP flow control)
-  - Fast publishers may overwhelm slow subscribers
+  - `Subscribe()` returns buffered channel with 100-message capacity
+  - When buffer is full, `receiveLoop()` drops messages (non-blocking send)
+  - tcp-conn provides transport-level backpressure (10-message buffer + TCP flow control)
+  - `Publish()` may block if tcp-conn buffer is full
+  - Applications needing backpressure should implement acks or rate limiting
 - **Idle timeout**: Logical connections close after 30 seconds of inactivity (inherited from tcp-conn)
   - Physical connection closes when all logical connections are closed
-  - Clients must send periodic messages or implement keepalive to maintain connections
+  - Clients must send periodic messages to maintain connections
   - Reconnection is automatic but may cause message loss during reconnection
 
 ## Testing

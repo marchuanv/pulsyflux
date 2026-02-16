@@ -1,47 +1,41 @@
-import { Server, Bus } from './messagebus.mjs';
-import { v4 as uuidv4 } from 'uuid';
+import { Server, Client } from './broker.mjs';
+import { randomUUID } from 'crypto';
 
 // Start server
-const server = new Server('9090');
+const server = new Server(':0');
 server.start();
-console.log('Server started on port 9090');
+const addr = server.addr();
+console.log('Server started at:', addr);
 
-// Create bus
-const channelID = uuidv4();
-const bus = new Bus('127.0.0.1:9090', channelID);
-console.log('Bus created with channel:', channelID);
+// Create channel
+const channelID = randomUUID();
+console.log('Channel ID:', channelID);
 
-// Subscribe to topic
-const subscription = bus.subscribe('test.topic');
-console.log('Subscribed to test.topic');
+// Create clients
+const client1 = new Client(addr, channelID);
+const client2 = new Client(addr, channelID);
 
-// Receive messages in background
+// Subscribe client2
+const sub = client2.subscribe();
+
+// Receive messages
 (async () => {
-  for await (const msg of subscription) {
-    console.log('Received message:', {
-      id: msg.id,
-      topic: msg.topic,
-      payload: msg.payload.toString(),
-      headers: msg.headers,
-      timestamp: msg.timestamp
-    });
+  for await (const msg of sub) {
+    console.log('Client2 received:', msg.toString());
   }
 })();
 
-// Publish messages
-setTimeout(() => {
-  console.log('Publishing message...');
-  bus.publish('test.topic', 'Hello from Node.js!', {
-    source: 'example',
-    priority: 'high'
-  });
-}, 1000);
+// Wait a bit for subscription to be ready
+await new Promise(resolve => setTimeout(resolve, 100));
 
-// Cleanup after 5 seconds
-setTimeout(() => {
-  console.log('Cleaning up...');
-  subscription.close();
-  bus.close();
-  server.stop();
-  process.exit(0);
-}, 5000);
+// Publish from client1
+console.log('Client1 publishing...');
+client1.publish('hello from nodejs!');
+
+// Wait for message
+await new Promise(resolve => setTimeout(resolve, 500));
+
+// Cleanup
+sub.close();
+server.stop();
+console.log('Done');

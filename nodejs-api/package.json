@@ -1,27 +1,29 @@
 {
-  "name": "pulsyflux-messagebus",
-  "version": "1.0.0",
-  "description": "Node.js bindings for PulsyFlux MessageBus package",
-  "main": "messagebus.mjs",
+  "name": "pulsyflux-broker",
+  "version": "2.0.0",
+  "description": "Node.js bindings for PulsyFlux Broker - high-performance pub/sub messaging",
+  "main": "broker.mjs",
   "type": "module",
   "scripts": {
     "postinstall": "build.bat",
     "build": "build.bat",
-    "test": "jasmine"
+    "test": "jasmine --config=spec/support/jasmine.json"
   },
   "dependencies": {
     "ffi-napi": "^4.0.3",
-    "ref-napi": "^3.0.3",
-    "uuid": "^9.0.0"
+    "ref-napi": "^3.0.3"
   },
   "devDependencies": {
     "jasmine": "^5.13.0"
   },
   "keywords": [
-    "messagebus",
+    "broker",
     "pubsub",
     "messaging",
-    "events"
+    "events",
+    "tcp",
+    "multiplexing",
+    "high-performance"
   ],
   "author": "",
   "license": "MIT"
