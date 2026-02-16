@@ -205,10 +205,14 @@ func (t *Connection) Send(data []byte) error {
 	frame[4+len(idBytes)] = byte(dataLen)
 	copy(frame[5+len(idBytes):], data)
 
-	_, err := conn.Write(frame)
-	if err != nil {
-		t.state = stateDisconnected
-		return err
+	offset := 0
+	for offset < len(frame) {
+		n, err := conn.Write(frame[offset:])
+		if err != nil {
+			t.state = stateDisconnected
+			return err
+		}
+		offset += n
 	}
 
 	t.lastWrite = time.Now()
