@@ -129,18 +129,8 @@ func (t *Connection) idleMonitor() {
 }
 
 func (t *Connection) reconnect() error {
-	newConn, err := t.connectFn()
-	if err != nil {
-		return err
-	}
-
-	globalPool.release(t.address)
-	globalPool.pools[t.address] = &physicalPool{
-		address:  t.address,
-		conn:     newConn,
-		refCount: 1,
-	}
-	return nil
+	_, err := globalPool.getOrCreate(t.address)
+	return err
 }
 
 func (t *Connection) ensureConnected() error {
@@ -278,9 +268,7 @@ func (t *Connection) close() error {
 	t.mu.Unlock()
 
 	t.cancel()
-	if t.conn != nil {
-		t.conn.Close()
-	} else if t.address != "" {
+	if t.address != "" {
 		globalPool.release(t.address)
 	}
 	return nil
