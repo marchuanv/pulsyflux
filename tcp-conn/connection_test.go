@@ -211,23 +211,24 @@ func TestWrapConnection_ServerSide(t *testing.T) {
 		serverDone <- true
 	}()
 
-	// Client side
-	clientConn, err := net.Dial("tcp", listener.Addr().String())
-	if err != nil {
-		t.Fatalf("Client dial failed: %v", err)
+	// Client side - also use Connection for framing
+	client := NewConnection(listener.Addr().String(), 1*time.Second)
+	if client == nil {
+		t.Fatal("Client connection failed")
 	}
-	defer clientConn.Close()
 
-	clientConn.Write([]byte("hello server"))
+	err = client.Send([]byte("hello server"))
+	if err != nil {
+		t.Fatalf("Client send failed: %v", err)
+	}
 	
-	buf := make([]byte, 1024)
-	n, err := clientConn.Read(buf)
+	data, err := client.Receive()
 	if err != nil {
 		t.Fatalf("Client read failed: %v", err)
 	}
 
-	if string(buf[:n]) != "hello server" {
-		t.Errorf("Expected 'hello server', got '%s'", string(buf[:n]))
+	if string(data) != "hello server" {
+		t.Errorf("Expected 'hello server', got '%s'", string(data))
 	}
 
 	<-serverDone

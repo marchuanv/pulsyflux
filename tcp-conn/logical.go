@@ -2,16 +2,14 @@ package tcpconn
 
 import (
 	"context"
-	"errors"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-var (
-	errConnectionClosed = errors.New("connection closed")
-	errConnectionDead   = errors.New("connection dead")
+const (
+	defaultIdleTimeout = 5 * time.Minute
 )
 
 type state int
@@ -22,14 +20,11 @@ const (
 	stateDisconnected
 )
 
-const (
-	defaultIdleTimeout = 5 * time.Minute
-)
-
 type Connection struct {
+	id          string
 	address     string
 	connectFn   func() (net.Conn, error)
-	conn        net.Conn
+	conn        net.Conn // For wrapped connections only
 	state       state
 	mu          sync.RWMutex
 	readBuf     []byte
@@ -39,11 +34,13 @@ type Connection struct {
 	closed      int32
 	ctx         context.Context
 	cancel      context.CancelFunc
-	pool        []*net.Conn
-	poolSize    int
 }
 
 func NewConnection(address string, idleTimeout time.Duration) *Connection {
+	return NewConnectionWithID(address, "", idleTimeout)
+}
+
+func NewConnectionWithID(address string, id string, idleTimeout time.Duration) *Connection {
 	if idleTimeout == 0 {
 		idleTimeout = defaultIdleTimeout
 	}
@@ -54,16 +51,16 @@ func NewConnection(address string, idleTimeout time.Duration) *Connection {
 		return net.Dial("tcp", address)
 	}
 
-	conn, err := connectFn()
+	_, err := globalPool.getOrCreate(address)
 	if err != nil {
 		cancel()
 		return nil
 	}
 
 	tc := &Connection{
+		id:          id,
 		address:     address,
 		connectFn:   connectFn,
-		conn:        conn,
 		state:       stateConnected,
 		readBuf:     make([]byte, 4096),
 		lastRead:    time.Now(),
@@ -71,7 +68,6 @@ func NewConnection(address string, idleTimeout time.Duration) *Connection {
 		idleTimeout: idleTimeout,
 		ctx:         ctx,
 		cancel:      cancel,
-		poolSize:    1,
 	}
 
 	go tc.idleMonitor()
@@ -80,6 +76,10 @@ func NewConnection(address string, idleTimeout time.Duration) *Connection {
 }
 
 func WrapConnection(conn net.Conn, idleTimeout time.Duration) *Connection {
+	return WrapConnectionWithID(conn, "", idleTimeout)
+}
+
+func WrapConnectionWithID(conn net.Conn, id string, idleTimeout time.Duration) *Connection {
 	if idleTimeout == 0 {
 		idleTimeout = defaultIdleTimeout
 	}
@@ -87,6 +87,7 @@ func WrapConnection(conn net.Conn, idleTimeout time.Duration) *Connection {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	tc := &Connection{
+		id:          id,
 		conn:        conn,
 		state:       stateConnected,
 		readBuf:     make([]byte, 4096),
@@ -95,7 +96,6 @@ func WrapConnection(conn net.Conn, idleTimeout time.Duration) *Connection {
 		idleTimeout: idleTimeout,
 		ctx:         ctx,
 		cancel:      cancel,
-		poolSize:    1,
 	}
 
 	go tc.idleMonitor()
@@ -134,10 +134,12 @@ func (t *Connection) reconnect() error {
 		return err
 	}
 
-	if t.conn != nil {
-		t.conn.Close()
+	globalPool.release(t.address)
+	globalPool.pools[t.address] = &physicalPool{
+		address:  t.address,
+		conn:     newConn,
+		refCount: 1,
 	}
-	t.conn = newConn
 	return nil
 }
 
@@ -156,6 +158,30 @@ func (t *Connection) ensureConnected() error {
 	return nil
 }
 
+func (t *Connection) readFull(buf []byte) error {
+	var conn net.Conn
+	if t.conn != nil {
+		conn = t.conn
+	} else {
+		conn = globalPool.get(t.address)
+		if conn == nil {
+			t.state = stateDisconnected
+			return errConnectionClosed
+		}
+	}
+
+	offset := 0
+	for offset < len(buf) {
+		n, err := conn.Read(buf[offset:])
+		if err != nil {
+			t.state = stateDisconnected
+			return err
+		}
+		offset += n
+	}
+	return nil
+}
+
 func (t *Connection) Send(data []byte) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -164,7 +190,32 @@ func (t *Connection) Send(data []byte) error {
 		return err
 	}
 
-	_, err := t.conn.Write(data)
+	var conn net.Conn
+	if t.conn != nil {
+		conn = t.conn
+	} else {
+		conn = globalPool.get(t.address)
+		if conn == nil {
+			t.state = stateDisconnected
+			return errConnectionClosed
+		}
+	}
+
+	// Frame: [id_len(1)][id][data_len(4)][data]
+	idBytes := []byte(t.id)
+	idLen := byte(len(idBytes))
+	dataLen := uint32(len(data))
+
+	frame := make([]byte, 1+len(idBytes)+4+len(data))
+	frame[0] = idLen
+	copy(frame[1:], idBytes)
+	frame[1+len(idBytes)] = byte(dataLen >> 24)
+	frame[2+len(idBytes)] = byte(dataLen >> 16)
+	frame[3+len(idBytes)] = byte(dataLen >> 8)
+	frame[4+len(idBytes)] = byte(dataLen)
+	copy(frame[5+len(idBytes):], data)
+
+	_, err := conn.Write(frame)
 	if err != nil {
 		t.state = stateDisconnected
 		return err
@@ -182,16 +233,39 @@ func (t *Connection) Receive() ([]byte, error) {
 		return nil, err
 	}
 
-	n, err := t.conn.Read(t.readBuf)
-	if err != nil {
-		t.state = stateDisconnected
-		return nil, err
-	}
+	for {
+		// Read frame: [id_len(1)][id][data_len(4)][data]
+		idLenBuf := make([]byte, 1)
+		if err := t.readFull(idLenBuf); err != nil {
+			return nil, err
+		}
 
-	t.lastRead = time.Now()
-	result := make([]byte, n)
-	copy(result, t.readBuf[:n])
-	return result, nil
+		idLen := int(idLenBuf[0])
+		idBuf := make([]byte, idLen)
+		if err := t.readFull(idBuf); err != nil {
+			return nil, err
+		}
+
+		dataLenBuf := make([]byte, 4)
+		if err := t.readFull(dataLenBuf); err != nil {
+			return nil, err
+		}
+
+		dataLen := uint32(dataLenBuf[0])<<24 | uint32(dataLenBuf[1])<<16 | uint32(dataLenBuf[2])<<8 | uint32(dataLenBuf[3])
+		data := make([]byte, dataLen)
+		if err := t.readFull(data); err != nil {
+			return nil, err
+		}
+
+		receivedID := string(idBuf)
+		if t.id != "" && receivedID != t.id {
+			// Wrong connection ID, skip this message
+			continue
+		}
+
+		t.lastRead = time.Now()
+		return data, nil
+	}
 }
 
 func (t *Connection) close() error {
@@ -206,6 +280,8 @@ func (t *Connection) close() error {
 	t.cancel()
 	if t.conn != nil {
 		t.conn.Close()
+	} else if t.address != "" {
+		globalPool.release(t.address)
 	}
 	return nil
 }
