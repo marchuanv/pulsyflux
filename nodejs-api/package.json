@@ -9,7 +9,7 @@
     "postinstall": "npm run build",
     "build": "npm run build:go && npx tsx build.mjs",
     "build:go": "build.bat",
-    "test": "jasmine --config=spec/support/jasmine.json"
+    "test": "npx jasmine"
   },
   "dependencies": {
     "node-addon-api": "^8.5.0",

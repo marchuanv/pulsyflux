@@ -51,7 +51,7 @@ describe('Broker', () => {
     it('should publish and receive messages', (done) => {
       let poll;
       let timeout;
-      
+
       const cleanup = () => {
         if (poll) clearInterval(poll);
         if (timeout) clearTimeout(timeout);
@@ -88,7 +88,7 @@ describe('Broker', () => {
 
     it('should handle binary payloads', (done) => {
       const data = Buffer.from([1, 2, 3, 4, 5]);
-      
+
       setTimeout(() => client1.publish(data), 50);
 
       const poll = setInterval(() => {
@@ -108,7 +108,7 @@ describe('Broker', () => {
 
     it('should handle JSON payloads', (done) => {
       const data = { id: 123, name: 'test' };
-      
+
       setTimeout(() => client1.publish(JSON.stringify(data)), 50);
 
       const poll = setInterval(() => {
@@ -130,7 +130,7 @@ describe('Broker', () => {
 
     it('should handle multiple messages', (done) => {
       const messages = [];
-      
+
       setTimeout(() => {
         client1.publish('msg1');
         client1.publish('msg2');
@@ -142,7 +142,7 @@ describe('Broker', () => {
         if (msg) {
           messages.push(msg.toString());
         }
-        
+
         if (messages.length === 3) {
           clearInterval(poll);
           expect(messages).toContain('msg1');
@@ -165,12 +165,12 @@ describe('Broker', () => {
       const poll = setInterval(() => {
         const msg1 = client1.subscribe();
         const msg2 = client2.subscribe();
-        
+
         if (msg1) {
           clearInterval(poll);
           fail('Client1 should not receive own message');
         }
-        
+
         if (msg2) {
           client2Received = true;
         }
@@ -195,12 +195,12 @@ describe('Broker', () => {
     it('should isolate messages between channels', (done) => {
       const channel1 = randomUUID();
       const channel2 = randomUUID();
-      
+
       const c1 = new Client(server.addr(), channel1);
       const c2 = new Client(server.addr(), channel1);
       const c3 = new Client(server.addr(), channel2);
       const c4 = new Client(server.addr(), channel2);
-      
+
       setTimeout(() => {
         c1.publish('channel1 message');
         c3.publish('channel2 message');
@@ -208,11 +208,11 @@ describe('Broker', () => {
 
       let msg2 = null;
       let msg4 = null;
-      
+
       const poll = setInterval(() => {
         if (!msg2) msg2 = c2.subscribe();
         if (!msg4) msg4 = c4.subscribe();
-        
+
         if (msg2 && msg4) {
           clearInterval(poll);
           expect(msg2.toString()).toBe('channel1 message');

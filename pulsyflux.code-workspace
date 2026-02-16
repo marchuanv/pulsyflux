@@ -12,6 +12,8 @@
 					"cmd": "wire .\\"
 				}
 			]
-		}
+		},
+		"jasmineExplorer.cwd": "nodejs-api",
+		"jasmineExplorer.config": "spec/support/jasmine.json"
 	}
 }
