@@ -40,16 +40,16 @@ func BenchmarkPubSub(b *testing.B) {
 	}
 }
 
+func BenchmarkBroadcast2(b *testing.B) {
+	benchmarkBroadcast(b, 2)
+}
+
+func BenchmarkBroadcast5(b *testing.B) {
+	benchmarkBroadcast(b, 5)
+}
+
 func BenchmarkBroadcast10(b *testing.B) {
 	benchmarkBroadcast(b, 10)
-}
-
-func BenchmarkBroadcast100(b *testing.B) {
-	benchmarkBroadcast(b, 100)
-}
-
-func BenchmarkBroadcast1000(b *testing.B) {
-	benchmarkBroadcast(b, 1000)
 }
 
 func benchmarkBroadcast(b *testing.B, numClients int) {

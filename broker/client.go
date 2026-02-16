@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"sync"
-	"time"
 	tcpconn "pulsyflux/tcp-conn"
 )
 
@@ -37,8 +36,6 @@ func NewClient(address string, channelID uuid.UUID) (*Client, error) {
 	}
 	data, _ := json.Marshal(joinMsg)
 	control.Send(data)
-
-	time.Sleep(100 * time.Millisecond)
 
 	// Create channel connection
 	conn := tcpconn.NewConnection(address, clientID)

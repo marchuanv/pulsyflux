@@ -273,6 +273,14 @@ type Client struct {
 
 ## Design Decisions
 
+### Idle Timeout Behavior
+
+The broker inherits tcp-conn's 30-second idle timeout:
+- Logical connections close after 30 seconds without activity
+- Physical connections close when all logical connections are closed
+- Clients should send periodic messages to maintain connections
+- Automatic reconnection occurs on next operation (may cause message loss)
+
 ### Why Channel ID in Constructor?
 
 Each client is bound to a single channel for its lifetime. This simplifies the API and makes the client's purpose clear. To communicate on multiple channels, create multiple clients.
@@ -299,10 +307,11 @@ tcp-conn's multiplexing allows many logical connections over few physical socket
 
 ## Performance
 
-- **Latency**: ~20µs for small messages (inherits from tcp-conn)
+- **Latency**: ~7µs for publish, ~41µs for round-trip pub/sub
 - **Throughput**: Limited by network bandwidth and broadcast fanout
 - **Scalability**: O(N) broadcast where N = clients per channel
 - **Memory**: Minimal - no message buffering or persistence
+- **Idle timeout**: 30 seconds (from tcp-conn) - connections close if inactive
 
 ## Limitations
 
@@ -313,6 +322,10 @@ tcp-conn's multiplexing allows many logical connections over few physical socket
 - Single server (no clustering or HA)
 - Sender cannot receive own messages
 - No backpressure - slow subscribers drop messages
+- **Idle timeout**: Logical connections close after 30 seconds of inactivity (inherited from tcp-conn)
+  - Physical connection closes when all logical connections are closed
+  - Clients must send periodic messages or implement keepalive to maintain connections
+  - Reconnection is automatic but may cause message loss during reconnection
 
 ## Testing
 
