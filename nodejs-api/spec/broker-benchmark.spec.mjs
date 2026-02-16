@@ -1,4 +1,4 @@
-import { Server, Client } from '../broker.mjs';
+import { Server, Client } from '../registry.mjs';
 import { randomUUID } from 'crypto';
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -15,11 +15,8 @@ describe('Broker Performance Benchmarks', () => {
       const client1 = new Client(server.addr(), channelID);
       const client2 = new Client(server.addr(), channelID);
       
-      const sub1 = client1.subscribe();
-      const sub2 = client2.subscribe();
-      
       const handler = setInterval(() => {
-        const msg = sub2.receive();
+        const msg = client2.subscribe();
         if (msg) client2.publish(msg);
       }, 0);
       
@@ -31,7 +28,7 @@ describe('Broker Performance Benchmarks', () => {
       for (let i = 0; i < iterations; i++) {
         client1.publish('test');
         let resp;
-        do { resp = sub1.receive(); } while (!resp);
+        do { resp = client1.subscribe(); } while (!resp);
       }
       
       const end = process.hrtime.bigint();
@@ -45,8 +42,6 @@ describe('Broker Performance Benchmarks', () => {
       console.log(`  Throughput: ${opsPerSec.toFixed(0)} ops/sec`);
       
       clearInterval(handler);
-      sub1.close();
-      sub2.close();
       server.stop();
       
       expect(avgLatency).toBeLessThan(100);
@@ -63,11 +58,9 @@ describe('Broker Performance Benchmarks', () => {
       const client1 = new Client(server.addr(), channelID);
       const client2 = new Client(server.addr(), channelID);
       
-      const sub = client2.subscribe();
-      
       let received = 0;
       const handler = setInterval(() => {
-        const msg = sub.receive();
+        const msg = client2.subscribe();
         if (msg) received++;
       }, 0);
       
@@ -94,7 +87,6 @@ describe('Broker Performance Benchmarks', () => {
       console.log(`  Throughput: ${opsPerSec.toFixed(0)} ops/sec`);
       
       clearInterval(handler);
-      sub.close();
       server.stop();
       
       expect(received).toBe(iterations);
@@ -110,19 +102,16 @@ describe('Broker Performance Benchmarks', () => {
       const channelID = randomUUID();
       const numClients = 5;
       const clients = [];
-      const subs = [];
       const counters = [];
       const handlers = [];
       
       for (let i = 0; i < numClients; i++) {
         const client = new Client(server.addr(), channelID);
         clients.push(client);
-        const sub = client.subscribe();
-        subs.push(sub);
         counters.push(0);
         
         const handler = setInterval(((idx) => () => {
-          const msg = sub.receive();
+          const msg = clients[idx].subscribe();
           if (msg) counters[idx]++;
         })(i), 0);
         handlers.push(handler);
@@ -154,12 +143,9 @@ describe('Broker Performance Benchmarks', () => {
       console.log(`  Throughput: ${opsPerSec.toFixed(0)} deliveries/sec`);
       
       handlers.forEach(h => clearInterval(h));
-      subs.forEach(s => s.close());
       server.stop();
       
-      // Client 0 shouldn't receive own messages
       expect(counters[0]).toBe(0);
-      // Other clients should receive all messages
       for (let i = 1; i < numClients; i++) {
         expect(counters[i]).toBe(iterations);
       }
@@ -176,13 +162,10 @@ describe('Broker Performance Benchmarks', () => {
       const client1 = new Client(server.addr(), channelID);
       const client2 = new Client(server.addr(), channelID);
       
-      const sub1 = client1.subscribe();
-      const sub2 = client2.subscribe();
-      
       const largeData = Buffer.alloc(1024 * 1024, 'X');
       
       const handler = setInterval(() => {
-        const msg = sub2.receive();
+        const msg = client2.subscribe();
         if (msg) client2.publish(msg);
       }, 0);
       
@@ -194,7 +177,7 @@ describe('Broker Performance Benchmarks', () => {
       for (let i = 0; i < iterations; i++) {
         client1.publish(largeData);
         let resp;
-        do { resp = sub1.receive(); } while (!resp);
+        do { resp = client1.subscribe(); } while (!resp);
       }
       
       const end = process.hrtime.bigint();
@@ -209,8 +192,6 @@ describe('Broker Performance Benchmarks', () => {
       console.log(`  Bandwidth: ${mbps.toFixed(2)} MB/s`);
       
       clearInterval(handler);
-      sub1.close();
-      sub2.close();
       server.stop();
       
       expect(avgLatency).toBeLessThan(200);
@@ -227,13 +208,10 @@ describe('Broker Performance Benchmarks', () => {
       const client1 = new Client(server.addr(), channelID);
       const client2 = new Client(server.addr(), channelID);
       
-      const sub1 = client1.subscribe();
-      const sub2 = client2.subscribe();
-      
       const mediumData = Buffer.alloc(10 * 1024, 'X');
       
       const handler = setInterval(() => {
-        const msg = sub2.receive();
+        const msg = client2.subscribe();
         if (msg) client2.publish(msg);
       }, 0);
       
@@ -245,7 +223,7 @@ describe('Broker Performance Benchmarks', () => {
       for (let i = 0; i < iterations; i++) {
         client1.publish(mediumData);
         let resp;
-        do { resp = sub1.receive(); } while (!resp);
+        do { resp = client1.subscribe(); } while (!resp);
       }
       
       const end = process.hrtime.bigint();
@@ -260,8 +238,6 @@ describe('Broker Performance Benchmarks', () => {
       console.log(`  Throughput: ${opsPerSec.toFixed(0)} ops/sec`);
       
       clearInterval(handler);
-      sub1.close();
-      sub2.close();
       server.stop();
       
       expect(avgLatency).toBeLessThan(100);

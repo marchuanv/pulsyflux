@@ -121,4 +121,23 @@ func FreePayload(ptr unsafe.Pointer) {
 	C.free(ptr)
 }
 
+//export Cleanup
+func Cleanup() {
+	// Clean up all resources
+	for id := range servers {
+		if s := servers[id]; s != nil {
+			s.Stop()
+		}
+	}
+	for id := range clients {
+		delete(clients, id)
+	}
+	for id := range subs {
+		delete(subs, id)
+	}
+	servers = make(map[int]*broker.Server)
+	clients = make(map[int]*broker.Client)
+	subs = make(map[int]<-chan []byte)
+}
+
 func main() {}
