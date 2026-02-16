@@ -1,4 +1,7 @@
-# Build artifacts
+# Build output
+.bin/
+
+# Build artifacts (generated during install)
 *.node
 *.dll
 *.lib
