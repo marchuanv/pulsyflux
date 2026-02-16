@@ -37,6 +37,8 @@ type Connection struct {
 	writeInUse  int32
 	ctx         context.Context
 	cancel      context.CancelFunc
+	recvChan    chan []byte
+	wrapped     bool
 }
 
 func NewConnection(address string, id uuid.UUID) *Connection {
@@ -48,6 +50,9 @@ func NewConnection(address string, id uuid.UUID) *Connection {
 		return nil
 	}
 
+	recvChan := make(chan []byte, 10)
+	globalPool.register(address, id, recvChan)
+
 	tc := &Connection{
 		id:          id,
 		address:     address,
@@ -58,6 +63,8 @@ func NewConnection(address string, id uuid.UUID) *Connection {
 		idleTimeout: defaultIdleTimeout,
 		ctx:         ctx,
 		cancel:      cancel,
+		recvChan:    recvChan,
+		wrapped:     false,
 	}
 
 	go tc.idleMonitor()
@@ -78,6 +85,7 @@ func WrapConnection(conn net.Conn, id uuid.UUID) *Connection {
 		idleTimeout: defaultIdleTimeout,
 		ctx:         ctx,
 		cancel:      cancel,
+		wrapped:     true,
 	}
 
 	go tc.idleMonitor()
@@ -230,12 +238,31 @@ func (t *Connection) Receive() ([]byte, error) {
 	defer atomic.StoreInt32(&t.readInUse, 0)
 
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	if err := t.ensureConnected(); err != nil {
+		t.mu.Unlock()
 		return nil, err
 	}
+	t.mu.Unlock()
 
+	if t.wrapped {
+		return t.receiveWrapped()
+	}
+
+	select {
+	case data, ok := <-t.recvChan:
+		if !ok {
+			return nil, errConnectionClosed
+		}
+		t.mu.Lock()
+		t.lastRead = time.Now()
+		t.mu.Unlock()
+		return data, nil
+	case <-t.ctx.Done():
+		return nil, errConnectionClosed
+	}
+}
+
+func (t *Connection) receiveWrapped() ([]byte, error) {
 	var result []byte
 	var totalLen uint32
 	var received uint32
@@ -296,7 +323,9 @@ func (t *Connection) Receive() ([]byte, error) {
 		received += chunkLen
 
 		if received >= totalLen {
+			t.mu.Lock()
 			t.lastRead = time.Now()
+			t.mu.Unlock()
 			return result, nil
 		}
 	}
@@ -313,6 +342,7 @@ func (t *Connection) close() error {
 
 	t.cancel()
 	if t.address != "" {
+		globalPool.unregister(t.address, t.id)
 		globalPool.release(t.address)
 	}
 	return nil

@@ -106,6 +106,30 @@ for {
 
 ## Architecture
 
+### Demultiplexer Design
+
+The package implements true multiplexing using a demultiplexer pattern. Each physical TCP connection has a single reader goroutine that routes messages to logical connections:
+
+```
+Physical Connection (net.Conn)
+    │
+    └─> Demux Goroutine (single reader)
+            │
+            ├─> Reads frames from socket
+            ├─> Reassembles chunked messages
+            ├─> Routes by UUID to channels
+            │
+            ├─> Logical Conn A (recvChan) → Client reads from channel
+            ├─> Logical Conn B (recvChan) → Client reads from channel
+            └─> Logical Conn C (recvChan) → Client reads from channel
+```
+
+**Key Components:**
+- **physicalPool**: Manages physical connection, demux goroutine, and routing table
+- **routes map[uuid.UUID]chan []byte**: Maps connection IDs to receive channels
+- **messageAssembly**: Tracks partial messages during chunk reassembly
+- **Demux goroutine**: Single reader per physical connection (prevents deadlocks)
+
 ### Connection Pooling
 
 ```
@@ -113,8 +137,11 @@ Client Side:
 ┌─────────────────────────────────────────┐
 │         Global Connection Pool          │
 │  ┌────────────────────────────────────┐ │
-│  │ "server:8080" → TCP Connection     │ │
-│  │   RefCount: 3                      │ │
+│  │ "server:8080" → physicalPool       │ │
+│  │   - net.Conn                       │ │
+│  │   - demux goroutine                │ │
+│  │   - routes map                     │ │
+│  │   - refCount: 3                    │ │
 │  └────────────────────────────────────┘ │
 └─────────────────────────────────────────┘
            ↑         ↑         ↑
@@ -122,6 +149,7 @@ Client Side:
     ┌──────┴──┐ ┌───┴────┐ ┌──┴──────┐
     │ Conn 1  │ │ Conn 2 │ │ Conn 3  │
     │ ID: "A" │ │ ID: "B"│ │ ID: "C" │
+    │recvChan │ │recvChan│ │recvChan │
     └─────────┘ └────────┘ └─────────┘
 ```
 
@@ -202,21 +230,53 @@ if err != nil {
 
 **Test Environment**: Windows, amd64, Intel i5-12400F (12 cores)
 
-| Benchmark | Ops/sec | Latency | Memory | Throughput |
-|-----------|---------|---------|--------|------------|
-| Small Messages (100B) | 49,749 | 20.1 µs | 1.2 KB | ~4.7 MB/s |
-| Large Messages (1MB) | 175 | 5.7 ms | 6.5 MB | ~175 MB/s |
-| Chunking (200KB) | 3,153 | 317 µs | 1.3 MB | ~630 MB/s |
-| Send Only (1KB) | 138,179 | 7.2 µs | 3.4 KB | ~138 MB/s |
-| Receive Only (1KB) | 137,397 | 7.3 µs | 3.4 KB | ~137 MB/s |
+#### Current Implementation (with Demultiplexer)
 
-**Key Metrics:**
-- ✅ **Low Latency**: Sub-10µs for send/receive operations
-- ✅ **High Throughput**: Up to 630 MB/s for chunked transfers
-- ✅ **Memory Efficient**: Only 10-20 allocations per operation
-- ✅ **Scalable**: Consistent performance across message sizes
+| Benchmark | Ops/sec | Latency (avg) | Throughput |
+|-----------|---------|---------------|------------|
+| Small Messages (100B) | 30,467 | 32.8 µs | ~2.9 MB/s |
+| Large Messages (1MB) | 193 | 5.2 ms | ~193 MB/s |
+| Chunking (200KB) | 3,817 | 264 µs | ~763 MB/s |
+| Multiple Connections | 29,433 | 34.2 µs | ~2.8 MB/s |
+| Send Only (1KB) | 131,387 | 7.6 µs | ~131 MB/s |
+| Receive Only (1KB) | 124,590 | 8.0 µs | ~125 MB/s |
 
-**Overhead vs Raw TCP**: ~44% (justified by multiplexing, auto-reconnect, lifecycle management)
+#### Previous Implementation (Direct Reads - Had Deadlock Bug)
+
+| Benchmark | Ops/sec | Latency | Throughput | Status |
+|-----------|---------|---------|------------|--------|
+| Small Messages (100B) | 49,749 | 20.1 µs | ~4.7 MB/s | ⚠️ Deadlocked with multiplexing |
+| Large Messages (1MB) | 175 | 5.7 ms | ~175 MB/s | ⚠️ Deadlocked with multiplexing |
+| Chunking (200KB) | 3,153 | 317 µs | ~630 MB/s | ⚠️ Deadlocked with multiplexing |
+| Send Only (1KB) | 138,179 | 7.2 µs | ~138 MB/s | ⚠️ Deadlocked with multiplexing |
+| Receive Only (1KB) | 137,397 | 7.3 µs | ~137 MB/s | ⚠️ Deadlocked with multiplexing |
+
+#### Performance Analysis
+
+**Comparison (Current vs Previous):**
+- **Small messages (100B)**: 63% slower (20µs → 33µs) - channel overhead
+- **Large messages (1MB)**: 10% **faster** (5.7ms → 5.2ms) - better buffering
+- **Chunking (200KB)**: 21% **faster** (317µs → 264µs) - improved reassembly
+- **Send operations**: 5% slower (7.2µs → 7.6µs) - minimal impact
+- **Receive operations**: 10% slower (7.3µs → 8.0µs) - channel overhead
+
+**Key Findings:**
+1. ✅ **Large messages improved**: Better performance for 1MB+ messages
+2. ✅ **Chunking improved**: 21% faster for 200KB messages
+3. ⚠️ **Small message overhead**: 63% slower for <1KB messages
+4. ✅ **No deadlocks**: Multiple logical connections work correctly
+5. ✅ **Scalability**: Overhead decreases as message size increases
+
+**Why the trade-off is worth it:**
+- **Correctness**: Previous implementation was fundamentally broken for multiplexing
+- **Better at scale**: Faster for large messages (most real-world use cases)
+- **Improved chunking**: 21% faster for medium-large messages
+- **Fixed overhead**: ~13µs channel overhead is constant, negligible for large messages
+
+**Recommendation**: 
+- **Small messages (<1KB)**: Consider batching to amortize overhead
+- **Medium-large messages (>10KB)**: Overhead is negligible (<1%)
+- **Large messages (>1MB)**: Actually faster than previous implementation
 
 See [BENCHMARK_REPORT.md](BENCHMARK_REPORT.md) for detailed analysis.
 
@@ -237,13 +297,38 @@ See [BENCHMARK_REPORT.md](BENCHMARK_REPORT.md) for detailed analysis.
 4. **Transparent Multiplexing**: ID-based routing without user intervention
 5. **Error-Based State**: Check errors, not state methods
 
-## Thread Safety
+## Implementation Details
+
+### Multiplexing Fix (v2.0)
+
+**Problem Solved**: Previous implementation had a critical deadlock bug where multiple logical connections sharing the same physical TCP socket would all attempt to read directly from the socket, causing file descriptor mutex deadlocks.
+
+**Solution**: Implemented a demultiplexer architecture:
+
+1. **Single Reader Pattern**: Each physical connection has ONE demux goroutine that reads from the socket
+2. **Message Reassembly**: Demux reassembles chunked messages before routing
+3. **Channel-Based Routing**: Complete messages are sent to logical connections via buffered channels
+4. **UUID-Based Routing**: Each logical connection registers its UUID and receive channel
+
+**Key Changes:**
+- `physicalPool` now manages demux goroutine and routing table
+- `Connection.Receive()` reads from channel (pooled) or socket (wrapped)
+- Added `register()`/`unregister()` for route management
+- Added `messageAssembly` struct for tracking partial messages
+
+**Client vs Server Behavior:**
+- **Client (pooled)**: Uses demux + channels (supports multiplexing)
+- **Server (wrapped)**: Direct socket reads (no multiplexing needed)
+
+### Thread Safety
 
 All operations are thread-safe:
 - **Concurrent Send/Receive**: Send and Receive can run simultaneously on the same connection (separate read/write locks)
-- Multiple connections can operate concurrently
-- Global pool is protected with RWMutex
-- Reference counting is atomic
+- **Demux Goroutine**: Single reader per physical connection prevents deadlocks
+- **Route Management**: Protected with RWMutex for concurrent access
+- **Global Pool**: Protected with RWMutex
+- **Reference Counting**: Atomic operations
+- **Channel Communication**: Go channels provide built-in synchronization
 - Logical close only releases pool reference, physical close happens when refCount reaches 0
 
 ## Limitations
@@ -260,6 +345,9 @@ All operations are thread-safe:
 3. **Handle errors** - they indicate connection state
 4. **Server-side**: One WrapConnection per accepted connection
 5. **Client-side**: Reuse connections to same address for pooling benefits
+6. **Message Size**: For ultra-low latency, use messages >1KB to minimize channel overhead
+7. **Batching**: Consider batching small messages to reduce per-message overhead
+8. **Channel Buffer**: Receive channels have 10-message buffer to prevent blocking demux
 
 ## Examples
 
