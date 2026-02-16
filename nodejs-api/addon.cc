@@ -201,7 +201,21 @@ private:
 };
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
+  // Try loading from same directory as addon
   hLib = LoadLibraryA("broker_lib.dll");
+  if (!hLib) {
+    // Try with full path relative to addon location
+    char path[MAX_PATH];
+    HMODULE hModule;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)&Init, &hModule);
+    GetModuleFileNameA(hModule, path, MAX_PATH);
+    std::string dllPath = path;
+    size_t pos = dllPath.find_last_of("\\");
+    if (pos != std::string::npos) {
+      dllPath = dllPath.substr(0, pos + 1) + "broker_lib.dll";
+      hLib = LoadLibraryA(dllPath.c_str());
+    }
+  }
   if (!hLib) {
     Napi::Error::New(env, "Failed to load broker_lib.dll").ThrowAsJavaScriptException();
     return exports;
