@@ -280,3 +280,113 @@ func TestConnection_ConcurrentUseError(t *testing.T) {
 		t.Errorf("Expected connection in use error, got: %v", err1)
 	}
 }
+
+func TestConnection_ChunkedReconnect(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start listener: %v", err)
+	}
+	defer listener.Close()
+
+	id := uuid.New().String()
+	acceptCount := 0
+	
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			acceptCount++
+			wrapped := WrapConnection(conn, id)
+			
+			// Echo back
+			data, err := wrapped.Receive()
+			if err != nil {
+				conn.Close()
+				continue
+			}
+			wrapped.Send(data)
+			conn.Close()
+		}
+	}()
+
+	c := NewConnection(listener.Addr().String(), id)
+	if c == nil {
+		t.Fatal("NewConnection returned nil")
+	}
+
+	// Send large message that requires chunking
+	largeData := make([]byte, 200*1024)
+	for i := range largeData {
+		largeData[i] = byte(i % 256)
+	}
+
+	err = c.Send(largeData)
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	received, err := c.Receive()
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+
+	if len(received) != len(largeData) {
+		t.Errorf("Expected %d bytes, got %d", len(largeData), len(received))
+	}
+}
+
+func TestConnection_MultipleChunks(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start listener: %v", err)
+	}
+	defer listener.Close()
+
+	id := uuid.New().String()
+	go func() {
+		conn, _ := listener.Accept()
+		if conn == nil {
+			return
+		}
+		wrapped := WrapConnection(conn, id)
+		data, _ := wrapped.Receive()
+		wrapped.Send(data)
+	}()
+
+	c := NewConnection(listener.Addr().String(), id)
+	if c == nil {
+		t.Fatal("NewConnection returned nil")
+	}
+
+	// Test with exactly 3 chunks (192KB)
+	testData := make([]byte, 192*1024)
+	for i := range testData {
+		testData[i] = byte(i % 256)
+	}
+
+	err = c.Send(testData)
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	received, err := c.Receive()
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+
+	if len(received) != len(testData) {
+		t.Errorf("Expected %d bytes, got %d", len(testData), len(received))
+	}
+
+	// Verify data integrity
+	for i := range testData {
+		if received[i] != testData[i] {
+			t.Errorf("Data mismatch at byte %d", i)
+			break
+		}
+	}
+}
+
+
