@@ -1,28 +1,23 @@
 # Node.js Broker API
 
-⚠️ **WARNING: NOT RECOMMENDED FOR PRODUCTION USE** ⚠️
+⚠️ **PERFORMANCE UPDATE** ⚠️
 
-This package provides Node.js bindings to the Go broker implementation via FFI. However, **performance is 145x slower than native Go** due to FFI overhead, making it unsuitable for production message broker workloads.
+**FFI Performance (Current):**
+- Round-trip: 2.3ms (improved from 6.6ms)
+- Throughput: 431 ops/sec (improved from 152 ops/sec)
+- **2.8x faster** after optimizations
+- Still **50x slower** than native Go
 
-**Performance:**
-- Native Go: 45µs round-trip, 22K ops/sec
-- Node.js FFI: 6.6ms round-trip, 800 ops/sec
-- **145x slower** - UNACCEPTABLE for message broker
+**Recommended for:**
+- ✅ Development and testing
+- ✅ Low-throughput scenarios (<500 msgs/sec)
+- ✅ Non-critical paths
+- ❌ Production high-frequency messaging
 
-**Use Cases:**
-- ✅ Testing and development
-- ✅ Prototyping
-- ✅ Low-throughput scenarios (<100 msgs/sec)
-- ❌ Production message broker workloads
-- ❌ High-frequency messaging
-- ❌ Performance-critical paths
-
-**Recommended Alternatives:**
-1. Use Go broker directly as a service
-2. Use Redis/NATS/RabbitMQ with native Node.js clients
-3. Implement native Node.js addon (not FFI)
-
-See [BENCHMARK_COMPARISON.md](BENCHMARK_COMPARISON.md) for detailed analysis.
+**Future N-API Implementation:**
+- Expected: 0.5-1ms latency, 5K-10K ops/sec
+- Requires: Visual Studio Build Tools + CMake
+- See `PERFORMANCE_IMPROVEMENTS.md` for details
 
 ---
 

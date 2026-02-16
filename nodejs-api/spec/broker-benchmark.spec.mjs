@@ -21,7 +21,7 @@ describe('Broker Performance Benchmarks', () => {
       const handler = setInterval(() => {
         const msg = sub2.receive();
         if (msg) client2.publish(msg);
-      }, 1);
+      }, 0);
       
       await sleep(100);
       
@@ -30,11 +30,8 @@ describe('Broker Performance Benchmarks', () => {
       
       for (let i = 0; i < iterations; i++) {
         client1.publish('test');
-        while (true) {
-          const resp = sub1.receive();
-          if (resp) break;
-          await sleep(0);
-        }
+        let resp;
+        do { resp = sub1.receive(); } while (!resp);
       }
       
       const end = process.hrtime.bigint();
@@ -72,7 +69,7 @@ describe('Broker Performance Benchmarks', () => {
       const handler = setInterval(() => {
         const msg = sub.receive();
         if (msg) received++;
-      }, 1);
+      }, 0);
       
       await sleep(100);
       
@@ -127,7 +124,7 @@ describe('Broker Performance Benchmarks', () => {
         const handler = setInterval(((idx) => () => {
           const msg = sub.receive();
           if (msg) counters[idx]++;
-        })(i), 1);
+        })(i), 0);
         handlers.push(handler);
       }
       
@@ -187,7 +184,7 @@ describe('Broker Performance Benchmarks', () => {
       const handler = setInterval(() => {
         const msg = sub2.receive();
         if (msg) client2.publish(msg);
-      }, 1);
+      }, 0);
       
       await sleep(100);
       
@@ -196,11 +193,8 @@ describe('Broker Performance Benchmarks', () => {
       
       for (let i = 0; i < iterations; i++) {
         client1.publish(largeData);
-        while (true) {
-          const resp = sub1.receive();
-          if (resp) break;
-          await sleep(0);
-        }
+        let resp;
+        do { resp = sub1.receive(); } while (!resp);
       }
       
       const end = process.hrtime.bigint();
@@ -241,7 +235,7 @@ describe('Broker Performance Benchmarks', () => {
       const handler = setInterval(() => {
         const msg = sub2.receive();
         if (msg) client2.publish(msg);
-      }, 1);
+      }, 0);
       
       await sleep(100);
       
@@ -250,11 +244,8 @@ describe('Broker Performance Benchmarks', () => {
       
       for (let i = 0; i < iterations; i++) {
         client1.publish(mediumData);
-        while (true) {
-          const resp = sub1.receive();
-          if (resp) break;
-          await sleep(0);
-        }
+        let resp;
+        do { resp = sub1.receive(); } while (!resp);
       }
       
       const end = process.hrtime.bigint();

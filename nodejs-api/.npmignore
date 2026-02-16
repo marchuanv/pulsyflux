@@ -1,0 +1,9 @@
+spec/
+node_modules/
+*.log
+.vscode/
+.git/
+install_build_tools.bat
+BUILD.md
+PERFORMANCE_IMPROVEMENTS.md
+BENCHMARK_COMPARISON.md
