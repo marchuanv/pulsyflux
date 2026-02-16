@@ -1,5 +1,8 @@
 #include <napi.h>
 #include <windows.h>
+#include <thread>
+#include <chrono>
+#include <atomic>
 
 typedef int (*NewServerFunc)(const char*);
 typedef int (*StartFunc)(int);
@@ -21,6 +24,46 @@ static PublishFunc Publish = nullptr;
 static SubscribeFunc Subscribe = nullptr;
 static FreePayloadFunc FreePayload = nullptr;
 static CleanupFunc Cleanup = nullptr;
+
+class MessageWorker : public Napi::AsyncWorker {
+public:
+  MessageWorker(Napi::Function& callback, int clientId, Napi::FunctionReference* callbackRef)
+    : Napi::AsyncWorker(callback), clientId_(clientId), callbackRef_(callbackRef), payload_(nullptr), payloadLen_(0) {}
+
+  ~MessageWorker() {
+    if (payload_) {
+      FreePayload(payload_);
+    }
+  }
+
+  void Execute() override {
+    int result = Subscribe(clientId_, &payload_, &payloadLen_);
+    if (result < 0) {
+      payload_ = nullptr;
+      payloadLen_ = 0;
+    }
+  }
+
+  void OnOK() override {
+    Napi::HandleScope scope(Env());
+    if (payload_) {
+      Napi::Buffer<char> buffer = Napi::Buffer<char>::Copy(Env(), (char*)payload_, payloadLen_);
+      Callback().Call({buffer});
+    }
+    // Schedule next check if callback still exists
+    if (callbackRef_ && !callbackRef_->IsEmpty()) {
+      Napi::Function cb = callbackRef_->Value();
+      MessageWorker* worker = new MessageWorker(cb, clientId_, callbackRef_);
+      worker->Queue();
+    }
+  }
+
+private:
+  int clientId_;
+  Napi::FunctionReference* callbackRef_;
+  void* payload_;
+  int payloadLen_;
+};
 
 class Server : public Napi::ObjectWrap<Server> {
 public:
@@ -69,7 +112,7 @@ public:
     Napi::Function func = DefineClass(env, "Client", {
       InstanceMethod("publish", &Client::PublishMethod),
       InstanceMethod("subscribe", &Client::SubscribeMethod),
-      InstanceMethod("subscribeAsync", &Client::SubscribeAsyncMethod)
+      InstanceMethod("onMessage", &Client::OnMessageMethod)
     });
     
     Napi::FunctionReference* constructor = new Napi::FunctionReference();
@@ -124,30 +167,31 @@ public:
     return buffer;
   }
 
-  Napi::Value SubscribeAsyncMethod(const Napi::CallbackInfo& info) {
+  Napi::Value OnMessageMethod(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    auto deferred = Napi::Promise::Deferred::New(env);
     
-    // Check immediately for a message
-    void* payload = nullptr;
-    int payloadLen = 0;
-    int result = Subscribe(id_, &payload, &payloadLen);
-    
-    if (result >= 0) {
-      // Message available immediately
-      Napi::Buffer<char> buffer = Napi::Buffer<char>::Copy(env, (char*)payload, payloadLen);
-      FreePayload(payload);
-      deferred.Resolve(buffer);
-    } else {
-      // No message, resolve with null
-      deferred.Resolve(env.Null());
+    if (info.Length() < 1 || !info[0].IsFunction()) {
+      Napi::TypeError::New(env, "Expected callback function").ThrowAsJavaScriptException();
+      return env.Undefined();
     }
     
-    return deferred.Promise();
+    callback_ = Napi::Persistent(info[0].As<Napi::Function>());
+    ScheduleNextCheck();
+    
+    return env.Undefined();
+  }
+  
+  void ScheduleNextCheck() {
+    if (!callback_.IsEmpty()) {
+      Napi::Function cb = callback_.Value();
+      MessageWorker* worker = new MessageWorker(cb, id_, &callback_);
+      worker->Queue();
+    }
   }
   
 private:
   int id_;
+  Napi::FunctionReference callback_;
 };
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {

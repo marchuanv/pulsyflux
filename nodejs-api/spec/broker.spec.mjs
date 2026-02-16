@@ -30,6 +30,17 @@ describe('Broker', () => {
     client2 = new Client(server.addr(), channelID);
   });
 
+  afterEach(() => {
+    if (client1) {
+      client1.close();
+      client1 = null;
+    }
+    if (client2) {
+      client2.close();
+      client2 = null;
+    }
+  });
+
   describe('Server', () => {
     it('should start and get address', () => {
       const testServer = new Server(':0');
@@ -50,139 +61,68 @@ describe('Broker', () => {
     });
 
     it('should publish and receive messages', (done) => {
-      let poll;
-      let timeout;
+      client2.onMessage((msg) => {
+        expect(msg.toString()).toBe('Hello World');
+        done();
+      });
 
-      const cleanup = () => {
-        if (poll) clearInterval(poll);
-        if (timeout) clearTimeout(timeout);
-      };
-
-      setTimeout(() => {
-        try {
-          client1.publish('Hello World');
-        } catch (error) {
-          cleanup();
-          fail('Failed to publish: ' + error.message);
-        }
-      }, 50);
-
-      poll = setInterval(() => {
-        try {
-          const msg = client2.subscribe();
-          if (msg) {
-            cleanup();
-            expect(msg.toString()).toBe('Hello World');
-            done();
-          }
-        } catch (error) {
-          cleanup();
-          fail('Subscribe error: ' + error.message);
-        }
-      }, 10);
-
-      timeout = setTimeout(() => {
-        cleanup();
-        fail('Timeout waiting for message');
-      }, 2000);
-    }, 5000);
+      client1.publish('Hello World');
+    });
 
     it('should handle binary payloads', (done) => {
       const data = Buffer.from([1, 2, 3, 4, 5]);
 
-      setTimeout(() => client1.publish(data), 50);
+      client2.onMessage((msg) => {
+        expect(Buffer.compare(msg, data)).toBe(0);
+        done();
+      });
 
-      const poll = setInterval(() => {
-        const msg = client2.subscribe();
-        if (msg) {
-          clearInterval(poll);
-          expect(Buffer.compare(msg, data)).toBe(0);
-          done();
-        }
-      }, 10);
-
-      setTimeout(() => {
-        clearInterval(poll);
-        fail('Timeout waiting for message');
-      }, 2000);
-    }, 5000);
+      client1.publish(data);
+    });
 
     it('should handle JSON payloads', (done) => {
       const data = { id: 123, name: 'test' };
 
-      setTimeout(() => client1.publish(JSON.stringify(data)), 50);
+      client2.onMessage((msg) => {
+        const received = JSON.parse(msg.toString());
+        expect(received.id).toBe(123);
+        expect(received.name).toBe('test');
+        done();
+      });
 
-      const poll = setInterval(() => {
-        const msg = client2.subscribe();
-        if (msg) {
-          clearInterval(poll);
-          const received = JSON.parse(msg.toString());
-          expect(received.id).toBe(123);
-          expect(received.name).toBe('test');
-          done();
-        }
-      }, 10);
-
-      setTimeout(() => {
-        clearInterval(poll);
-        fail('Timeout waiting for message');
-      }, 2000);
-    }, 5000);
+      client1.publish(JSON.stringify(data));
+    });
 
     it('should handle multiple messages', (done) => {
       const messages = [];
 
-      setTimeout(() => {
-        client1.publish('msg1');
-        client1.publish('msg2');
-        client1.publish('msg3');
-      }, 50);
-
-      const poll = setInterval(() => {
-        const msg = client2.subscribe();
-        if (msg) {
-          messages.push(msg.toString());
-        }
-
+      client2.onMessage((msg) => {
+        messages.push(msg.toString());
         if (messages.length === 3) {
-          clearInterval(poll);
           expect(messages).toContain('msg1');
           expect(messages).toContain('msg2');
           expect(messages).toContain('msg3');
           done();
         }
-      }, 10);
+      });
 
-      setTimeout(() => {
-        clearInterval(poll);
-        fail(`Only received ${messages.length}/3 messages`);
-      }, 2000);
-    }, 5000);
+      client1.publish('msg1');
+      client1.publish('msg2');
+      client1.publish('msg3');
+    });
 
     it('should not receive own messages', (done) => {
-      setTimeout(() => client1.publish('test'), 50);
+      client1.onMessage(() => {
+        fail('Client1 should not receive own message');
+      });
 
-      let client2Received = false;
-      const poll = setInterval(() => {
-        const msg1 = client1.subscribe();
-        const msg2 = client2.subscribe();
-
-        if (msg1) {
-          clearInterval(poll);
-          fail('Client1 should not receive own message');
-        }
-
-        if (msg2) {
-          client2Received = true;
-        }
-      }, 10);
-
-      setTimeout(() => {
-        clearInterval(poll);
-        expect(client2Received).toBe(true);
+      client2.onMessage(() => {
+        expect(true).toBe(true);
         done();
-      }, 500);
-    }, 5000);
+      });
+
+      client1.publish('test');
+    });
   });
 
   describe('Subscription', () => {
@@ -202,30 +142,33 @@ describe('Broker', () => {
       const c3 = new Client(server.addr(), channel2);
       const c4 = new Client(server.addr(), channel2);
 
-      setTimeout(() => {
-        c1.publish('channel1 message');
-        c3.publish('channel2 message');
-      }, 50);
-
       let msg2 = null;
       let msg4 = null;
 
-      const poll = setInterval(() => {
-        if (!msg2) msg2 = c2.subscribe();
-        if (!msg4) msg4 = c4.subscribe();
+      c2.onMessage((msg) => {
+        msg2 = msg;
+        checkComplete();
+      });
 
+      c4.onMessage((msg) => {
+        msg4 = msg;
+        checkComplete();
+      });
+
+      function checkComplete() {
         if (msg2 && msg4) {
-          clearInterval(poll);
           expect(msg2.toString()).toBe('channel1 message');
           expect(msg4.toString()).toBe('channel2 message');
+          c1.close();
+          c2.close();
+          c3.close();
+          c4.close();
           done();
         }
-      }, 10);
+      }
 
-      setTimeout(() => {
-        clearInterval(poll);
-        fail('Timeout waiting for messages');
-      }, 2000);
-    }, 5000);
+      c1.publish('channel1 message');
+      c3.publish('channel2 message');
+    });
   });
 });

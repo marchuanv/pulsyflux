@@ -1,95 +1,83 @@
 import { Server, Client } from '../registry.mjs';
 import { randomUUID } from 'crypto';
 
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
 describe('Broker Performance Benchmarks', () => {
 
   describe('Single Request/Response', () => {
-    it('should measure latency and throughput', async () => {
+    it('should measure latency and throughput', (done) => {
       const server = new Server(':0');
       server.start();
-      await sleep(50);
 
       const channelID = randomUUID();
       const client1 = new Client(server.addr(), channelID);
       const client2 = new Client(server.addr(), channelID);
 
-      const handler = setInterval(() => {
-        const msg = client2.subscribe();
-        if (msg) client2.publish(msg);
-      }, 0);
-
-      await sleep(100);
+      client2.onMessage((msg) => {
+        client2.publish(msg);
+      });
 
       const iterations = 1000;
+      let count = 0;
       const start = process.hrtime.bigint();
+
+      client1.onMessage(() => {
+        count++;
+        if (count === iterations) {
+          const end = process.hrtime.bigint();
+          const elapsed = Number(end - start) / 1e6;
+          const avgLatency = elapsed / iterations;
+          const opsPerSec = (iterations / elapsed) * 1000;
+
+          console.log(`\n  Iterations: ${iterations}`);
+          console.log(`  Total Time: ${elapsed.toFixed(2)} ms`);
+          console.log(`  Avg Latency: ${avgLatency.toFixed(3)} ms`);
+          console.log(`  Throughput: ${opsPerSec.toFixed(0)} ops/sec`);
+
+          server.stop();
+          expect(avgLatency).toBeLessThan(100);
+          done();
+        }
+      });
 
       for (let i = 0; i < iterations; i++) {
         client1.publish('test');
-        let resp;
-        do { resp = client1.subscribe(); } while (!resp);
       }
-
-      const end = process.hrtime.bigint();
-      const elapsed = Number(end - start) / 1e6;
-      const avgLatency = elapsed / iterations;
-      const opsPerSec = (iterations / elapsed) * 1000;
-
-      console.log(`\n  Iterations: ${iterations}`);
-      console.log(`  Total Time: ${elapsed.toFixed(2)} ms`);
-      console.log(`  Avg Latency: ${avgLatency.toFixed(3)} ms`);
-      console.log(`  Throughput: ${opsPerSec.toFixed(0)} ops/sec`);
-
-      clearInterval(handler);
-      server.stop();
-
-      expect(avgLatency).toBeLessThan(100);
     }, 30000);
   });
 
   describe('Publish Throughput', () => {
-    it('should handle high message volume', async () => {
+    it('should handle high message volume', (done) => {
       const server = new Server(':0');
       server.start();
-      await sleep(50);
 
       const channelID = randomUUID();
       const client1 = new Client(server.addr(), channelID);
       const client2 = new Client(server.addr(), channelID);
 
-      let received = 0;
-      const handler = setInterval(() => {
-        const msg = client2.subscribe();
-        if (msg) received++;
-      }, 0);
-
-      await sleep(100);
-
       const iterations = 100;
+      let received = 0;
       const start = process.hrtime.bigint();
+
+      client2.onMessage(() => {
+        received++;
+        if (received === iterations) {
+          const end = process.hrtime.bigint();
+          const elapsed = Number(end - start) / 1e6;
+          const opsPerSec = (iterations / elapsed) * 1000;
+
+          console.log(`\n  Iterations: ${iterations}`);
+          console.log(`  Total Time: ${elapsed.toFixed(2)} ms`);
+          console.log(`  Throughput: ${opsPerSec.toFixed(0)} ops/sec`);
+
+          server.stop();
+          expect(received).toBe(iterations);
+          done();
+        }
+      });
 
       for (let i = 0; i < iterations; i++) {
         client1.publish('test');
       }
-
-      const timeout = Date.now() + 10000;
-      while (received < iterations && Date.now() < timeout) {
-        await sleep(10);
-      }
-
-      const end = process.hrtime.bigint();
-      const elapsed = Number(end - start) / 1e6;
-      const opsPerSec = (iterations / elapsed) * 1000;
-
-      console.log(`\n  Iterations: ${iterations}`);
-      console.log(`  Total Time: ${elapsed.toFixed(2)} ms`);
-      console.log(`  Throughput: ${opsPerSec.toFixed(0)} ops/sec`);
-
-      clearInterval(handler);
-      server.stop();
-
-      expect(received).toBe(iterations);
     }, 30000);
   });
 
