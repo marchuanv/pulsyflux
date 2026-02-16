@@ -48,6 +48,10 @@ func (s *Server) Start() error {
 	return nil
 }
 
+func (s *Server) Addr() string {
+	return s.listener.Addr().String()
+}
+
 func (s *Server) acceptLoop() {
 	for {
 		select {
@@ -66,7 +70,7 @@ func (s *Server) acceptLoop() {
 }
 
 func (s *Server) handleClient(conn net.Conn) {
-	control := tcpconn.WrapConnection(conn, uuid.New())
+	control := tcpconn.WrapConnection(conn, uuid.UUID{})
 
 	for {
 		data, err := control.Receive()
