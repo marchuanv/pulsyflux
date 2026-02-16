@@ -32,6 +32,7 @@ type Connection struct {
 	lastWrite   time.Time
 	idleTimeout time.Duration
 	closed      int32
+	ready       int32
 	ctx         context.Context
 	cancel      context.CancelFunc
 }
@@ -71,6 +72,13 @@ func NewConnectionWithID(address string, id string, idleTimeout time.Duration) *
 	}
 
 	go tc.idleMonitor()
+
+	if id != "" {
+		if err := tc.waitReady(); err != nil {
+			tc.close()
+			return nil
+		}
+	}
 
 	return tc
 }
@@ -216,6 +224,24 @@ func (t *Connection) Send(data []byte) error {
 	}
 
 	t.lastWrite = time.Now()
+	return nil
+}
+
+func (t *Connection) waitReady() error {
+	if atomic.LoadInt32(&t.ready) == 1 {
+		return nil
+	}
+
+	handshake := []byte("HANDSHAKE:" + t.id)
+	if err := t.Send(handshake); err != nil {
+		return err
+	}
+
+	if _, err := t.Receive(); err != nil {
+		return err
+	}
+
+	atomic.StoreInt32(&t.ready, 1)
 	return nil
 }
 

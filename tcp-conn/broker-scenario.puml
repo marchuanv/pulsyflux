@@ -1,0 +1,52 @@
+@startuml
+title Broker with Logical Connections - Current Understanding
+
+actor "Client A" as ClientA
+participant "Broker" as Broker
+actor "Client B" as ClientB
+
+== Physical Connection Setup ==
+ClientA -> Broker: TCP Connect
+activate Broker
+Broker --> ClientA: Connected
+deactivate Broker
+
+ClientB -> Broker: TCP Connect
+activate Broker
+Broker --> ClientB: Connected
+deactivate Broker
+
+== Client A Creates Logical Connection ==
+note over ClientA
+Client A wants to send messages
+on logical connection "topic-news"
+end note
+
+ClientA -> ClientA: NewConnectionWithID(\n  "broker:8080",\n  "topic-news",\n  timeout)
+
+== Problem: Client B doesn't have matching logical connection ==
+note over ClientB #FFAAAA
+Client B has NOT created
+logical connection "topic-news" yet!
+end note
+
+ClientA -> Broker: Send(msg) with ID="topic-news"
+note over Broker #FFAAAA
+Broker receives message for "topic-news"
+but Client B has no logical connection
+to receive it!
+end note
+
+== What Should Happen? ==
+note over Broker, ClientB #AAFFAA
+Option 1: Broker tells Client B to create
+logical connection "topic-news"
+
+Option 2: Client B subscribes first,
+then broker routes messages
+
+Option 3: Broker buffers until
+Client B creates connection
+end note
+
+@enduml

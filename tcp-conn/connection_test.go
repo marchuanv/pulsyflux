@@ -431,3 +431,73 @@ func TestConnection_PoolReferenceCount(t *testing.T) {
 		t.Error("Pool should be removed after all connections closed")
 	}
 }
+
+func TestConnection_BrokerHandshake(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start listener: %v", err)
+	}
+	defer listener.Close()
+
+	// Broker goroutine
+	go func() {
+		conn, _ := listener.Accept()
+		if conn == nil {
+			return
+		}
+
+		// Broker receives handshake on empty ID connection
+		emptyConn := WrapConnection(conn, 5*time.Second)
+		handshake, err := emptyConn.Receive()
+		if err != nil {
+			t.Errorf("Broker failed to receive handshake: %v", err)
+			return
+		}
+
+		// Verify handshake format
+		if string(handshake) != "HANDSHAKE:topic-news" {
+			t.Errorf("Expected 'HANDSHAKE:topic-news', got '%s'", string(handshake))
+			return
+		}
+
+		// Broker creates logical connection with same ID
+		logicalConn := WrapConnectionWithID(conn, "topic-news", 5*time.Second)
+
+		// Send READY back on logical connection
+		if err := logicalConn.Send([]byte("READY")); err != nil {
+			t.Errorf("Broker failed to send READY: %v", err)
+			return
+		}
+
+		// Now broker can receive messages on logical connection
+		data, err := logicalConn.Receive()
+		if err != nil {
+			t.Errorf("Broker failed to receive data: %v", err)
+			return
+		}
+
+		// Echo back
+		logicalConn.Send(data)
+	}()
+
+	// Client creates logical connection - handshake happens automatically
+	client := NewConnectionWithID(listener.Addr().String(), "topic-news", 5*time.Second)
+	if client == nil {
+		t.Fatal("Client connection failed or handshake failed")
+	}
+
+	// Now client can send/receive
+	err = client.Send([]byte("hello broker"))
+	if err != nil {
+		t.Fatalf("Client send failed: %v", err)
+	}
+
+	data, err := client.Receive()
+	if err != nil {
+		t.Fatalf("Client receive failed: %v", err)
+	}
+
+	if string(data) != "hello broker" {
+		t.Errorf("Expected 'hello broker', got '%s'", string(data))
+	}
+}
