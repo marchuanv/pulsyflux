@@ -8,57 +8,40 @@ import (
 	tcpconn "pulsyflux/tcp-conn"
 )
 
-var controlUUID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
-
 type Client struct {
-	address  string
-	control  *tcpconn.Connection
-	channels map[uuid.UUID]*channelConn
-	mu       sync.RWMutex
-}
-
-type channelConn struct {
+	id   uuid.UUID
 	conn *tcpconn.Connection
-	subs []chan *Message
+	subs map[uuid.UUID][]chan *Message
 	mu   sync.RWMutex
 }
 
+type clientMessage struct {
+	ClientID  string `json:"client_id"`
+	ChannelID string `json:"channel_id"`
+	Payload   []byte `json:"payload"`
+}
+
 func NewClient(address string) (*Client, error) {
-	control := tcpconn.NewConnection(address, controlUUID)
-	if control == nil {
-		return nil, fmt.Errorf("failed to create control connection")
+	clientID := uuid.New()
+	conn := tcpconn.NewConnection(address, clientID)
+	if conn == nil {
+		return nil, fmt.Errorf("failed to create connection")
 	}
-	return &Client{
-		address:  address,
-		control:  control,
-		channels: make(map[uuid.UUID]*channelConn),
-	}, nil
+
+	client := &Client{
+		id:   clientID,
+		conn: conn,
+		subs: make(map[uuid.UUID][]chan *Message),
+	}
+
+	go client.receiveLoop()
+
+	return client, nil
 }
 
-func (c *Client) getChannel(channelID uuid.UUID) (*channelConn, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.channels[channelID] == nil {
-		if err := c.control.Send([]byte(channelID.String())); err != nil {
-			return nil, err
-		}
-		conn := tcpconn.NewConnection(c.address, channelID)
-		if conn == nil {
-			return nil, fmt.Errorf("failed to create channel connection")
-		}
-		cc := &channelConn{
-			conn: conn,
-			subs: make([]chan *Message, 0),
-		}
-		c.channels[channelID] = cc
-		go cc.receiveLoop()
-	}
-	return c.channels[channelID], nil
-}
-
-func (cc *channelConn) receiveLoop() {
+func (c *Client) receiveLoop() {
 	for {
-		data, err := cc.conn.Receive()
+		data, err := c.conn.Receive()
 		if err != nil {
 			return
 		}
@@ -66,42 +49,50 @@ func (cc *channelConn) receiveLoop() {
 		if err := json.Unmarshal(data, &msg); err != nil {
 			continue
 		}
-		cc.mu.RLock()
-		for _, sub := range cc.subs {
+
+		channelID, err := uuid.Parse(msg.Topic)
+		if err != nil {
+			continue
+		}
+
+		c.mu.RLock()
+		subs := c.subs[channelID]
+		for _, sub := range subs {
 			select {
 			case sub <- &msg:
 			default:
 			}
 		}
-		cc.mu.RUnlock()
+		c.mu.RUnlock()
 	}
 }
 
 func (c *Client) Publish(channelID uuid.UUID, topic string, payload []byte) error {
-	cc, err := c.getChannel(channelID)
-	if err != nil {
-		return err
-	}
-	msg := Message{
-		Topic:   topic,
-		Payload: payload,
+	msg := clientMessage{
+		ClientID:  c.id.String(),
+		ChannelID: channelID.String(),
+		Payload:   payload,
 	}
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	return cc.conn.Send(data)
+	return c.conn.Send(data)
 }
 
 func (c *Client) Subscribe(channelID uuid.UUID, topic string) (<-chan *Message, error) {
-	cc, err := c.getChannel(channelID)
-	if err != nil {
-		return nil, err
-	}
-
 	ch := make(chan *Message, 100)
-	cc.mu.Lock()
-	cc.subs = append(cc.subs, ch)
-	cc.mu.Unlock()
+	c.mu.Lock()
+	c.subs[channelID] = append(c.subs[channelID], ch)
+	c.mu.Unlock()
+
+	joinMsg := clientMessage{
+		ClientID:  c.id.String(),
+		ChannelID: channelID.String(),
+		Payload:   []byte{},
+	}
+	data, _ := json.Marshal(joinMsg)
+	c.conn.Send(data)
+
 	return ch, nil
 }

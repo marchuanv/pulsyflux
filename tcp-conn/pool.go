@@ -22,8 +22,7 @@ type physicalPool struct {
 	conn     net.Conn
 	mu       sync.RWMutex
 	refCount int32
-	routes   map[uuid.UUID]chan []byte
-	routesMu sync.RWMutex
+	demuxer  *demuxer
 	ctx      context.Context
 	cancel   context.CancelFunc
 }
@@ -47,13 +46,17 @@ func (cp *connectionPool) getOrCreate(address string) (net.Conn, error) {
 		address:  address,
 		conn:     conn,
 		refCount: 1,
-		routes:   make(map[uuid.UUID]chan []byte),
-		ctx:      ctx,
-		cancel:   cancel,
+		demuxer: &demuxer{
+			conn:   conn,
+			routes: make(map[uuid.UUID]chan []byte),
+			ctx:    ctx,
+		},
+		ctx:    ctx,
+		cancel: cancel,
 	}
 
 	cp.pools[address] = pool
-	go pool.demux()
+	go pool.demuxer.run()
 
 	return conn, nil
 }
@@ -87,9 +90,7 @@ func (cp *connectionPool) register(address string, id uuid.UUID, ch chan []byte)
 	cp.mu.RUnlock()
 
 	if exists {
-		pool.routesMu.Lock()
-		pool.routes[id] = ch
-		pool.routesMu.Unlock()
+		pool.demuxer.register(id, ch)
 	}
 }
 
@@ -99,102 +100,7 @@ func (cp *connectionPool) unregister(address string, id uuid.UUID) {
 	cp.mu.RUnlock()
 
 	if exists {
-		pool.routesMu.Lock()
-		if ch, ok := pool.routes[id]; ok {
-			close(ch)
-			delete(pool.routes, id)
-		}
-		pool.routesMu.Unlock()
+		pool.demuxer.unregister(id)
 	}
 }
 
-func (pp *physicalPool) demux() {
-	messages := make(map[uuid.UUID]*messageAssembly)
-
-	for {
-		select {
-		case <-pp.ctx.Done():
-			return
-		default:
-		}
-
-		// Read frame: [id_len(1)][id][total_len(4)][chunk_len(4)][chunk]
-		idLenBuf := make([]byte, 1)
-		if err := pp.readFull(idLenBuf); err != nil {
-			return
-		}
-
-		idLen := int(idLenBuf[0])
-		idBuf := make([]byte, idLen)
-		if err := pp.readFull(idBuf); err != nil {
-			return
-		}
-
-		id, err := uuid.Parse(string(idBuf))
-		if err != nil {
-			return
-		}
-
-		totalLenBuf := make([]byte, 4)
-		if err := pp.readFull(totalLenBuf); err != nil {
-			return
-		}
-		totalLen := uint32(totalLenBuf[0])<<24 | uint32(totalLenBuf[1])<<16 | uint32(totalLenBuf[2])<<8 | uint32(totalLenBuf[3])
-
-		chunkLenBuf := make([]byte, 4)
-		if err := pp.readFull(chunkLenBuf); err != nil {
-			return
-		}
-		chunkLen := uint32(chunkLenBuf[0])<<24 | uint32(chunkLenBuf[1])<<16 | uint32(chunkLenBuf[2])<<8 | uint32(chunkLenBuf[3])
-
-		chunk := make([]byte, chunkLen)
-		if err := pp.readFull(chunk); err != nil {
-			return
-		}
-
-		// Get or create message assembly
-		assembly, exists := messages[id]
-		if !exists {
-			assembly = &messageAssembly{
-				totalLen: totalLen,
-				data:     make([]byte, 0, totalLen),
-			}
-			messages[id] = assembly
-		}
-
-		assembly.data = append(assembly.data, chunk...)
-
-		// If message complete, send to channel
-		if uint32(len(assembly.data)) >= assembly.totalLen {
-			pp.routesMu.RLock()
-			ch, exists := pp.routes[id]
-			pp.routesMu.RUnlock()
-
-			if exists {
-				select {
-				case ch <- assembly.data:
-				case <-pp.ctx.Done():
-					return
-				}
-			}
-			delete(messages, id)
-		}
-	}
-}
-
-type messageAssembly struct {
-	totalLen uint32
-	data     []byte
-}
-
-func (pp *physicalPool) readFull(buf []byte) error {
-	offset := 0
-	for offset < len(buf) {
-		n, err := pp.conn.Read(buf[offset:])
-		if err != nil {
-			return err
-		}
-		offset += n
-	}
-	return nil
-}

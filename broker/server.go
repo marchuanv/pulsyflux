@@ -14,10 +14,15 @@ type Message struct {
 	Payload []byte
 }
 
+type clientInfo struct {
+	id      uuid.UUID
+	wrapped *tcpconn.Connection
+	sendConn *tcpconn.Connection
+}
+
 type channel struct {
 	id      uuid.UUID
-	conns   []*tcpconn.Connection
-	handled map[net.Conn]bool
+	clients map[uuid.UUID]*clientInfo
 	mu      sync.RWMutex
 }
 
@@ -25,6 +30,7 @@ type Server struct {
 	address  string
 	listener net.Listener
 	channels map[uuid.UUID]*channel
+	clients  map[net.Conn]*clientInfo
 	mu       sync.RWMutex
 	done     chan struct{}
 }
@@ -33,6 +39,7 @@ func NewServer(address string) *Server {
 	return &Server{
 		address:  address,
 		channels: make(map[uuid.UUID]*channel),
+		clients:  make(map[net.Conn]*clientInfo),
 		done:     make(chan struct{}),
 	}
 }
@@ -70,63 +77,72 @@ func (s *Server) acceptLoop() {
 }
 
 func (s *Server) handleClient(conn net.Conn) {
-	control := tcpconn.WrapConnection(conn, controlUUID)
+	wrapped := tcpconn.WrapConnection(conn, uuid.UUID{})
 
 	for {
-		data, err := control.Receive()
+		data, err := wrapped.Receive()
 		if err != nil {
 			return
 		}
-		channelID, _ := uuid.Parse(string(data))
+
+		var cmsg clientMessage
+		if err := json.Unmarshal(data, &cmsg); err != nil {
+			continue
+		}
+
+		clientID, err := uuid.Parse(cmsg.ClientID)
+		if err != nil {
+			continue
+		}
+
+		channelID, err := uuid.Parse(cmsg.ChannelID)
+		if err != nil {
+			continue
+		}
 
 		s.mu.Lock()
+		client := s.clients[conn]
+		if client == nil {
+			sendConn := tcpconn.NewConnection(s.listener.Addr().String(), clientID)
+			client = &clientInfo{
+				id:       clientID,
+				wrapped:  wrapped,
+				sendConn: sendConn,
+			}
+			s.clients[conn] = client
+		}
+
 		ch := s.channels[channelID]
 		if ch == nil {
 			ch = &channel{
 				id:      channelID,
-				conns:   make([]*tcpconn.Connection, 0),
-				handled: make(map[net.Conn]bool),
+				clients: make(map[uuid.UUID]*clientInfo),
 			}
 			s.channels[channelID] = ch
 		}
-		if !ch.handled[conn] {
-			ch.handled[conn] = true
-			s.mu.Unlock()
-			go s.handleChannel(conn, ch)
-		} else {
-			s.mu.Unlock()
+		if ch.clients[clientID] == nil {
+			ch.clients[clientID] = client
+		}
+		s.mu.Unlock()
+
+		if len(cmsg.Payload) > 0 {
+			msg := Message{
+				Topic:   channelID.String(),
+				Payload: cmsg.Payload,
+			}
+			msgData, _ := json.Marshal(msg)
+			ch.broadcast(clientID, msgData)
 		}
 	}
 }
 
-func (s *Server) handleChannel(conn net.Conn, ch *channel) {
-	c := tcpconn.WrapConnection(conn, ch.id)
-	ch.mu.Lock()
-	ch.conns = append(ch.conns, c)
-	ch.mu.Unlock()
-
-	for {
-		data, err := c.Receive()
-		if err != nil {
-			return
-		}
-
-		var msg Message
-		if err := json.Unmarshal(data, &msg); err != nil {
-			continue
-		}
-
-		ch.broadcast(c, data)
-	}
-}
-
-func (ch *channel) broadcast(sender *tcpconn.Connection, data []byte) {
+func (ch *channel) broadcast(senderID uuid.UUID, data []byte) {
 	ch.mu.RLock()
-	for _, conn := range ch.conns {
-		if conn == sender {
+	for id, client := range ch.clients {
+		if id == senderID {
 			continue
 		}
-		conn.Send(data)
+		client.sendConn.Send(data)
 	}
 	ch.mu.RUnlock()
 }

@@ -25,7 +25,7 @@ const (
 type Connection struct {
 	id          uuid.UUID
 	address     string
-	conn        net.Conn // For wrapped connections only
+	conn        net.Conn
 	state       state
 	mu          sync.RWMutex
 	readBuf     []byte
@@ -39,6 +39,7 @@ type Connection struct {
 	cancel      context.CancelFunc
 	recvChan    chan []byte
 	wrapped     bool
+	wrappedPool *wrappedPool
 }
 
 func NewConnection(address string, id uuid.UUID) *Connection {
@@ -75,6 +76,10 @@ func NewConnection(address string, id uuid.UUID) *Connection {
 func WrapConnection(conn net.Conn, id uuid.UUID) *Connection {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	pool := getOrCreateWrappedPool(conn)
+	recvChan := make(chan []byte, 10)
+	pool.register(id, recvChan)
+
 	tc := &Connection{
 		id:          id,
 		conn:        conn,
@@ -85,7 +90,9 @@ func WrapConnection(conn net.Conn, id uuid.UUID) *Connection {
 		idleTimeout: defaultIdleTimeout,
 		ctx:         ctx,
 		cancel:      cancel,
+		recvChan:    recvChan,
 		wrapped:     true,
+		wrappedPool: pool,
 	}
 
 	go tc.idleMonitor()
@@ -190,7 +197,6 @@ func (t *Connection) Send(data []byte) error {
 	idLen := byte(len(idBytes))
 	totalLen := uint32(len(data))
 
-	// Send chunks
 	for offset := 0; offset < len(data); offset += chunkSize {
 		end := offset + chunkSize
 		if end > len(data) {
@@ -199,7 +205,6 @@ func (t *Connection) Send(data []byte) error {
 		chunk := data[offset:end]
 		chunkLen := uint32(len(chunk))
 
-		// Frame: [id_len(1)][id][total_len(4)][chunk_len(4)][chunk]
 		frame := make([]byte, 1+len(idBytes)+4+4+len(chunk))
 		frame[0] = idLen
 		copy(frame[1:], idBytes)
@@ -244,10 +249,6 @@ func (t *Connection) Receive() ([]byte, error) {
 	}
 	t.mu.Unlock()
 
-	if t.wrapped {
-		return t.receiveWrapped()
-	}
-
 	select {
 	case data, ok := <-t.recvChan:
 		if !ok {
@@ -259,75 +260,6 @@ func (t *Connection) Receive() ([]byte, error) {
 		return data, nil
 	case <-t.ctx.Done():
 		return nil, errConnectionClosed
-	}
-}
-
-func (t *Connection) receiveWrapped() ([]byte, error) {
-	var result []byte
-	var totalLen uint32
-	var received uint32
-
-	for {
-		// Read frame: [id_len(1)][id][total_len(4)][chunk_len(4)][chunk]
-		idLenBuf := make([]byte, 1)
-		if err := t.readFull(idLenBuf); err != nil {
-			return nil, err
-		}
-
-		idLen := int(idLenBuf[0])
-		idBuf := make([]byte, idLen)
-		if err := t.readFull(idBuf); err != nil {
-			return nil, err
-		}
-
-		receivedID := string(idBuf)
-		if receivedID != t.id.String() {
-			// Wrong connection ID, skip this chunk
-			totalLenBuf := make([]byte, 4)
-			if err := t.readFull(totalLenBuf); err != nil {
-				return nil, err
-			}
-			chunkLenBuf := make([]byte, 4)
-			if err := t.readFull(chunkLenBuf); err != nil {
-				return nil, err
-			}
-			chunkLen := uint32(chunkLenBuf[0])<<24 | uint32(chunkLenBuf[1])<<16 | uint32(chunkLenBuf[2])<<8 | uint32(chunkLenBuf[3])
-			skipBuf := make([]byte, chunkLen)
-			if err := t.readFull(skipBuf); err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		totalLenBuf := make([]byte, 4)
-		if err := t.readFull(totalLenBuf); err != nil {
-			return nil, err
-		}
-		totalLen = uint32(totalLenBuf[0])<<24 | uint32(totalLenBuf[1])<<16 | uint32(totalLenBuf[2])<<8 | uint32(totalLenBuf[3])
-
-		chunkLenBuf := make([]byte, 4)
-		if err := t.readFull(chunkLenBuf); err != nil {
-			return nil, err
-		}
-		chunkLen := uint32(chunkLenBuf[0])<<24 | uint32(chunkLenBuf[1])<<16 | uint32(chunkLenBuf[2])<<8 | uint32(chunkLenBuf[3])
-
-		chunk := make([]byte, chunkLen)
-		if err := t.readFull(chunk); err != nil {
-			return nil, err
-		}
-
-		if result == nil {
-			result = make([]byte, 0, totalLen)
-		}
-		result = append(result, chunk...)
-		received += chunkLen
-
-		if received >= totalLen {
-			t.mu.Lock()
-			t.lastRead = time.Now()
-			t.mu.Unlock()
-			return result, nil
-		}
 	}
 }
 
@@ -344,6 +276,56 @@ func (t *Connection) close() error {
 	if t.address != "" {
 		globalPool.unregister(t.address, t.id)
 		globalPool.release(t.address)
+	} else if t.wrappedPool != nil {
+		t.wrappedPool.unregister(t.id)
 	}
 	return nil
+}
+
+var wrappedPools = struct {
+	pools map[net.Conn]*wrappedPool
+	mu    sync.Mutex
+}{
+	pools: make(map[net.Conn]*wrappedPool),
+}
+
+type wrappedPool struct {
+	conn    net.Conn
+	demuxer *demuxer
+	ctx     context.Context
+	cancel  context.CancelFunc
+}
+
+func getOrCreateWrappedPool(conn net.Conn) *wrappedPool {
+	wrappedPools.mu.Lock()
+	defer wrappedPools.mu.Unlock()
+
+	if pool, exists := wrappedPools.pools[conn]; exists {
+		return pool
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool := &wrappedPool{
+		conn: conn,
+		demuxer: &demuxer{
+			conn:   conn,
+			routes: make(map[uuid.UUID]chan []byte),
+			ctx:    ctx,
+		},
+		ctx:    ctx,
+		cancel: cancel,
+	}
+
+	wrappedPools.pools[conn] = pool
+	go pool.demuxer.run()
+
+	return pool
+}
+
+func (wp *wrappedPool) register(id uuid.UUID, ch chan []byte) {
+	wp.demuxer.register(id, ch)
+}
+
+func (wp *wrappedPool) unregister(id uuid.UUID) {
+	wp.demuxer.unregister(id)
 }
