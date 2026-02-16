@@ -1,4 +1,2 @@
 @echo off
-cd ..
-go build -buildmode=c-shared -o nodejs-api/broker_lib.dll ./nodejs-api/broker_lib.go
-cd nodejs-api
+go build -buildmode=c-shared -o broker_lib.dll broker_lib.go

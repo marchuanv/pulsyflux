@@ -1,6 +1,6 @@
 {
   "name": "pulsyflux-broker",
-  "version": "2.0.0",
+  "version": "2.0.4",
   "description": "Node.js bindings for PulsyFlux - high-performance pub/sub message broker with native C++ addon and Go shared library",
   "main": ".bin/release/registry.mjs",
   "type": "module",
@@ -11,41 +11,29 @@
     }
   },
   "scripts": {
-    "install": "npm run build",
+    "test": "npx jasmine",
+    "pretest": "npm run build",
     "build": "npm run build:setup && npm run build:go && npm run build:addon && npm run build:copy && npm run build:clean",
     "build:setup": "node -e \"const fs=require('fs'); fs.mkdirSync('.bin/release', {recursive:true})\"",
     "build:go": "node -e \"require('child_process').execSync('build.bat', {stdio:'inherit'})\"",
     "build:addon": "npx tsx build.mjs",
     "build:copy": "node -e \"const fs=require('fs'); fs.copyFileSync('registry.mjs', '.bin/release/registry.mjs'); fs.copyFileSync('broker_addon.node', '.bin/release/broker_addon.node'); fs.copyFileSync('broker_lib.dll', '.bin/release/broker_lib.dll')\"",
     "build:clean": "node -e \"const fs=require('fs'); const files=['broker_addon.node','broker_addon.pdb','broker_lib.dll','broker_lib.h','broker_lib.def','broker_lib.lib']; files.forEach(f=>{try{fs.unlinkSync(f)}catch(e){}})\"",
-    "clean": "node -e \"require('child_process').execSync('clean.bat', {stdio:'inherit'}); const fs=require('fs'); try{fs.rmSync('.bin', {recursive:true})}catch(e){}\"",
-    "test": "npx jasmine",
-    "pretest": "npm run build",
-    "prepublishOnly": "npm test"
+    "clean": "node -e \"require('child_process').execSync('clean.bat', {stdio:'inherit'}); const fs=require('fs'); try{fs.rmSync('.bin', {recursive:true})}catch(e){}\""
   },
   "files": [
     ".bin/release/",
-    "addon.cc",
-    "broker_lib.go",
-    "build.bat",
-    "clean.bat",
-    "build.mjs",
-    "registry.mjs",
     "README.md",
     "LICENSE",
     "types/"
   ],
-  "dependencies": {
-    "node-addon-api": "^8.5.0",
-    "zig-build": "github:solarwinds/zig-build"
-  },
   "devDependencies": {
     "jasmine": "^5.13.0",
+    "node-addon-api": "^8.5.0",
+    "node-api-headers": "^1.3.0",
+    "zig-build": "github:solarwinds/zig-build",
     "tsx": "^4.21.0"
   },
-  "trustedDependencies": [
-    "zig-build"
-  ],
   "engines": {
     "node": ">=14.0.0"
   },
