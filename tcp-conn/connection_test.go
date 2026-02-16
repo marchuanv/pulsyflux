@@ -1,19 +1,20 @@
 package tcpconn
 
 import (
+	"github.com/google/uuid"
 	"net"
 	"testing"
 	"time"
 )
 
 func TestConnection_SendReceive(t *testing.T) {
-	// Start test server
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Failed to start listener: %v", err)
 	}
 	defer listener.Close()
 
+	id := uuid.New().String()
 	go func() {
 		conn, _ := listener.Accept()
 		defer conn.Close()
@@ -22,7 +23,7 @@ func TestConnection_SendReceive(t *testing.T) {
 		conn.Write(buf[:n])
 	}()
 
-	c := NewConnection(listener.Addr().String(), 1*time.Second)
+	c := NewConnection(listener.Addr().String(), id, 1*time.Second)
 	if c == nil {
 		t.Fatal("NewConnection returned nil")
 	}
@@ -56,7 +57,7 @@ func TestConnection_IdleTimeout(t *testing.T) {
 		}
 	}()
 
-	c := NewConnection(listener.Addr().String(), 100*time.Millisecond)
+	c := NewConnection(listener.Addr().String(), uuid.New().String(), 100*time.Millisecond)
 	if c == nil {
 		t.Fatal("NewConnection returned nil")
 	}
@@ -65,7 +66,6 @@ func TestConnection_IdleTimeout(t *testing.T) {
 
 	err = c.Send([]byte("test"))
 	if err != nil {
-		// Connection closed or reconnect failed - both acceptable
 		return
 	}
 }
@@ -92,19 +92,16 @@ func TestConnection_Reconnect(t *testing.T) {
 		}
 	}()
 
-	c := NewConnection(listener.Addr().String(), 100*time.Millisecond)
+	c := NewConnection(listener.Addr().String(), uuid.New().String(), 100*time.Millisecond)
 	if c == nil {
 		t.Fatal("NewConnection returned nil")
 	}
 
-	// First send
 	c.Send([]byte("first"))
 	c.Receive()
 
-	// Wait for idle timeout
 	time.Sleep(250 * time.Millisecond)
 
-	// Should reconnect
 	err = c.Send([]byte("second"))
 	if err != nil {
 		t.Fatalf("Send after reconnect failed: %v", err)
@@ -125,7 +122,7 @@ func TestConnection_Reconnect(t *testing.T) {
 }
 
 func TestConnection_InvalidAddress(t *testing.T) {
-	c := NewConnection("invalid:99999", 1*time.Second)
+	c := NewConnection("invalid:99999", uuid.New().String(), 1*time.Second)
 	if c != nil {
 		t.Error("Expected nil for invalid address")
 	}
@@ -158,7 +155,7 @@ func TestConnection_ActivityPreventsTimeout(t *testing.T) {
 		}
 	}()
 
-	c := NewConnection(listener.Addr().String(), 200*time.Millisecond)
+	c := NewConnection(listener.Addr().String(), uuid.New().String(), 200*time.Millisecond)
 	if c == nil {
 		t.Fatal("NewConnection returned nil")
 	}
@@ -188,6 +185,7 @@ func TestWrapConnection_ServerSide(t *testing.T) {
 	}
 	defer listener.Close()
 
+	clientID := uuid.New().String()
 	serverDone := make(chan bool)
 	go func() {
 		conn, _ := listener.Accept()
@@ -195,8 +193,7 @@ func TestWrapConnection_ServerSide(t *testing.T) {
 			return
 		}
 
-		// Wrap accepted connection
-		wrapped := WrapConnection(conn, 1*time.Second)
+		wrapped := WrapConnection(conn, clientID, 1*time.Second)
 		
 		data, err := wrapped.Receive()
 		if err != nil {
@@ -211,8 +208,7 @@ func TestWrapConnection_ServerSide(t *testing.T) {
 		serverDone <- true
 	}()
 
-	// Client side - also use Connection for framing
-	client := NewConnection(listener.Addr().String(), 1*time.Second)
+	client := NewConnection(listener.Addr().String(), clientID, 1*time.Second)
 	if client == nil {
 		t.Fatal("Client connection failed")
 	}
@@ -238,14 +234,12 @@ func TestWrapConnection_NoReconnect(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	wrapped := WrapConnection(server, 100*time.Millisecond)
+	wrapped := WrapConnection(server, uuid.New().String(), 100*time.Millisecond)
 	
-	// Close underlying connection
 	server.Close()
 	
 	time.Sleep(200 * time.Millisecond)
 	
-	// Should fail - no reconnect for wrapped connections
 	err := wrapped.Send([]byte("test"))
 	if err == nil {
 		t.Error("Expected error after connection closed")
@@ -259,22 +253,22 @@ func TestConnection_LargeMessage(t *testing.T) {
 	}
 	defer listener.Close()
 
+	id := uuid.New().String()
 	go func() {
 		conn, _ := listener.Accept()
 		if conn == nil {
 			return
 		}
-		wrapped := WrapConnection(conn, 5*time.Second)
+		wrapped := WrapConnection(conn, id, 5*time.Second)
 		data, _ := wrapped.Receive()
 		wrapped.Send(data)
 	}()
 
-	c := NewConnection(listener.Addr().String(), 5*time.Second)
+	c := NewConnection(listener.Addr().String(), id, 5*time.Second)
 	if c == nil {
 		t.Fatal("NewConnection returned nil")
 	}
 
-	// 1MB message
 	largeData := make([]byte, 1024*1024)
 	for i := range largeData {
 		largeData[i] = byte(i % 256)
@@ -307,8 +301,8 @@ func TestConnection_MultipleLogicalConnections(t *testing.T) {
 		if conn == nil {
 			return
 		}
-		wrapped1 := WrapConnectionWithID(conn, "conn1", 5*time.Second)
-		wrapped2 := WrapConnectionWithID(conn, "conn2", 5*time.Second)
+		wrapped1 := WrapConnection(conn, "conn1", 5*time.Second)
+		wrapped2 := WrapConnection(conn, "conn2", 5*time.Second)
 
 		data1, _ := wrapped1.Receive()
 		wrapped1.Send(data1)
@@ -317,8 +311,8 @@ func TestConnection_MultipleLogicalConnections(t *testing.T) {
 		wrapped2.Send(data2)
 	}()
 
-	c1 := NewConnectionWithID(listener.Addr().String(), "conn1", 5*time.Second)
-	c2 := NewConnectionWithID(listener.Addr().String(), "conn2", 5*time.Second)
+	c1 := NewConnection(listener.Addr().String(), "conn1", 5*time.Second)
+	c2 := NewConnection(listener.Addr().String(), "conn2", 5*time.Second)
 
 	c1.Send([]byte("message1"))
 	c2.Send([]byte("message2"))
@@ -341,12 +335,13 @@ func TestConnection_ConcurrentSendReceive(t *testing.T) {
 	}
 	defer listener.Close()
 
+	id := uuid.New().String()
 	go func() {
 		conn, _ := listener.Accept()
 		if conn == nil {
 			return
 		}
-		wrapped := WrapConnection(conn, 5*time.Second)
+		wrapped := WrapConnection(conn, id, 5*time.Second)
 		for i := 0; i < 10; i++ {
 			data, err := wrapped.Receive()
 			if err != nil {
@@ -356,7 +351,7 @@ func TestConnection_ConcurrentSendReceive(t *testing.T) {
 		}
 	}()
 
-	c := NewConnection(listener.Addr().String(), 5*time.Second)
+	c := NewConnection(listener.Addr().String(), id, 5*time.Second)
 	if c == nil {
 		t.Fatal("NewConnection returned nil")
 	}
@@ -393,7 +388,7 @@ func TestConnection_PoolReferenceCount(t *testing.T) {
 				return
 			}
 			go func(c net.Conn) {
-				wrapped := WrapConnection(c, 5*time.Second)
+				wrapped := WrapConnection(c, uuid.New().String(), 5*time.Second)
 				for {
 					data, err := wrapped.Receive()
 					if err != nil {
@@ -406,9 +401,9 @@ func TestConnection_PoolReferenceCount(t *testing.T) {
 	}()
 
 	addr := listener.Addr().String()
-	c1 := NewConnection(addr, 5*time.Second)
-	c2 := NewConnection(addr, 5*time.Second)
-	c3 := NewConnection(addr, 5*time.Second)
+	c1 := NewConnection(addr, uuid.New().String(), 5*time.Second)
+	c2 := NewConnection(addr, uuid.New().String(), 5*time.Second)
+	c3 := NewConnection(addr, uuid.New().String(), 5*time.Second)
 
 	if c1 == nil || c2 == nil || c3 == nil {
 		t.Fatal("Failed to create connections")
@@ -429,75 +424,5 @@ func TestConnection_PoolReferenceCount(t *testing.T) {
 
 	if _, exists := globalPool.pools[addr]; exists {
 		t.Error("Pool should be removed after all connections closed")
-	}
-}
-
-func TestConnection_BrokerHandshake(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Failed to start listener: %v", err)
-	}
-	defer listener.Close()
-
-	// Broker goroutine
-	go func() {
-		conn, _ := listener.Accept()
-		if conn == nil {
-			return
-		}
-
-		// Broker receives handshake on empty ID connection
-		emptyConn := WrapConnection(conn, 5*time.Second)
-		handshake, err := emptyConn.Receive()
-		if err != nil {
-			t.Errorf("Broker failed to receive handshake: %v", err)
-			return
-		}
-
-		// Verify handshake format
-		if string(handshake) != "HANDSHAKE:topic-news" {
-			t.Errorf("Expected 'HANDSHAKE:topic-news', got '%s'", string(handshake))
-			return
-		}
-
-		// Broker creates logical connection with same ID
-		logicalConn := WrapConnectionWithID(conn, "topic-news", 5*time.Second)
-
-		// Send READY back on logical connection
-		if err := logicalConn.Send([]byte("READY")); err != nil {
-			t.Errorf("Broker failed to send READY: %v", err)
-			return
-		}
-
-		// Now broker can receive messages on logical connection
-		data, err := logicalConn.Receive()
-		if err != nil {
-			t.Errorf("Broker failed to receive data: %v", err)
-			return
-		}
-
-		// Echo back
-		logicalConn.Send(data)
-	}()
-
-	// Client creates logical connection - handshake happens automatically
-	client := NewConnectionWithID(listener.Addr().String(), "topic-news", 5*time.Second)
-	if client == nil {
-		t.Fatal("Client connection failed or handshake failed")
-	}
-
-	// Now client can send/receive
-	err = client.Send([]byte("hello broker"))
-	if err != nil {
-		t.Fatalf("Client send failed: %v", err)
-	}
-
-	data, err := client.Receive()
-	if err != nil {
-		t.Fatalf("Client receive failed: %v", err)
-	}
-
-	if string(data) != "hello broker" {
-		t.Errorf("Expected 'hello broker', got '%s'", string(data))
 	}
 }

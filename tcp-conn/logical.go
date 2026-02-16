@@ -23,7 +23,6 @@ const (
 type Connection struct {
 	id          string
 	address     string
-	connectFn   func() (net.Conn, error)
 	conn        net.Conn // For wrapped connections only
 	state       state
 	mu          sync.RWMutex
@@ -32,25 +31,16 @@ type Connection struct {
 	lastWrite   time.Time
 	idleTimeout time.Duration
 	closed      int32
-	ready       int32
 	ctx         context.Context
 	cancel      context.CancelFunc
 }
 
-func NewConnection(address string, idleTimeout time.Duration) *Connection {
-	return NewConnectionWithID(address, "", idleTimeout)
-}
-
-func NewConnectionWithID(address string, id string, idleTimeout time.Duration) *Connection {
+func NewConnection(address string, id string, idleTimeout time.Duration) *Connection {
 	if idleTimeout == 0 {
 		idleTimeout = defaultIdleTimeout
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-
-	connectFn := func() (net.Conn, error) {
-		return net.Dial("tcp", address)
-	}
 
 	_, err := globalPool.getOrCreate(address)
 	if err != nil {
@@ -61,7 +51,6 @@ func NewConnectionWithID(address string, id string, idleTimeout time.Duration) *
 	tc := &Connection{
 		id:          id,
 		address:     address,
-		connectFn:   connectFn,
 		state:       stateConnected,
 		readBuf:     make([]byte, 4096),
 		lastRead:    time.Now(),
@@ -73,21 +62,10 @@ func NewConnectionWithID(address string, id string, idleTimeout time.Duration) *
 
 	go tc.idleMonitor()
 
-	if id != "" {
-		if err := tc.waitReady(); err != nil {
-			tc.close()
-			return nil
-		}
-	}
-
 	return tc
 }
 
-func WrapConnection(conn net.Conn, idleTimeout time.Duration) *Connection {
-	return WrapConnectionWithID(conn, "", idleTimeout)
-}
-
-func WrapConnectionWithID(conn net.Conn, id string, idleTimeout time.Duration) *Connection {
+func WrapConnection(conn net.Conn, id string, idleTimeout time.Duration) *Connection {
 	if idleTimeout == 0 {
 		idleTimeout = defaultIdleTimeout
 	}
@@ -143,7 +121,7 @@ func (t *Connection) reconnect() error {
 
 func (t *Connection) ensureConnected() error {
 	if t.state == stateDisconnected {
-		if t.connectFn != nil {
+		if t.address != "" {
 			if err := t.reconnect(); err != nil {
 				return err
 			}
@@ -227,24 +205,6 @@ func (t *Connection) Send(data []byte) error {
 	return nil
 }
 
-func (t *Connection) waitReady() error {
-	if atomic.LoadInt32(&t.ready) == 1 {
-		return nil
-	}
-
-	handshake := []byte("HANDSHAKE:" + t.id)
-	if err := t.Send(handshake); err != nil {
-		return err
-	}
-
-	if _, err := t.Receive(); err != nil {
-		return err
-	}
-
-	atomic.StoreInt32(&t.ready, 1)
-	return nil
-}
-
 func (t *Connection) Receive() ([]byte, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -278,7 +238,7 @@ func (t *Connection) Receive() ([]byte, error) {
 		}
 
 		receivedID := string(idBuf)
-		if t.id != "" && receivedID != t.id {
+		if receivedID != t.id {
 			// Wrong connection ID, skip this message
 			continue
 		}
