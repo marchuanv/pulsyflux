@@ -10,6 +10,7 @@ import (
 
 const (
 	defaultIdleTimeout = 30 * time.Second
+	chunkSize          = 64 * 1024 // 64KB chunks
 )
 
 type state int
@@ -175,28 +176,45 @@ func (t *Connection) Send(data []byte) error {
 		}
 	}
 
-	// Frame: [id_len(1)][id][data_len(4)][data]
 	idBytes := []byte(t.id)
 	idLen := byte(len(idBytes))
-	dataLen := uint32(len(data))
+	totalLen := uint32(len(data))
 
-	frame := make([]byte, 1+len(idBytes)+4+len(data))
-	frame[0] = idLen
-	copy(frame[1:], idBytes)
-	frame[1+len(idBytes)] = byte(dataLen >> 24)
-	frame[2+len(idBytes)] = byte(dataLen >> 16)
-	frame[3+len(idBytes)] = byte(dataLen >> 8)
-	frame[4+len(idBytes)] = byte(dataLen)
-	copy(frame[5+len(idBytes):], data)
-
-	offset := 0
-	for offset < len(frame) {
-		n, err := conn.Write(frame[offset:])
-		if err != nil {
-			t.state = stateDisconnected
-			return err
+	// Send chunks
+	for offset := 0; offset < len(data); offset += chunkSize {
+		end := offset + chunkSize
+		if end > len(data) {
+			end = len(data)
 		}
-		offset += n
+		chunk := data[offset:end]
+		chunkLen := uint32(len(chunk))
+
+		// Frame: [id_len(1)][id][total_len(4)][chunk_len(4)][chunk]
+		frame := make([]byte, 1+len(idBytes)+4+4+len(chunk))
+		frame[0] = idLen
+		copy(frame[1:], idBytes)
+		pos := 1 + len(idBytes)
+		frame[pos] = byte(totalLen >> 24)
+		frame[pos+1] = byte(totalLen >> 16)
+		frame[pos+2] = byte(totalLen >> 8)
+		frame[pos+3] = byte(totalLen)
+		pos += 4
+		frame[pos] = byte(chunkLen >> 24)
+		frame[pos+1] = byte(chunkLen >> 16)
+		frame[pos+2] = byte(chunkLen >> 8)
+		frame[pos+3] = byte(chunkLen)
+		pos += 4
+		copy(frame[pos:], chunk)
+
+		frameOffset := 0
+		for frameOffset < len(frame) {
+			n, err := conn.Write(frame[frameOffset:])
+			if err != nil {
+				t.state = stateDisconnected
+				return err
+			}
+			frameOffset += n
+		}
 	}
 
 	t.lastWrite = time.Now()
@@ -216,8 +234,12 @@ func (t *Connection) Receive() ([]byte, error) {
 		return nil, err
 	}
 
+	var result []byte
+	var totalLen uint32
+	var received uint32
+
 	for {
-		// Read frame: [id_len(1)][id][data_len(4)][data]
+		// Read frame: [id_len(1)][id][total_len(4)][chunk_len(4)][chunk]
 		idLenBuf := make([]byte, 1)
 		if err := t.readFull(idLenBuf); err != nil {
 			return nil, err
@@ -229,25 +251,52 @@ func (t *Connection) Receive() ([]byte, error) {
 			return nil, err
 		}
 
-		dataLenBuf := make([]byte, 4)
-		if err := t.readFull(dataLenBuf); err != nil {
-			return nil, err
-		}
-
-		dataLen := uint32(dataLenBuf[0])<<24 | uint32(dataLenBuf[1])<<16 | uint32(dataLenBuf[2])<<8 | uint32(dataLenBuf[3])
-		data := make([]byte, dataLen)
-		if err := t.readFull(data); err != nil {
-			return nil, err
-		}
-
 		receivedID := string(idBuf)
 		if receivedID != t.id {
-			// Wrong connection ID, skip this message
+			// Wrong connection ID, skip this chunk
+			totalLenBuf := make([]byte, 4)
+			if err := t.readFull(totalLenBuf); err != nil {
+				return nil, err
+			}
+			chunkLenBuf := make([]byte, 4)
+			if err := t.readFull(chunkLenBuf); err != nil {
+				return nil, err
+			}
+			chunkLen := uint32(chunkLenBuf[0])<<24 | uint32(chunkLenBuf[1])<<16 | uint32(chunkLenBuf[2])<<8 | uint32(chunkLenBuf[3])
+			skipBuf := make([]byte, chunkLen)
+			if err := t.readFull(skipBuf); err != nil {
+				return nil, err
+			}
 			continue
 		}
 
-		t.lastRead = time.Now()
-		return data, nil
+		totalLenBuf := make([]byte, 4)
+		if err := t.readFull(totalLenBuf); err != nil {
+			return nil, err
+		}
+		totalLen = uint32(totalLenBuf[0])<<24 | uint32(totalLenBuf[1])<<16 | uint32(totalLenBuf[2])<<8 | uint32(totalLenBuf[3])
+
+		chunkLenBuf := make([]byte, 4)
+		if err := t.readFull(chunkLenBuf); err != nil {
+			return nil, err
+		}
+		chunkLen := uint32(chunkLenBuf[0])<<24 | uint32(chunkLenBuf[1])<<16 | uint32(chunkLenBuf[2])<<8 | uint32(chunkLenBuf[3])
+
+		chunk := make([]byte, chunkLen)
+		if err := t.readFull(chunk); err != nil {
+			return nil, err
+		}
+
+		if result == nil {
+			result = make([]byte, 0, totalLen)
+		}
+		result = append(result, chunk...)
+		received += chunkLen
+
+		if received >= totalLen {
+			t.lastRead = time.Now()
+			return result, nil
+		}
 	}
 }
 
