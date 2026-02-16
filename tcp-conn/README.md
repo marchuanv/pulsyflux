@@ -200,8 +200,9 @@ if err != nil {
 
 - **Connection Pooling**: Reduces TCP handshake overhead
 - **Multiplexing**: Multiple logical connections without multiple sockets
-- **Zero-Copy**: Minimal memory allocations
-- **Thread-Safe**: Lock-free reads where possible
+- **Chunked I/O**: Handles partial reads/writes automatically
+- **Large Messages**: Tested with 1MB+ messages
+- **Thread-Safe**: All operations protected with mutexes
 - **Auto-Cleanup**: Reference counting prevents resource leaks
 
 ## Design Philosophy
@@ -215,16 +216,18 @@ if err != nil {
 ## Thread Safety
 
 All operations are thread-safe:
-- Multiple goroutines can call Send/Receive on the same connection
+- Send/Receive operations are serialized per connection (mutex protected)
+- Multiple connections can operate concurrently
 - Global pool is protected with RWMutex
 - Reference counting is atomic
+- Logical close only releases pool reference, physical close happens when refCount reaches 0
 
 ## Limitations
 
-- **Read Buffer**: 4KB default (sufficient for most use cases)
 - **Blocking I/O**: Send/Receive block until complete
-- **No Partial Reads**: Messages must fit in memory
+- **Messages in Memory**: Full messages must fit in memory
 - **TCP Only**: No UDP support
+- **Sequential Operations**: Send/Receive are mutexed per connection
 
 ## Best Practices
 

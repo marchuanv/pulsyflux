@@ -251,3 +251,183 @@ func TestWrapConnection_NoReconnect(t *testing.T) {
 		t.Error("Expected error after connection closed")
 	}
 }
+
+func TestConnection_LargeMessage(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start listener: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, _ := listener.Accept()
+		if conn == nil {
+			return
+		}
+		wrapped := WrapConnection(conn, 5*time.Second)
+		data, _ := wrapped.Receive()
+		wrapped.Send(data)
+	}()
+
+	c := NewConnection(listener.Addr().String(), 5*time.Second)
+	if c == nil {
+		t.Fatal("NewConnection returned nil")
+	}
+
+	// 1MB message
+	largeData := make([]byte, 1024*1024)
+	for i := range largeData {
+		largeData[i] = byte(i % 256)
+	}
+
+	err = c.Send(largeData)
+	if err != nil {
+		t.Fatalf("Send large message failed: %v", err)
+	}
+
+	received, err := c.Receive()
+	if err != nil {
+		t.Fatalf("Receive large message failed: %v", err)
+	}
+
+	if len(received) != len(largeData) {
+		t.Errorf("Expected %d bytes, got %d", len(largeData), len(received))
+	}
+}
+
+func TestConnection_MultipleLogicalConnections(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start listener: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, _ := listener.Accept()
+		if conn == nil {
+			return
+		}
+		wrapped1 := WrapConnectionWithID(conn, "conn1", 5*time.Second)
+		wrapped2 := WrapConnectionWithID(conn, "conn2", 5*time.Second)
+
+		data1, _ := wrapped1.Receive()
+		wrapped1.Send(data1)
+
+		data2, _ := wrapped2.Receive()
+		wrapped2.Send(data2)
+	}()
+
+	c1 := NewConnectionWithID(listener.Addr().String(), "conn1", 5*time.Second)
+	c2 := NewConnectionWithID(listener.Addr().String(), "conn2", 5*time.Second)
+
+	c1.Send([]byte("message1"))
+	c2.Send([]byte("message2"))
+
+	data1, err := c1.Receive()
+	if err != nil || string(data1) != "message1" {
+		t.Errorf("conn1 expected 'message1', got '%s' err=%v", string(data1), err)
+	}
+
+	data2, err := c2.Receive()
+	if err != nil || string(data2) != "message2" {
+		t.Errorf("conn2 expected 'message2', got '%s' err=%v", string(data2), err)
+	}
+}
+
+func TestConnection_ConcurrentSendReceive(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start listener: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, _ := listener.Accept()
+		if conn == nil {
+			return
+		}
+		wrapped := WrapConnection(conn, 5*time.Second)
+		for i := 0; i < 10; i++ {
+			data, err := wrapped.Receive()
+			if err != nil {
+				return
+			}
+			wrapped.Send(data)
+		}
+	}()
+
+	c := NewConnection(listener.Addr().String(), 5*time.Second)
+	if c == nil {
+		t.Fatal("NewConnection returned nil")
+	}
+
+	done := make(chan bool, 10)
+	for i := 0; i < 10; i++ {
+		go func(n int) {
+			msg := []byte{byte(n)}
+			c.Send(msg)
+			data, err := c.Receive()
+			if err != nil || len(data) != 1 || data[0] != byte(n) {
+				t.Errorf("Concurrent test failed for %d", n)
+			}
+			done <- true
+		}(i)
+	}
+
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+}
+
+func TestConnection_PoolReferenceCount(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start listener: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				wrapped := WrapConnection(c, 5*time.Second)
+				for {
+					data, err := wrapped.Receive()
+					if err != nil {
+						return
+					}
+					wrapped.Send(data)
+				}
+			}(conn)
+		}
+	}()
+
+	addr := listener.Addr().String()
+	c1 := NewConnection(addr, 5*time.Second)
+	c2 := NewConnection(addr, 5*time.Second)
+	c3 := NewConnection(addr, 5*time.Second)
+
+	if c1 == nil || c2 == nil || c3 == nil {
+		t.Fatal("Failed to create connections")
+	}
+
+	pool := globalPool.pools[addr]
+	if pool.refCount != 3 {
+		t.Errorf("Expected refCount 3, got %d", pool.refCount)
+	}
+
+	c1.close()
+	if pool.refCount != 2 {
+		t.Errorf("After close, expected refCount 2, got %d", pool.refCount)
+	}
+
+	c2.close()
+	c3.close()
+
+	if _, exists := globalPool.pools[addr]; exists {
+		t.Error("Pool should be removed after all connections closed")
+	}
+}
