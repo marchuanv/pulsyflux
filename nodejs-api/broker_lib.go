@@ -96,10 +96,10 @@ func Subscribe(id C.int, payload **C.char, payloadLen *C.int) C.int {
 	}
 	
 	// Get or create subscription channel
-	ch, exists := subs[id]
+	ch, exists := subs[int(id)]
 	if !exists {
 		ch = client.Subscribe()
-		subs[id] = ch
+		subs[int(id)] = ch
 	}
 	
 	// Receive from channel

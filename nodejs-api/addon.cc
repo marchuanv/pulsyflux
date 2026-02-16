@@ -1,36 +1,32 @@
 #include <napi.h>
 #include <windows.h>
 
-typedef int (*ClientNewFunc)(const char*, const char*);
-typedef int (*ClientPublishFunc)(int, const char*, int);
-typedef int (*ClientSubscribeFunc)(int);
-typedef int (*SubscriptionReceiveFunc)(int, void**, int*);
-typedef int (*SubscriptionCloseFunc)(int);
-typedef int (*ServerNewFunc)(const char*);
-typedef int (*ServerStartFunc)(int);
-typedef const char* (*ServerAddrFunc)(int);
-typedef int (*ServerStopFunc)(int);
+typedef int (*NewServerFunc)(const char*);
+typedef int (*StartFunc)(int);
+typedef const char* (*AddrFunc)(int);
+typedef int (*StopFunc)(int);
+typedef int (*NewClientFunc)(const char*, const char*);
+typedef int (*PublishFunc)(int, const char*, int);
+typedef int (*SubscribeFunc)(int, void**, int*);
 typedef void (*FreePayloadFunc)(void*);
 
 static HMODULE hLib = nullptr;
-static ClientNewFunc ClientNew = nullptr;
-static ClientPublishFunc ClientPublish = nullptr;
-static ClientSubscribeFunc ClientSubscribe = nullptr;
-static SubscriptionReceiveFunc SubscriptionReceive = nullptr;
-static SubscriptionCloseFunc SubscriptionClose = nullptr;
-static ServerNewFunc ServerNew = nullptr;
-static ServerStartFunc ServerStart = nullptr;
-static ServerAddrFunc ServerAddr = nullptr;
-static ServerStopFunc ServerStop = nullptr;
+static NewServerFunc NewServer = nullptr;
+static StartFunc Start = nullptr;
+static AddrFunc Addr = nullptr;
+static StopFunc Stop = nullptr;
+static NewClientFunc NewClient = nullptr;
+static PublishFunc Publish = nullptr;
+static SubscribeFunc Subscribe = nullptr;
 static FreePayloadFunc FreePayload = nullptr;
 
-class ServerWrapper : public Napi::ObjectWrap<ServerWrapper> {
+class Server : public Napi::ObjectWrap<Server> {
 public:
   static Napi::Object Init(Napi::Env env, Napi::Object exports) {
     Napi::Function func = DefineClass(env, "Server", {
-      InstanceMethod("start", &ServerWrapper::Start),
-      InstanceMethod("addr", &ServerWrapper::Addr),
-      InstanceMethod("stop", &ServerWrapper::Stop)
+      InstanceMethod("start", &Server::StartMethod),
+      InstanceMethod("addr", &Server::AddrMethod),
+      InstanceMethod("stop", &Server::StopMethod)
     });
     
     Napi::FunctionReference* constructor = new Napi::FunctionReference();
@@ -41,23 +37,23 @@ public:
     return exports;
   }
   
-  ServerWrapper(const Napi::CallbackInfo& info) : Napi::ObjectWrap<ServerWrapper>(info) {
+  Server(const Napi::CallbackInfo& info) : Napi::ObjectWrap<Server>(info) {
     std::string address = info[0].As<Napi::String>().Utf8Value();
-    id_ = ServerNew(address.c_str());
+    id_ = NewServer(address.c_str());
   }
   
-  Napi::Value Start(const Napi::CallbackInfo& info) {
-    ServerStart(id_);
+  Napi::Value StartMethod(const Napi::CallbackInfo& info) {
+    Start(id_);
     return info.Env().Undefined();
   }
   
-  Napi::Value Addr(const Napi::CallbackInfo& info) {
-    const char* addr = ServerAddr(id_);
+  Napi::Value AddrMethod(const Napi::CallbackInfo& info) {
+    const char* addr = Addr(id_);
     return Napi::String::New(info.Env(), addr);
   }
   
-  Napi::Value Stop(const Napi::CallbackInfo& info) {
-    ServerStop(id_);
+  Napi::Value StopMethod(const Napi::CallbackInfo& info) {
+    Stop(id_);
     return info.Env().Undefined();
   }
   
@@ -65,12 +61,12 @@ private:
   int id_;
 };
 
-class ClientWrapper : public Napi::ObjectWrap<ClientWrapper> {
+class Client : public Napi::ObjectWrap<Client> {
 public:
   static Napi::Object Init(Napi::Env env, Napi::Object exports) {
     Napi::Function func = DefineClass(env, "Client", {
-      InstanceMethod("publish", &ClientWrapper::Publish),
-      InstanceMethod("subscribe", &ClientWrapper::Subscribe)
+      InstanceMethod("publish", &Client::PublishMethod),
+      InstanceMethod("subscribe", &Client::SubscribeMethod)
     });
     
     Napi::FunctionReference* constructor = new Napi::FunctionReference();
@@ -80,59 +76,23 @@ public:
     return exports;
   }
   
-  ClientWrapper(const Napi::CallbackInfo& info) : Napi::ObjectWrap<ClientWrapper>(info) {
+  Client(const Napi::CallbackInfo& info) : Napi::ObjectWrap<Client>(info) {
     std::string address = info[0].As<Napi::String>().Utf8Value();
     std::string channelID = info[1].As<Napi::String>().Utf8Value();
-    id_ = ClientNew(address.c_str(), channelID.c_str());
+    id_ = NewClient(address.c_str(), channelID.c_str());
   }
   
-  Napi::Value Publish(const Napi::CallbackInfo& info) {
+  Napi::Value PublishMethod(const Napi::CallbackInfo& info) {
     Napi::Buffer<char> buffer = info[0].As<Napi::Buffer<char>>();
-    ClientPublish(id_, buffer.Data(), buffer.Length());
+    Publish(id_, buffer.Data(), buffer.Length());
     return info.Env().Undefined();
   }
   
-  Napi::Value Subscribe(const Napi::CallbackInfo& info) {
-    int subID = ClientSubscribe(id_);
-    return SubscriptionWrapper::NewInstance(info.Env(), subID);
-  }
-  
-private:
-  int id_;
-  friend class SubscriptionWrapper;
-};
-
-class SubscriptionWrapper : public Napi::ObjectWrap<SubscriptionWrapper> {
-public:
-  static Napi::Object Init(Napi::Env env, Napi::Object exports) {
-    Napi::Function func = DefineClass(env, "Subscription", {
-      InstanceMethod("receive", &SubscriptionWrapper::Receive),
-      InstanceMethod("close", &SubscriptionWrapper::Close)
-    });
-    
-    constructor = Napi::Persistent(func);
-    constructor.SuppressDestruct();
-    
-    exports.Set("Subscription", func);
-    return exports;
-  }
-  
-  static Napi::Object NewInstance(Napi::Env env, int subID) {
-    Napi::Object obj = constructor.New({});
-    SubscriptionWrapper* wrapper = Napi::ObjectWrap<SubscriptionWrapper>::Unwrap(obj);
-    wrapper->id_ = subID;
-    return obj;
-  }
-  
-  SubscriptionWrapper(const Napi::CallbackInfo& info) : Napi::ObjectWrap<SubscriptionWrapper>(info) {
-    id_ = -1;
-  }
-  
-  Napi::Value Receive(const Napi::CallbackInfo& info) {
+  Napi::Value SubscribeMethod(const Napi::CallbackInfo& info) {
     void* payload = nullptr;
     int payloadLen = 0;
     
-    int result = SubscriptionReceive(id_, &payload, &payloadLen);
+    int result = Subscribe(id_, &payload, &payloadLen);
     
     if (result < 0) {
       return info.Env().Null();
@@ -144,17 +104,9 @@ public:
     return buffer;
   }
   
-  Napi::Value Close(const Napi::CallbackInfo& info) {
-    SubscriptionClose(id_);
-    return info.Env().Undefined();
-  }
-  
 private:
   int id_;
-  static Napi::FunctionReference constructor;
 };
-
-Napi::FunctionReference SubscriptionWrapper::constructor;
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   hLib = LoadLibraryA("broker_lib.dll");
@@ -163,20 +115,17 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     return exports;
   }
   
-  ClientNew = (ClientNewFunc)GetProcAddress(hLib, "ClientNew");
-  ClientPublish = (ClientPublishFunc)GetProcAddress(hLib, "ClientPublish");
-  ClientSubscribe = (ClientSubscribeFunc)GetProcAddress(hLib, "ClientSubscribe");
-  SubscriptionReceive = (SubscriptionReceiveFunc)GetProcAddress(hLib, "SubscriptionReceive");
-  SubscriptionClose = (SubscriptionCloseFunc)GetProcAddress(hLib, "SubscriptionClose");
-  ServerNew = (ServerNewFunc)GetProcAddress(hLib, "ServerNew");
-  ServerStart = (ServerStartFunc)GetProcAddress(hLib, "ServerStart");
-  ServerAddr = (ServerAddrFunc)GetProcAddress(hLib, "ServerAddr");
-  ServerStop = (ServerStopFunc)GetProcAddress(hLib, "ServerStop");
+  NewServer = (NewServerFunc)GetProcAddress(hLib, "ServerNew");
+  Start = (StartFunc)GetProcAddress(hLib, "ServerStart");
+  Addr = (AddrFunc)GetProcAddress(hLib, "ServerAddr");
+  Stop = (StopFunc)GetProcAddress(hLib, "ServerStop");
+  NewClient = (NewClientFunc)GetProcAddress(hLib, "NewClient");
+  Publish = (PublishFunc)GetProcAddress(hLib, "Publish");
+  Subscribe = (SubscribeFunc)GetProcAddress(hLib, "Subscribe");
   FreePayload = (FreePayloadFunc)GetProcAddress(hLib, "FreePayload");
   
-  ServerWrapper::Init(env, exports);
-  ClientWrapper::Init(env, exports);
-  SubscriptionWrapper::Init(env, exports);
+  Server::Init(env, exports);
+  Client::Init(env, exports);
   
   return exports;
 }
