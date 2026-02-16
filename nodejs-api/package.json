@@ -5,15 +5,12 @@
   "main": "broker.mjs",
   "type": "module",
   "scripts": {
-    "postinstall": "build.bat",
     "build": "build.bat",
     "test": "jasmine --config=spec/support/jasmine.json"
   },
-  "optionalDependencies": {
-    "ffi-napi": "^4.0.3"
-  },
   "dependencies": {
-    "ref-napi": "^3.0.3"
+    "ffi-napi": "4.0.3",
+    "ref-napi": "3.0.3"
   },
   "devDependencies": {
     "jasmine": "^5.13.0"

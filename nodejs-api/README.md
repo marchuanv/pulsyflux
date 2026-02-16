@@ -1,5 +1,31 @@
 # Node.js Broker API
 
+⚠️ **WARNING: NOT RECOMMENDED FOR PRODUCTION USE** ⚠️
+
+This package provides Node.js bindings to the Go broker implementation via FFI. However, **performance is 145x slower than native Go** due to FFI overhead, making it unsuitable for production message broker workloads.
+
+**Performance:**
+- Native Go: 45µs round-trip, 22K ops/sec
+- Node.js FFI: 6.6ms round-trip, 800 ops/sec
+- **145x slower** - UNACCEPTABLE for message broker
+
+**Use Cases:**
+- ✅ Testing and development
+- ✅ Prototyping
+- ✅ Low-throughput scenarios (<100 msgs/sec)
+- ❌ Production message broker workloads
+- ❌ High-frequency messaging
+- ❌ Performance-critical paths
+
+**Recommended Alternatives:**
+1. Use Go broker directly as a service
+2. Use Redis/NATS/RabbitMQ with native Node.js clients
+3. Implement native Node.js addon (not FFI)
+
+See [BENCHMARK_COMPARISON.md](BENCHMARK_COMPARISON.md) for detailed analysis.
+
+---
+
 Node.js bindings for the PulsyFlux broker using FFI.
 
 ## Overview
@@ -14,30 +40,19 @@ This package provides Node.js bindings to the Go broker implementation, allowing
 
 - **Node.js** 14+ 
 - **Go** 1.19+ (for building the shared library)
-- **Python** 3.x (required by ffi-napi for native module compilation)
-- **C++ Build Tools** (Windows: Visual Studio Build Tools)
 
-### Option 1: Full Install (Requires Python)
+**Note:** Python is NOT required. Use `--ignore-scripts` to skip ffi-napi native build.
+
+### Install
 
 ```bash
-npm install
+npm install --ignore-scripts
+npm run build
 ```
 
 This will:
-1. Install Node.js dependencies (requires Python for ffi-napi)
-2. Automatically build `broker_lib.dll` via postinstall script
-
-### Option 2: Without Python (Manual Build)
-
-If you don't have Python installed:
-
-```bash
-# Skip native builds
-npm install --ignore-scripts
-
-# Build Go library manually
-npm run build
-```
+1. Install Node.js dependencies using prebuilt binaries (no Python needed)
+2. Build `broker_lib.dll` from Go source
 
 ## Build
 

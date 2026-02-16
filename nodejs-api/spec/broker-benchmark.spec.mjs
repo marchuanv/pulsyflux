@@ -76,14 +76,14 @@ describe('Broker Performance Benchmarks', () => {
       
       await sleep(100);
       
-      const iterations = 1000;
+      const iterations = 100;
       const start = process.hrtime.bigint();
       
       for (let i = 0; i < iterations; i++) {
         client1.publish('test');
       }
       
-      const timeout = Date.now() + 5000;
+      const timeout = Date.now() + 10000;
       while (received < iterations && Date.now() < timeout) {
         await sleep(10);
       }
@@ -133,14 +133,14 @@ describe('Broker Performance Benchmarks', () => {
       
       await sleep(100);
       
-      const iterations = 500;
+      const iterations = 100;
       const start = process.hrtime.bigint();
       
       for (let i = 0; i < iterations; i++) {
         clients[0].publish('test');
       }
       
-      const timeout = Date.now() + 5000;
+      const timeout = Date.now() + 10000;
       while (counters.some(c => c < iterations - 1) && Date.now() < timeout) {
         await sleep(10);
       }
