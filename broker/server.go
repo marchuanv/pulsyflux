@@ -70,7 +70,7 @@ func (s *Server) acceptLoop() {
 }
 
 func (s *Server) handleClient(conn net.Conn) {
-	control := tcpconn.WrapConnection(conn, uuid.UUID{})
+	control := tcpconn.WrapConnection(conn, controlUUID)
 
 	for {
 		data, err := control.Receive()
