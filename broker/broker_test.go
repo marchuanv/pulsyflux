@@ -20,16 +20,16 @@ func TestBasicPubSub(t *testing.T) {
 	client1, _ := NewClient(addr, channelID)
 	client2, _ := NewClient(addr, channelID)
 
-	ch1 := client1.Subscribe("test")
-	ch2 := client2.Subscribe("test")
+	ch1 := client1.Subscribe()
+	ch2 := client2.Subscribe()
 
 	time.Sleep(500 * time.Millisecond)
 
-	client1.Publish("test", []byte("hello"))
+	client1.Publish([]byte("hello"))
 
 	msg := <-ch2
-	if string(msg.Payload) != "hello" {
-		t.Errorf("expected 'hello', got '%s'", string(msg.Payload))
+	if string(msg) != "hello" {
+		t.Errorf("expected 'hello', got '%s'", string(msg))
 	}
 
 	select {
@@ -49,33 +49,51 @@ func TestMultipleChannels(t *testing.T) {
 	ch2ID := uuid.New()
 
 	client1, _ := NewClient(addr, ch1ID)
-	client2, _ := NewClient(addr, ch2ID)
+	client2, _ := NewClient(addr, ch1ID)
+	client3, _ := NewClient(addr, ch2ID)
+	client4, _ := NewClient(addr, ch2ID)
 
-	sub1 := client1.Subscribe("test")
-	sub2 := client2.Subscribe("test")
+	_ = client1.Subscribe()
+	sub2 := client2.Subscribe()
+	_ = client3.Subscribe()
+	sub4 := client4.Subscribe()
 
 	time.Sleep(500 * time.Millisecond)
 
-	client1.Publish("test", []byte("channel1"))
-	client2.Publish("test", []byte("channel2"))
+	client1.Publish([]byte("channel1"))
+	client3.Publish([]byte("channel2"))
 
-	// Client1 should receive its own channel's message
-	select {
-	case msg := <-sub1:
-		if string(msg.Payload) != "channel1" {
-			t.Errorf("client1 expected 'channel1', got '%s'", string(msg.Payload))
-		}
-	case <-time.After(1 * time.Second):
-		t.Error("client1 did not receive message from its channel")
-	}
-
-	// Client2 should receive its own channel's message
+	// Client2 should receive channel1 message
 	select {
 	case msg := <-sub2:
-		if string(msg.Payload) != "channel2" {
-			t.Errorf("client2 expected 'channel2', got '%s'", string(msg.Payload))
+		if string(msg) != "channel1" {
+			t.Errorf("client2 expected 'channel1', got '%s'", string(msg))
 		}
 	case <-time.After(1 * time.Second):
-		t.Error("client2 did not receive message from its channel")
+		t.Error("client2 did not receive message from channel1")
+	}
+
+	// Client4 should receive channel2 message
+	select {
+	case msg := <-sub4:
+		if string(msg) != "channel2" {
+			t.Errorf("client4 expected 'channel2', got '%s'", string(msg))
+		}
+	case <-time.After(1 * time.Second):
+		t.Error("client4 did not receive message from channel2")
+	}
+
+	// Client2 should NOT receive channel2 message
+	select {
+	case <-sub2:
+		t.Error("client2 should not receive message from channel2")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Client4 should NOT receive channel1 message
+	select {
+	case <-sub4:
+		t.Error("client4 should not receive message from channel1")
+	case <-time.After(100 * time.Millisecond):
 	}
 }

@@ -1,33 +1,147 @@
 # Broker Package
 
-A channel-based pub/sub message broker built on top of the tcp-conn package.
+A lightweight, channel-based pub/sub message broker built on tcp-conn multiplexing.
 
-## Design Rules
+## Overview
 
-### CRITICAL: Connection Pooling is Required
+The broker provides a simple pub/sub messaging system where:
+- Clients connect to channels identified by UUID
+- Messages published to a channel are broadcast to all other clients on that channel
+- Senders do not receive their own messages
+- Multiple channels are isolated from each other
 
-**Multiple clients MUST share the same physical TCP connection via tcp-conn's connection pooling.**
+## Quick Start
 
-This is NOT a bug - this is the entire point of the connection pool:
-- Multiple clients connecting to the same broker address will share one physical TCP socket
-- The broker MUST distinguish clients using logical connections (UUIDs), NOT by net.Conn
-- Each client has a unique client UUID for identification
-- Each channel has a unique channel UUID for message routing
-- The tcp-conn multiplexing handles routing messages to the correct logical connection
+### Server
 
-**DO NOT:**
-- Try to force separate physical connections per client
-- Use net.Conn as a client identifier
-- Assume one physical connection = one client
+```go
+server := broker.NewServer(":8080")
+if err := server.Start(); err != nil {
+    log.Fatal(err)
+}
+defer server.Stop()
 
-**DO:**
-- Use client UUIDs to identify clients
-- Use channel UUIDs to route messages
-- Leverage tcp-conn's multiplexing for efficiency
+addr := server.Addr() // Get actual listening address
+```
+
+### Client
+
+```go
+channelID := uuid.New()
+client, err := broker.NewClient("localhost:8080", channelID)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Subscribe to receive messages
+ch := client.Subscribe()
+go func() {
+    for msg := range ch {
+        fmt.Printf("Received: %s\n", string(msg))
+    }
+}()
+
+// Publish messages
+client.Publish([]byte("hello world"))
+```
+
+## Complete Example
+
+```go
+package main
+
+import (
+    "fmt"
+    "github.com/google/uuid"
+    "pulsyflux/broker"
+    "time"
+)
+
+func main() {
+    // Start server
+    server := broker.NewServer(":0")
+    server.Start()
+    defer server.Stop()
+
+    // Create channel
+    channelID := uuid.New()
+
+    // Create two clients on same channel
+    client1, _ := broker.NewClient(server.Addr(), channelID)
+    client2, _ := broker.NewClient(server.Addr(), channelID)
+
+    // Subscribe both clients
+    ch1 := client1.Subscribe()
+    ch2 := client2.Subscribe()
+
+    // Receive messages
+    go func() {
+        for msg := range ch2 {
+            fmt.Printf("Client2 received: %s\n", string(msg))
+        }
+    }()
+
+    time.Sleep(100 * time.Millisecond)
+
+    // Publish from client1
+    client1.Publish([]byte("hello"))
+    // Output: Client2 received: hello
+    // Note: Client1 does NOT receive its own message
+}
+```
+
+## API Reference
+
+### Server
+
+#### `NewServer(address string) *Server`
+Creates a new broker server.
+- `address`: TCP address to listen on (e.g., ":8080" or "localhost:8080")
+- Use ":0" to let OS assign a random port
+
+#### `(*Server) Start() error`
+Starts the server and begins accepting connections.
+- Returns error if unable to bind to address
+- Non-blocking - runs accept loop in goroutine
+
+#### `(*Server) Addr() string`
+Returns the actual listening address.
+- Useful when using ":0" to get the assigned port
+
+#### `(*Server) Stop() error`
+Stops the server and closes the listener.
+- Closes all active connections
+- Should be called with defer after Start()
+
+### Client
+
+#### `NewClient(address string, channelID uuid.UUID) (*Client, error)`
+Creates a new client connected to a specific channel.
+- `address`: Server address (e.g., "localhost:8080")
+- `channelID`: UUID identifying the channel to join
+- Automatically sends control message to server
+- Establishes channel connection for pub/sub
+- Returns error if connection fails
+
+#### `(*Client) Subscribe() <-chan []byte`
+Creates a subscription to receive messages from the channel.
+- Returns a buffered channel (capacity 100)
+- Multiple subscriptions can be created per client
+- All subscriptions receive all messages on the channel
+- Non-blocking - messages are dropped if channel is full
+
+#### `(*Client) Publish(payload []byte) error`
+Publishes a message to the channel.
+- `payload`: Raw bytes to send
+- Message is broadcast to all other clients on the channel
+- Sender does NOT receive their own message
+- Returns error if send fails
 
 ## Architecture
 
-The broker uses a hierarchical connection model with multiplexing:
+### Connection Model
+
+The broker uses tcp-conn's multiplexing to efficiently manage connections:
 
 ```
 Multiple Clients                    Server
@@ -49,220 +163,156 @@ Multiple Clients                    Server
 
 ### Connection Layers
 
-1. **Physical Layer**: Single TCP socket shared by multiple clients (via tcp-conn pooling)
-2. **Control Layer**: Global control UUID (00000000-0000-0000-0000-000000000000) for establishing channels
-   - **PURPOSE**: ONLY for initialization - establishing new channel connections
-   - **USAGE**: Client sends control message with ClientID + ChannelID to request channel creation
-   - **NOT FOR**: Message exchange, pub/sub, or any data transfer
-   - All clients send control messages on the same logical connection (GlobalControlUUID)
-   - Server receives control messages and creates channel connections for that client
-3. **Channel Layer**: Each channel has its own UUID for message routing
-   - **PURPOSE**: ALL message exchange happens here (pub/sub)
-   - **USAGE**: Client publishes/receives messages on channel-specific logical connections
-   - Messages are multiplexed over the shared physical connection
-   - tcp-conn's demux routes messages by UUID to the correct logical connection
+**1. Physical Layer**
+- Single TCP socket shared by multiple clients
+- Managed by tcp-conn connection pooling
+- Reduces connection overhead
 
-### Control vs Channel Connections
+**2. Control Layer**
+- Uses GlobalControlUUID (00000000-0000-0000-0000-000000000000)
+- Purpose: Initialize channel connections
+- Client sends: `{ClientID: "uuid", ChannelID: "uuid"}`
+- Server creates channel connection for that client
+- Used ONLY during client construction
 
-**Control Connection (GlobalControlUUID):**
-```go
-// ONLY used once per channel to initialize
-controlMsg := clientMessage{
-    ClientID:  "client-uuid",
-    ChannelID: "channel-uuid",
-}
-control.Send(controlMsg) // Tells server: "Create channel connection for this client"
-```
-
-**Channel Connection (ChannelUUID):**
-```go
-// Used for ALL message exchange
-msg := Message{
-    Topic:   "events",
-    Payload: []byte("data"),
-}
-channelConn.Send(msg) // Actual pub/sub messages
-```
-
-**CRITICAL RULE**: Never send pub/sub messages on control connection. Control is ONLY for initialization.
-
-### Key Concepts
-
-- **Channel**: A pub/sub topic identified by UUID
-- **Logical Connection**: tcp-conn multiplexed connection
-- **Physical Connection**: Underlying TCP socket (shared via tcp-conn pooling)
-
-## API
-
-### Server
-
-```go
-server := broker.NewServer(":8080")
-server.Start()
-defer server.Stop()
-
-addr := server.Addr() // Get actual listening address
-```
-
-### Client
-
-```go
-client, err := broker.NewClient("localhost:8080")
-
-// Publish to a channel
-channelID := uuid.New()
-client.Publish(channelID, "topic", []byte("message"))
-
-// Subscribe to a channel
-ch, err := client.Subscribe(channelID, "topic")
-for msg := range ch {
-    fmt.Printf("Topic: %s, Payload: %s\n", msg.Topic, string(msg.Payload))
-}
-```
-
-## Message Structure
-
-```go
-type Message struct {
-    Topic   string
-    Payload []byte
-}
-```
-
-Note: Topics are metadata only - all messages on a channel are broadcast to all subscribers regardless of topic.
-
-## Usage Example
-
-```go
-package main
-
-import (
-    "fmt"
-    "github.com/google/uuid"
-    "pulsyflux/broker"
-)
-
-func main() {
-    // Start server
-    server := broker.NewServer(":0")
-    server.Start()
-    defer server.Stop()
-
-    // Create clients
-    client1, _ := broker.NewClient(server.Addr())
-    client2, _ := broker.NewClient(server.Addr())
-
-    // Both subscribe to same channel
-    channelID := uuid.New()
-    ch1, _ := client1.Subscribe(channelID, "events")
-    ch2, _ := client2.Subscribe(channelID, "events")
-
-    // Receive messages
-    go func() {
-        for msg := range ch2 {
-            fmt.Printf("Client2 received: %s\n", string(msg.Payload))
-        }
-    }()
-
-    // Publish message
-    client1.Publish(channelID, "events", []byte("hello"))
-    // Client2 receives "hello"
-    // Client1 does NOT receive own message
-}
-```
-
-## How It Works
-
-### Client Side
-
-1. **NewClient()**: Creates control connection with random UUID
-2. **Subscribe()/Publish()**: 
-   - Calls getChannel() which sends channel UUID on control connection
-   - Creates channel connection with that UUID (reused if already exists)
-   - Subscribe: Adds channel to subscriber list, returns Go channel
-   - Publish: Sends message on channel connection
-
-### Server Side
-
-1. **Accept**: Server accepts TCP connection
-2. **handleClient()**: Wraps connection with empty UUID control connection
-   - Receives channel UUIDs from clients
-   - Creates channel struct if new
-   - Spawns handleChannel() for each unique (conn, channel) pair
-3. **handleChannel()**: Wraps connection with channel UUID
-   - Receives messages on channel connection
-   - Broadcasts to all other connections in same channel
+**3. Channel Layer**
+- Each client has unique UUID for identification
+- Messages multiplexed over shared physical connection
+- Server routes messages by client UUID
+- All pub/sub happens here
 
 ### Message Flow
 
 ```
-Client1.Publish(channelID, "topic", data)
+Client1.Publish(data)
     │
-    ├─> Channel Connection (channelID)
-    │
-    ▼
-Server.handleChannel() receives message
-    │
-    ├─> Looks up channel by ID
-    │
-    ├─> Iterates through all connections in channel
-    │
-    ├─> Skips sender connection
+    ├─> Send on channel connection (clientID)
     │
     ▼
-Broadcasts to Client2, Client3, etc.
+Server receives on logical connection
+    │
+    ├─> Lookup channel by channelID
+    │
+    ├─> Iterate all clients in channel
+    │
+    ├─> Skip sender (clientID)
     │
     ▼
-Client2.receiveLoop() receives message
-    │
-    ├─> Unmarshals JSON
-    │
-    ├─> Sends to all subscriber Go channels
+Broadcast to Client2, Client3, etc.
     │
     ▼
-Application receives from ch2
+Client2.receiveLoop() receives data
+    │
+    ├─> Send to all subscriber channels
+    │
+    ▼
+Application receives from Subscribe()
 ```
 
-## Connection Multiplexing
+## Implementation Details
 
-The broker leverages tcp-conn's multiplexing:
+### Server
 
-- Multiple clients to same server share physical TCP connections
-- Each logical connection has unique UUID for message routing
-- Control and channel connections multiplex over same physical socket
-- Reduces TCP handshake overhead and connection count
+**Data Structures:**
+```go
+type Server struct {
+    address  string                           // Listen address
+    listener net.Listener                     // TCP listener
+    channels map[uuid.UUID]*channel           // channelID -> channel
+    clients  map[uuid.UUID]net.Conn          // clientID -> connection
+    mu       sync.RWMutex                     // Protects channels/clients
+    done     chan struct{}                    // Shutdown signal
+}
+
+type channel struct {
+    clients map[uuid.UUID]*tcpconn.Connection // clientID -> logical conn
+    mu      sync.RWMutex                       // Protects clients map
+}
+```
+
+**Control Message:**
+```go
+type controlMessage struct {
+    ClientID  string `json:"client_id"`   // Client UUID
+    ChannelID string `json:"channel_id"`  // Channel UUID
+}
+```
+
+**Flow:**
+1. `acceptLoop()` accepts TCP connections
+2. `handleClient()` wraps connection with GlobalControlUUID
+3. Receives control messages with ClientID + ChannelID
+4. Creates/gets channel struct
+5. Wraps connection with ClientID for that channel
+6. Spawns `handleChannel()` goroutine
+7. `handleChannel()` receives messages and broadcasts to other clients
+
+### Client
+
+**Data Structures:**
+```go
+type Client struct {
+    id        uuid.UUID              // Unique client ID
+    channelID uuid.UUID              // Channel this client is on
+    address   string                 // Server address
+    conn      *tcpconn.Connection    // Channel connection
+    subs      []chan []byte          // Subscriber channels
+    mu        sync.RWMutex           // Protects subs
+}
+```
+
+**Flow:**
+1. `NewClient()` generates random clientID
+2. Creates control connection with GlobalControlUUID
+3. Sends controlMessage with clientID + channelID
+4. Creates channel connection with clientID
+5. Starts `receiveLoop()` goroutine
+6. `Subscribe()` adds channel to subs list
+7. `Publish()` sends directly on channel connection
+8. `receiveLoop()` distributes received messages to all subs
 
 ## Design Decisions
 
-### Why Empty UUID on Server Control?
+### Why Channel ID in Constructor?
 
-The server's control connection uses `uuid.UUID{}` (empty UUID) to accept messages from any client control connection. Each client uses a random UUID for its control connection to avoid conflicts when multiple clients share the same physical TCP connection via tcp-conn pooling.
+Each client is bound to a single channel for its lifetime. This simplifies the API and makes the client's purpose clear. To communicate on multiple channels, create multiple clients.
 
-### Why Not Use Topics for Filtering?
+### Why No Topics?
 
-Currently, all messages on a channel are broadcast to all subscribers. Topics are included in the message but not used for filtering. This keeps the implementation simple. Topic-based filtering could be added at the application level or in a future version.
+Topics add complexity without clear benefit for this use case. Channel isolation provides sufficient message routing. Applications can implement their own message filtering if needed.
 
-### Why Separate Control and Channel Connections?
+### Why Raw Bytes?
 
-- **Control**: Manages channel lifecycle (join/create)
-- **Channel**: Handles high-frequency message traffic
+The broker is transport-agnostic. Applications can use JSON, protobuf, msgpack, or any serialization format. This keeps the broker simple and flexible.
 
-This separation allows the control connection to handle multiple channel requests without blocking message flow.
+### Why Skip Sender?
 
-## Performance Characteristics
+Prevents message loops and simplifies application logic. The sender already knows what they published. If echo behavior is needed, applications can implement it.
 
-- Inherits tcp-conn performance: ~20µs latency for small messages
-- Connection pooling reduces overhead
-- Multiplexing allows many logical connections over few physical sockets
-- Broadcast is O(N) where N = number of subscribers in channel
+### Why Connection Pooling?
+
+tcp-conn's multiplexing allows many logical connections over few physical sockets. This reduces:
+- TCP handshake overhead
+- File descriptor usage
+- Network resource consumption
+- Connection establishment latency
+
+## Performance
+
+- **Latency**: ~20µs for small messages (inherits from tcp-conn)
+- **Throughput**: Limited by network bandwidth and broadcast fanout
+- **Scalability**: O(N) broadcast where N = clients per channel
+- **Memory**: Minimal - no message buffering or persistence
 
 ## Limitations
 
-- No message persistence
-- No topic-based filtering (all channel subscribers receive all messages)
-- Sender does not receive own messages
-- No authentication/authorization
-- Single server (no clustering)
+- No message persistence or replay
+- No message acknowledgment or delivery guarantees
+- No authentication or authorization
+- No encryption (use TLS proxy if needed)
+- Single server (no clustering or HA)
+- Sender cannot receive own messages
+- No backpressure - slow subscribers drop messages
 
 ## Testing
 
@@ -271,16 +321,38 @@ cd broker
 go test -v
 ```
 
-Tests verify:
-- Basic pub/sub functionality
-- Sender doesn't receive own messages
-- Channel isolation (messages don't leak between channels)
+**Test Coverage:**
+- `TestBasicPubSub`: Verifies pub/sub and sender exclusion
+- `TestMultipleChannels`: Verifies channel isolation
+- `TestDebug`: Manual debugging test with verbose output
+
+## Thread Safety
+
+All public methods are thread-safe:
+- Server methods can be called from multiple goroutines
+- Client methods can be called from multiple goroutines
+- Multiple Subscribe() calls are safe
+- Concurrent Publish() calls are safe
+
+## Error Handling
+
+**Server:**
+- `Start()` returns error if bind fails
+- Connection errors are logged and ignored
+- Malformed control messages are ignored
+
+**Client:**
+- `NewClient()` returns error if connection fails
+- `Publish()` returns error if send fails
+- Subscribe never errors (returns channel immediately)
 
 ## Future Enhancements
 
-- Topic-based filtering
-- Message persistence
-- Wildcard topic subscriptions
-- Authentication
-- Clustering/HA
+- Message acknowledgment
+- Delivery guarantees (at-least-once, exactly-once)
+- Message persistence and replay
+- Authentication and authorization
+- TLS support
 - Metrics and monitoring
+- Clustering and high availability
+- Backpressure handling

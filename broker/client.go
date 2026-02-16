@@ -14,11 +14,11 @@ type Client struct {
 	channelID uuid.UUID
 	address   string
 	conn      *tcpconn.Connection
-	subs      []chan *Message
+	subs      []chan []byte
 	mu        sync.RWMutex
 }
 
-type clientMessage struct {
+type controlMessage struct {
 	ClientID  string `json:"client_id"`
 	ChannelID string `json:"channel_id"`
 }
@@ -31,7 +31,7 @@ func NewClient(address string, channelID uuid.UUID) (*Client, error) {
 	}
 
 	// Send control message to establish channel
-	joinMsg := clientMessage{
+	joinMsg := controlMessage{
 		ClientID:  clientID.String(),
 		ChannelID: channelID.String(),
 	}
@@ -51,7 +51,7 @@ func NewClient(address string, channelID uuid.UUID) (*Client, error) {
 		channelID: channelID,
 		address:   address,
 		conn:      conn,
-		subs:      []chan *Message{},
+		subs:      []chan []byte{},
 	}
 
 	go client.receiveLoop()
@@ -66,15 +66,11 @@ func (c *Client) receiveLoop() {
 		if err != nil {
 			return
 		}
-		var msg Message
-		if err := json.Unmarshal(data, &msg); err != nil {
-			continue
-		}
 
 		c.mu.RLock()
 		for _, sub := range c.subs {
 			select {
-			case sub <- &msg:
+			case sub <- data:
 			default:
 			}
 		}
@@ -82,20 +78,12 @@ func (c *Client) receiveLoop() {
 	}
 }
 
-func (c *Client) Publish(topic string, payload []byte) error {
-	msg := Message{
-		Topic:   topic,
-		Payload: payload,
-	}
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	return c.conn.Send(data)
+func (c *Client) Publish(payload []byte) error {
+	return c.conn.Send(payload)
 }
 
-func (c *Client) Subscribe(topic string) <-chan *Message {
-	ch := make(chan *Message, 100)
+func (c *Client) Subscribe() <-chan []byte {
+	ch := make(chan []byte, 100)
 	c.mu.Lock()
 	c.subs = append(c.subs, ch)
 	c.mu.Unlock()

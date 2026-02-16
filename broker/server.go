@@ -14,11 +14,6 @@ var (
 	GlobalControlUUID = uuid.MustParse("00000000-0000-0000-0000-000000000000")
 )
 
-type Message struct {
-	Topic   string
-	Payload []byte
-}
-
 type channel struct {
 	clients map[uuid.UUID]*tcpconn.Connection
 	mu      sync.RWMutex
@@ -85,7 +80,7 @@ func (s *Server) handleClient(conn net.Conn) {
 			return
 		}
 
-		var cmsg clientMessage
+		var cmsg controlMessage
 		if err := json.Unmarshal(data, &cmsg); err != nil {
 			continue
 		}
@@ -133,16 +128,8 @@ func (s *Server) handleChannel(ch *channel, clientID uuid.UUID, channelConn *tcp
 		}
 
 		fmt.Printf("Server received message from client %s\n", clientID)
-
-		var msg Message
-		if err := json.Unmarshal(data, &msg); err != nil {
-			continue
-		}
-
-		// Broadcast to other clients
-		msgData, _ := json.Marshal(msg)
 		fmt.Printf("Broadcasting to %d clients\n", len(ch.clients)-1)
-		ch.broadcast(clientID, msgData)
+		ch.broadcast(clientID, data)
 	}
 }
 
