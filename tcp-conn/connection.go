@@ -27,8 +27,9 @@ const (
 )
 
 type Connection struct {
+	address     string
+	connectFn   func() (net.Conn, error)
 	conn        net.Conn
-	reconnectFn func() (net.Conn, error)
 	state       state
 	mu          sync.RWMutex
 	readBuf     []byte
@@ -38,19 +39,31 @@ type Connection struct {
 	closed      int32
 	ctx         context.Context
 	cancel      context.CancelFunc
+	pool        []*net.Conn
+	poolSize    int
 }
 
-func NewConnection(conn net.Conn, idleTimeout time.Duration, reconnectFn func() (net.Conn, error)) *Connection {
-
+func NewConnection(address string, idleTimeout time.Duration) *Connection {
 	if idleTimeout == 0 {
 		idleTimeout = defaultIdleTimeout
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	connectFn := func() (net.Conn, error) {
+		return net.Dial("tcp", address)
+	}
+
+	conn, err := connectFn()
+	if err != nil {
+		cancel()
+		return nil
+	}
+
 	tc := &Connection{
+		address:     address,
+		connectFn:   connectFn,
 		conn:        conn,
-		reconnectFn: reconnectFn,
 		state:       stateConnected,
 		readBuf:     make([]byte, 4096),
 		lastRead:    time.Now(),
@@ -58,6 +71,7 @@ func NewConnection(conn net.Conn, idleTimeout time.Duration, reconnectFn func() 
 		idleTimeout: idleTimeout,
 		ctx:         ctx,
 		cancel:      cancel,
+		poolSize:    1,
 	}
 
 	go tc.idleMonitor()
@@ -91,15 +105,14 @@ func (t *Connection) idleMonitor() {
 }
 
 func (t *Connection) reconnect() error {
-	if t.reconnectFn == nil {
-		return errConnectionClosed
-	}
-
-	newConn, err := t.reconnectFn()
+	newConn, err := t.connectFn()
 	if err != nil {
 		return err
 	}
 
+	if t.conn != nil {
+		t.conn.Close()
+	}
 	t.conn = newConn
 	return nil
 }
@@ -162,6 +175,8 @@ func (t *Connection) close() error {
 	t.mu.Unlock()
 
 	t.cancel()
-	t.conn.Close()
+	if t.conn != nil {
+		t.conn.Close()
+	}
 	return nil
 }
