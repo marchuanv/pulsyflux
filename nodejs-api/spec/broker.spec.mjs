@@ -19,8 +19,9 @@ describe('Broker', () => {
     if (server) {
       server.stop();
     }
-    addon.cleanup();
-    setTimeout(() => process.exit(0), 100);
+    if (addon.cleanup) {
+      addon.cleanup();
+    }
   });
 
   beforeEach(() => {

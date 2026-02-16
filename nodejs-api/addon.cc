@@ -163,6 +163,8 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   Stop = (StopFunc)GetProcAddress(hLib, "ServerStop");
   NewClient = (NewClientFunc)GetProcAddress(hLib, "NewClient");
   Publish = (PublishFunc)GetProcAddress(hLib, "Publish");
+  Subscribe = (SubscribeFunc)GetProcAddress(hLib, "Subscribe");
+  FreePayload = (FreePayloadFunc)GetProcAddress(hLib, "FreePayload");
   Cleanup = (CleanupFunc)GetProcAddress(hLib, "Cleanup");
   
   env.AddCleanupHook([]() {

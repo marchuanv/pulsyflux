@@ -14,6 +14,8 @@
 			]
 		},
 		"jasmineExplorer.cwd": "nodejs-api",
-		"jasmineExplorer.config": "spec/support/jasmine.json"
+		"jasmineExplorer.config": "spec/support/jasmine.json",
+		"jasmineExplorer.logpanel": true,
+		"jasmineExplorer.jasminePath": "nodejs-api/node_modules/jasmine",
 	}
 }
