@@ -240,7 +240,7 @@ See [BENCHMARK_REPORT.md](BENCHMARK_REPORT.md) for detailed analysis.
 ## Thread Safety
 
 All operations are thread-safe:
-- Send/Receive operations are serialized per connection (mutex protected)
+- **Concurrent Send/Receive**: Send and Receive can run simultaneously on the same connection (separate read/write locks)
 - Multiple connections can operate concurrently
 - Global pool is protected with RWMutex
 - Reference counting is atomic
@@ -251,7 +251,7 @@ All operations are thread-safe:
 - **Blocking I/O**: Send/Receive block until complete
 - **Messages in Memory**: Full messages must fit in memory
 - **TCP Only**: No UDP support
-- **Sequential Operations**: Send/Receive are mutexed per connection
+- **Single Send/Receive per goroutine**: Only one Send and one Receive can execute concurrently per connection
 
 ## Best Practices
 
