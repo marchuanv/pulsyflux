@@ -471,7 +471,11 @@ Broadcast scales linearly as expected for O(N) fanout.
 - No encryption (use TLS proxy if needed)
 - Single server (no clustering or HA)
 - Sender cannot receive own messages
-- No backpressure - slow subscribers drop messages
+- **Backpressure**: Slow subscribers drop messages (non-blocking delivery)
+  - Subscriber channels have 100-message buffer
+  - When buffer is full, new messages are dropped
+  - tcp-conn provides backpressure at transport layer (10-message buffer + TCP flow control)
+  - Fast publishers may overwhelm slow subscribers
 - **Idle timeout**: Logical connections close after 30 seconds of inactivity (inherited from tcp-conn)
   - Physical connection closes when all logical connections are closed
   - Clients must send periodic messages or implement keepalive to maintain connections
