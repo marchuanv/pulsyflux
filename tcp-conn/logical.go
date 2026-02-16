@@ -33,7 +33,8 @@ type Connection struct {
 	lastWrite   time.Time
 	idleTimeout time.Duration
 	closed      int32
-	inUse       int32
+	readInUse   int32
+	writeInUse  int32
 	ctx         context.Context
 	cancel      context.CancelFunc
 }
@@ -154,10 +155,10 @@ func (t *Connection) readFull(buf []byte) error {
 }
 
 func (t *Connection) Send(data []byte) error {
-	if !atomic.CompareAndSwapInt32(&t.inUse, 0, 1) {
+	if !atomic.CompareAndSwapInt32(&t.writeInUse, 0, 1) {
 		return errConnectionInUse
 	}
-	defer atomic.StoreInt32(&t.inUse, 0)
+	defer atomic.StoreInt32(&t.writeInUse, 0)
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -223,10 +224,10 @@ func (t *Connection) Send(data []byte) error {
 }
 
 func (t *Connection) Receive() ([]byte, error) {
-	if !atomic.CompareAndSwapInt32(&t.inUse, 0, 1) {
+	if !atomic.CompareAndSwapInt32(&t.readInUse, 0, 1) {
 		return nil, errConnectionInUse
 	}
-	defer atomic.StoreInt32(&t.inUse, 0)
+	defer atomic.StoreInt32(&t.readInUse, 0)
 
 	t.mu.Lock()
 	defer t.mu.Unlock()

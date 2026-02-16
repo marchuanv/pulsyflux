@@ -8,11 +8,8 @@ import (
 	tcpconn "pulsyflux/tcp-conn"
 )
 
-var controlID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
-
 type Client struct {
 	address  string
-	control  *tcpconn.Connection
 	channels map[uuid.UUID]*channelConn
 	mu       sync.RWMutex
 }
@@ -24,13 +21,8 @@ type channelConn struct {
 }
 
 func NewClient(address string) (*Client, error) {
-	control := tcpconn.NewConnection(address, uuid.New())
-	if control == nil {
-		return nil, fmt.Errorf("failed to create control connection")
-	}
 	return &Client{
 		address:  address,
-		control:  control,
 		channels: make(map[uuid.UUID]*channelConn),
 	}, nil
 }
@@ -39,7 +31,6 @@ func (c *Client) getChannel(channelID uuid.UUID) (*channelConn, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.channels[channelID] == nil {
-		c.control.Send([]byte(channelID.String()))
 		conn := tcpconn.NewConnection(c.address, channelID)
 		if conn == nil {
 			return nil, fmt.Errorf("failed to create channel connection")
