@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	defaultIdleTimeout = 5 * time.Minute
+	defaultIdleTimeout = 30 * time.Second
 )
 
 type state int
@@ -31,15 +31,12 @@ type Connection struct {
 	lastWrite   time.Time
 	idleTimeout time.Duration
 	closed      int32
+	inUse       int32
 	ctx         context.Context
 	cancel      context.CancelFunc
 }
 
-func NewConnection(address string, id string, idleTimeout time.Duration) *Connection {
-	if idleTimeout == 0 {
-		idleTimeout = defaultIdleTimeout
-	}
-
+func NewConnection(address string, id string) *Connection {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	_, err := globalPool.getOrCreate(address)
@@ -55,7 +52,7 @@ func NewConnection(address string, id string, idleTimeout time.Duration) *Connec
 		readBuf:     make([]byte, 4096),
 		lastRead:    time.Now(),
 		lastWrite:   time.Now(),
-		idleTimeout: idleTimeout,
+		idleTimeout: defaultIdleTimeout,
 		ctx:         ctx,
 		cancel:      cancel,
 	}
@@ -65,11 +62,7 @@ func NewConnection(address string, id string, idleTimeout time.Duration) *Connec
 	return tc
 }
 
-func WrapConnection(conn net.Conn, id string, idleTimeout time.Duration) *Connection {
-	if idleTimeout == 0 {
-		idleTimeout = defaultIdleTimeout
-	}
-
+func WrapConnection(conn net.Conn, id string) *Connection {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	tc := &Connection{
@@ -79,7 +72,7 @@ func WrapConnection(conn net.Conn, id string, idleTimeout time.Duration) *Connec
 		readBuf:     make([]byte, 4096),
 		lastRead:    time.Now(),
 		lastWrite:   time.Now(),
-		idleTimeout: idleTimeout,
+		idleTimeout: defaultIdleTimeout,
 		ctx:         ctx,
 		cancel:      cancel,
 	}
@@ -159,6 +152,11 @@ func (t *Connection) readFull(buf []byte) error {
 }
 
 func (t *Connection) Send(data []byte) error {
+	if !atomic.CompareAndSwapInt32(&t.inUse, 0, 1) {
+		return errConnectionInUse
+	}
+	defer atomic.StoreInt32(&t.inUse, 0)
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -206,6 +204,11 @@ func (t *Connection) Send(data []byte) error {
 }
 
 func (t *Connection) Receive() ([]byte, error) {
+	if !atomic.CompareAndSwapInt32(&t.inUse, 0, 1) {
+		return nil, errConnectionInUse
+	}
+	defer atomic.StoreInt32(&t.inUse, 0)
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
