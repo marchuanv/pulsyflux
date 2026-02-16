@@ -18,8 +18,7 @@ socket-exp/socket_lib.h
 messagebus-nodejs/messagebus_lib.h
 
 # Node modules
-socket-exp/node_modules/
-messagebus-nodejs/node_modules/
+node_modules/
 
 # Go workspace
 go.work
