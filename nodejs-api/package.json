@@ -1,6 +1,6 @@
 {
   "name": "pulsyflux-broker",
-  "version": "2.0.8",
+  "version": "2.0.10",
   "description": "Node.js bindings for PulsyFlux - high-performance pub/sub message broker with native C++ addon and Go shared library",
   "main": ".bin/release/registry.mjs",
   "type": "module",
@@ -10,17 +10,7 @@
       "types": "./types/index.d.ts"
     }
   },
-  "scripts": {
-    "test": "npx jasmine",
-    "pretest": "npm run build",
-    "build": "npm run build:setup && npm run build:go && npm run build:addon && npm run build:copy && npm run build:clean",
-    "build:setup": "node -e \"const fs=require('fs'); fs.mkdirSync('.bin/release', {recursive:true})\"",
-    "build:go": "node -e \"require('child_process').execSync('build.bat', {stdio:'inherit'})\"",
-    "build:addon": "npx tsx build.mjs",
-    "build:copy": "node -e \"const fs=require('fs'); fs.copyFileSync('registry.mjs', '.bin/release/registry.mjs'); fs.copyFileSync('broker_addon.node', '.bin/release/broker_addon.node'); fs.copyFileSync('broker_lib.dll', '.bin/release/broker_lib.dll')\"",
-    "build:clean": "node -e \"const fs=require('fs'); const files=['broker_addon.node','broker_addon.pdb','broker_lib.dll','broker_lib.h','broker_lib.def','broker_lib.lib']; files.forEach(f=>{try{fs.unlinkSync(f)}catch(e){}})\"",
-    "clean": "node -e \"require('child_process').execSync('clean.bat', {stdio:'inherit'}); const fs=require('fs'); try{fs.rmSync('.bin', {recursive:true})}catch(e){}\""
-  },
+  "scripts": {},
   "files": [
     ".bin/release/",
     "README.md",
@@ -65,11 +55,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/pulsyflux.git",
+    "url": "https://github.com/marchuanv/pulsyflux.git",
     "directory": "nodejs-api"
   },
-  "homepage": "https://github.com/your-username/pulsyflux#readme",
+  "homepage": "https://github.com/marchuanv/pulsyflux#readme",
   "bugs": {
-    "url": "https://github.com/your-username/pulsyflux/issues"
+    "url": "https://github.com/marchuanv/pulsyflux/issues"
   }
 }
