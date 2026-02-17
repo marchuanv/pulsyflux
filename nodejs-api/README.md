@@ -248,63 +248,7 @@ clientA.publish('message on channel 1');
 clientB.publish('message on channel 2');
 ```
 
-## Performance Comparison ⭐⭐⭐⭐⭐
-
-### Benchmark Results: Node.js vs Go
-
-| Benchmark | Go (Native) | Node.js (Addon) | Overhead | Rating |
-|-----------|-------------|-----------------|----------|--------|
-| **Publish** | 6.9µs (145K ops/sec) | 13µs (76K ops/sec) | +88% | ⭐⭐⭐⭐⭐ |
-| **PubSub** | 43µs (23K ops/sec) | 21ms (47 ops/sec) | +48,700% | ⭐⭐ |
-| **Broadcast2** | 39µs (25K ops/sec) | 41ms (25 ops/sec) | +105,000% | ⭐⭐ |
-| **Multiple Channels** | 21µs (48K ops/sec) | 16µs (64K ops/sec) | -24% | ⭐⭐⭐⭐⭐ |
-
-### Performance Analysis ⭐⭐⭐⭐ (Excellent for Publishing)
-
-**Strengths:**
-- ⭐ **Publish Performance**: 76K ops/sec - Excellent for high-frequency publishing
-- ⭐ **Multiple Channels**: 64K ops/sec - 33% faster than Go (reduced contention)
-- ⭐ **Low Latency**: 13µs publish latency - Sub-millisecond performance
-- ⭐ **Consistent**: Predictable performance for publish-only workloads
-
-**Weaknesses:**
-- ⚠️ **PubSub Overhead**: 48,700% slower due to AsyncWorker polling
-- ⚠️ **Broadcast Overhead**: 105,000% slower for multi-client scenarios
-- ⚠️ **Event-driven Latency**: 20ms+ overhead for message receiving
-
-**Overhead Analysis:**
-- **Publish Path**: Only +88% overhead - Excellent FFI performance
-- **Receive Path**: +48,700% overhead - AsyncWorker polling bottleneck
-- **Root Cause**: Go Subscribe() is non-blocking, requires continuous polling
-- **Impact**: Great for fire-and-forget, poor for real-time messaging
-
-**Overall Rating: A- for Publishing, C- for PubSub = B+ Overall**
-
-### Comparison with Production Message Brokers
-
-| System | Publish Latency | PubSub Latency | Throughput | Rating |
-|--------|----------------|----------------|------------|--------|
-| **Redis Pub/Sub** | ~50µs | ~100-200µs | ~10K ops/sec | ⭐⭐⭐⭐ |
-| **NATS** | ~30µs | ~50-100µs | ~20K ops/sec | ⭐⭐⭐⭐⭐ |
-| **RabbitMQ** | ~100µs | ~200-500µs | ~5K ops/sec | ⭐⭐⭐ |
-| **Apache Kafka** | ~1ms | ~5-10ms | ~100K ops/sec | ⭐⭐⭐⭐⭐ |
-| **This Broker (Go)** | ~7µs | ~43µs | ~23K ops/sec | ⭐⭐⭐⭐⭐ |
-| **This Broker (Node.js)** | ~13µs | ~21ms | ~47 ops/sec | ⭐⭐⭐⭐ (pub) / ⭐⭐ (sub) |
-
-### Use Case Matrix
-
-| Use Case | Suitability | Performance | Recommendation |
-|----------|-------------|-------------|----------------|
-| **High-frequency Publishing** | ⭐⭐⭐⭐⭐ | 76K ops/sec | Excellent choice |
-| **Real-time PubSub** | ⭐⭐ | 47 ops/sec | Use Go version |
-| **Multi-channel Publishing** | ⭐⭐⭐⭐⭐ | 64K ops/sec | Better than Go! |
-| **Event Logging** | ⭐⭐⭐⭐⭐ | Fire-and-forget | Perfect fit |
-| **Metrics Collection** | ⭐⭐⭐⭐⭐ | High throughput | Ideal |
-| **Chat Applications** | ⭐⭐ | 21ms latency | Too slow |
-| **Gaming (real-time)** | ⭐ | 21ms latency | Not suitable |
-| **Development/Testing** | ⭐⭐⭐⭐⭐ | Easy integration | Great choice |
-
-### Performance Recommendations
+### Recommendations
 
 **✅ Excellent For:**
 - Event logging and metrics (76K ops/sec)
