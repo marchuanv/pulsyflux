@@ -1,19 +1,16 @@
 # PulsyFlux Node.js API
 
-**Architecture:**
-- ✅ Native C++ addon with Go shared library
-- ✅ Direct memory access (no FFI overhead)
-- ✅ Proper Node.js integration
-- ✅ Cross-platform support (Windows, with Zig compiler)
-- ✅ Automatic build system with dependency management
-
----
-
 Node.js bindings for **PulsyFlux** - a high-performance pub/sub message broker using a native C++ addon.
 
 ## Overview
 
 **PulsyFlux** is a reliable and flexible pub/sub message broker designed for high-performance messaging. This package provides Node.js bindings to the Go implementation through a native C++ addon, delivering near-native performance for JavaScript/TypeScript applications.
+
+**Architecture:**
+- ✅ Native C++ addon with Go shared library
+- ✅ Direct memory access (no FFI overhead)
+
+---
 
 ### Build Artifacts
 
