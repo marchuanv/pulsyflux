@@ -1,0 +1,7 @@
+{
+  "name": "pulsyflux-nodejs-consumer-test",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Integration test verifying @pulsyflux/broker installs and works as a consumer dependency"
+}

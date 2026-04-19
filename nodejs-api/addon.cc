@@ -201,23 +201,23 @@ private:
 };
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
-  // Try loading from same directory as addon
-  hLib = LoadLibraryA("broker_lib.dll");
-  if (!hLib) {
-    // Try with full path relative to addon location
-    char path[MAX_PATH];
-    HMODULE hModule;
-    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)&Init, &hModule);
-    GetModuleFileNameA(hModule, path, MAX_PATH);
-    std::string dllPath = path;
-    size_t pos = dllPath.find_last_of("\\");
-    if (pos != std::string::npos) {
-      dllPath = dllPath.substr(0, pos + 1) + "broker_lib.dll";
-      hLib = LoadLibraryA(dllPath.c_str());
-    }
+  // Resolve absolute path from addon's own location to prevent DLL hijacking
+  char addonPath[MAX_PATH];
+  HMODULE hSelf;
+  GetModuleHandleExA(
+      GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+      (LPCSTR)&Init, &hSelf);
+  GetModuleFileNameA(hSelf, addonPath, MAX_PATH);
+  std::string dllPath(addonPath);
+  size_t pos = dllPath.find_last_of("\\");
+  if (pos != std::string::npos) {
+    dllPath = dllPath.substr(0, pos + 1) + "broker_lib.dll";
   }
+  hLib = LoadLibraryA(dllPath.c_str());
+  // NO fallback to bare filename — single absolute-path load only
   if (!hLib) {
-    Napi::Error::New(env, "Failed to load broker_lib.dll").ThrowAsJavaScriptException();
+    std::string errMsg = "broker_lib.dll not found at: " + dllPath;
+    Napi::Error::New(env, errMsg).ThrowAsJavaScriptException();
     return exports;
   }
   

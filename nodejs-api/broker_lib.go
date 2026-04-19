@@ -6,7 +6,7 @@ import (
 	"unsafe"
 
 	"github.com/google/uuid"
-	"pulsyflux/broker"
+	"github.com/pulsyflux/broker/broker"
 )
 
 var (

@@ -1,5 +1,5 @@
 {
-  "name": "pulsyflux-broker",
+  "name": "@pulsyflux/broker",
   "version": "1.0.0",
   "description": "Node.js bindings for PulsyFlux - high-performance pub/sub message broker with native C++ addon and Go shared library",
   "main": ".bin/release/registry.mjs",
@@ -10,23 +10,32 @@
       "types": "./types/index.d.ts"
     }
   },
-  "scripts": {},
+  "scripts": {
+    "preinstall": "pnpm dlx only-allow pnpm",
+    "postinstall": "node postinstall.mjs"
+  },
   "files": [
-    ".bin/release/",
+    "addon.cc",
+    "build.mjs",
+    "registry.mjs",
+    "postinstall.mjs",
+    "types/",
     "README.md",
-    "LICENSE",
-    "types/"
+    "LICENSE"
   ],
+  "dependencies": {
+    "node-addon-api": "8.5.0",
+    "node-api-headers": "1.3.0",
+    "zig-build": "github:solarwinds/zig-build#main"
+  },
   "devDependencies": {
-    "jasmine": "^5.13.0",
-    "node-addon-api": "^8.5.0",
-    "node-api-headers": "^1.3.0",
-    "zig-build": "github:solarwinds/zig-build",
-    "tsx": "^4.21.0"
+    "jasmine": "5.13.0",
+    "tsx": "4.21.0"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=24.0.0"
   },
+  "packageManager": "pnpm@10.11.0",
   "os": [
     "win32"
   ],
@@ -53,13 +62,17 @@
     "name": "PulsyFlux Team"
   },
   "license": "MIT",
+  "goModuleVersion": "v1.0.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/marchuanv/pulsyflux.git",
+    "url": "https://github.com/pulsyflux/broker.git",
     "directory": "nodejs-api"
   },
-  "homepage": "https://github.com/marchuanv/pulsyflux#readme",
+  "homepage": "https://github.com/pulsyflux/broker#readme",
   "bugs": {
-    "url": "https://github.com/marchuanv/pulsyflux/issues"
+    "url": "https://github.com/pulsyflux/broker/issues"
   }
 }

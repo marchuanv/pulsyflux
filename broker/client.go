@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"sync"
-	tcpconn "pulsyflux/tcp-conn"
+	tcpconn "github.com/pulsyflux/broker/tcp-conn"
 )
 
 type Client struct {

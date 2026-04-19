@@ -1,0 +1,9 @@
+allowBuilds:
+  '@pulsyflux/broker': true
+  zig-build: true
+strictDepBuilds: true
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - '@pulsyflux/*'
+trustPolicy: no-downgrade
+blockExoticSubdeps: true

@@ -1,4 +1,4 @@
-module pulsyflux
+module github.com/pulsyflux/broker
 
 go 1.25
 

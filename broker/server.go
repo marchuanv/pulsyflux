@@ -3,7 +3,7 @@ package broker
 import (
 	"encoding/json"
 	"net"
-	tcpconn "pulsyflux/tcp-conn"
+	tcpconn "github.com/pulsyflux/broker/tcp-conn"
 	"sync"
 
 	"github.com/google/uuid"

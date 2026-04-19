@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  go:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - run: go mod download
+      - run: go vet ./...
+      - run: go test ./...
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+      - name: Build Go shared library
+        run: go build -buildmode=c-shared -o .bin/release/broker_lib.dll broker_lib.go
+        working-directory: nodejs-api
+
+      - name: Upload Go shared library
+        uses: actions/upload-artifact@v4
+        with:
+          name: broker-lib-dll
+          path: nodejs-api/.bin/release/broker_lib.dll
+
+  nodejs:
+    needs: go
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Go shared library
+        uses: actions/download-artifact@v4
+        with:
+          name: broker-lib-dll
+          path: nodejs-api/.bin/release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: nodejs-api
+
+      - name: Build C++ addon
+        run: node build.mjs
+        working-directory: nodejs-api
+
+      - name: Run tests
+        run: pnpm exec jasmine
+        working-directory: nodejs-api
+
+      - name: Audit dependencies
+        run: pnpm audit
+        working-directory: nodejs-api
+
+  integration:
+    needs: [go, nodejs]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run integration tests
+        run: echo "Integration tests placeholder - test directory created in task 10"
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [go, nodejs, integration]
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: nodejs-api
+
+      - name: Publish with provenance
+        run: pnpm publish --provenance --access public
+        working-directory: nodejs-api
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

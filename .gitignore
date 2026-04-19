@@ -32,6 +32,9 @@ go.work.sum
 *.swo
 *~
 
+# Act secrets (local CI testing)
+.secrets
+
 # OS
 .DS_Store
 Thumbs.db
