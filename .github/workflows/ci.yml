@@ -58,6 +58,8 @@ jobs:
           node-version: 24
 
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: nodejs-api/package.json
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -100,6 +102,8 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: nodejs-api/package.json
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
