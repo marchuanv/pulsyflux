@@ -59,10 +59,10 @@ export function checkGoVersion(versionOutput, minimum = MIN_GO_VERSION) {
 // Pipeline helpers
 // ---------------------------------------------------------------------------
 
-function run(cmd, label) {
+function run(cmd, label, cwd = __dirname) {
   console.log(`[postinstall] ${label}...`);
   try {
-    execSync(cmd, { cwd: __dirname, stdio: 'inherit' });
+    execSync(cmd, { cwd, stdio: 'inherit' });
   } catch (err) {
     console.error(`[postinstall] FAILED: ${label}`);
     console.error(err.message);
@@ -108,18 +108,36 @@ function main() {
     mkdirSync(RELEASE_DIR, { recursive: true });
   }
 
-  // 2. Fetch Go module
-  const goModVersion = readGoModuleVersion();
-  run(
-    `go get github.com/pulsyflux/broker@${goModVersion}`,
-    `Fetching Go module github.com/pulsyflux/broker@${goModVersion}`
-  );
+  // 2. Fetch Go module (only when running as an installed npm package, not in the source repo)
+  //    Detect source repo by checking if go.mod exists in the parent directory
+  const repoGoMod = join(__dirname, '..', 'go.mod');
+  const isSourceRepo = existsSync(repoGoMod);
+
+  if (isSourceRepo) {
+    console.log('[postinstall] Running inside source repo — skipping go get (using local Go source)');
+  } else {
+    const goModVersion = readGoModuleVersion();
+    run(
+      `go get github.com/pulsyflux/broker@${goModVersion}`,
+      `Fetching Go module github.com/pulsyflux/broker@${goModVersion}`
+    );
+  }
 
   // 3. Build Go shared library
-  run(
-    `go build -buildmode=c-shared -o .bin/release/broker_lib.dll`,
-    'Building Go shared library'
-  );
+  //    When in source repo, build from parent directory where go.mod lives
+  if (isSourceRepo) {
+    const repoRoot = join(__dirname, '..');
+    run(
+      'go build -buildmode=c-shared -o nodejs-api/.bin/release/broker_lib.dll nodejs-api/broker_lib.go',
+      'Building Go shared library (from source repo)',
+      repoRoot
+    );
+  } else {
+    run(
+      'go build -buildmode=c-shared -o .bin/release/broker_lib.dll',
+      'Building Go shared library'
+    );
+  }
 
   // 4. Build C++ addon
   run('node build.mjs', 'Building C++ addon');
