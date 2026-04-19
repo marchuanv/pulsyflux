@@ -3,12 +3,18 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*.*.*']
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write
+
+env:
+  GONOSUMDB: ""
+  GOFLAGS: -mod=readonly
+
 jobs:
-  go:
+  build-and-test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,98 +25,57 @@ jobs:
 
       - run: go mod download
 
-      - name: Vet Go packages
-        run: go vet ./broker/... ./tcp-conn/...
-
-      - name: Run Go tests
-        run: go test ./broker/... ./tcp-conn/...
+      - name: Verify module checksums
+        run: go mod verify
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
-      - name: Run govulncheck
-        run: govulncheck ./broker/... ./tcp-conn/...
+      - name: Vulnerability check
+        run: govulncheck ./...
 
-      - name: Build Go shared library
-        run: go build -buildmode=c-shared -o .bin/release/broker_lib.dll broker_lib.go
-        working-directory: nodejs-api
+      - name: Vet
+        run: go vet ./...
 
-      - name: Upload Go shared library
-        uses: actions/upload-artifact@v4
-        with:
-          name: broker-lib-dll
-          path: nodejs-api/.bin/release/broker_lib.dll
-
-  nodejs:
-    needs: go
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Go shared library
-        uses: actions/download-artifact@v4
-        with:
-          name: broker-lib-dll
-          path: nodejs-api/.bin/release
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - uses: pnpm/action-setup@v4
-        with:
-          package_json_file: nodejs-api/package.json
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: nodejs-api
-
-      - name: Build C++ addon
-        run: node build.mjs
-        working-directory: nodejs-api
-
-      - name: Run tests
-        run: pnpm exec jasmine
-        working-directory: nodejs-api
-
-      - name: Audit dependencies
-        run: pnpm audit
-        working-directory: nodejs-api
-
-  integration:
-    needs: [go, nodejs]
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run integration tests
-        run: echo "Integration tests placeholder - test directory created in task 10"
+      - name: Test
+        run: go test ./...
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [go, nodejs, integration]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-and-test
     runs-on: windows-latest
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
         with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
+          fetch-depth: 0
 
-      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-go@v5
         with:
-          package_json_file: nodejs-api/package.json
+          go-version-file: go.mod
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: nodejs-api
+      - name: Get latest tag and bump patch version
+        id: version
+        shell: bash
+        run: |
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+          if [ -z "$latest" ]; then
+            echo "new_tag=v0.1.0" >> "$GITHUB_OUTPUT"
+          else
+            major=$(echo "$latest" | sed 's/v//' | cut -d. -f1)
+            minor=$(echo "$latest" | sed 's/v//' | cut -d. -f2)
+            patch=$(echo "$latest" | sed 's/v//' | cut -d. -f3)
+            patch=$((patch + 1))
+            echo "new_tag=v${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Publish with provenance
-        run: pnpm publish --provenance --access public
-        working-directory: nodejs-api
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ steps.version.outputs.new_tag }}
+          git push origin ${{ steps.version.outputs.new_tag }}
+
+      - name: Publish to Go module proxy
+        run: go list -m github.com/pulsyflux/broker@${{ steps.version.outputs.new_tag }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GOPROXY: https://proxy.golang.org

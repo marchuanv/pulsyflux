@@ -1,2 +1,0 @@
--P windows-latest=catthehacker/ubuntu:act-latest
---container-architecture linux/amd64

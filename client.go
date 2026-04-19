@@ -3,9 +3,10 @@ package broker
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
 	"sync"
-	tcpconn "github.com/pulsyflux/broker/tcp-conn"
+
+	"github.com/google/uuid"
+	tcpconn "github.com/pulsyflux/tcp"
 )
 
 type Client struct {

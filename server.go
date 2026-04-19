@@ -3,10 +3,10 @@ package broker
 import (
 	"encoding/json"
 	"net"
-	tcpconn "github.com/pulsyflux/broker/tcp-conn"
 	"sync"
 
 	"github.com/google/uuid"
+	tcpconn "github.com/pulsyflux/tcp"
 )
 
 var (

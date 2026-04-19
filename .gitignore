@@ -7,21 +7,6 @@
 # Test binaries
 *.test
 
-# Go build cache
-socket-exp/build/
-socket-exp/.cache/
-messagebus-nodejs/build/
-messagebus-nodejs/.cache/
-
-# C headers (generated)
-socket-exp/socket_lib.h
-messagebus-nodejs/messagebus_lib.h
-nodejs-api/broker_lib.h
-nodejs-api/messagebus_lib.h
-
-# Node modules
-node_modules/
-
 # Go workspace
 go.work
 go.work.sum
@@ -34,6 +19,9 @@ go.work.sum
 
 # Act secrets (local CI testing)
 .secrets
+
+# Act artifacts (local CI testing)
+.artifacts/
 
 # OS
 .DS_Store
